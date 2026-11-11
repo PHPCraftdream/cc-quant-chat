@@ -149,8 +149,14 @@ func Open(path string) (*DB, error) {
 	}
 	dir := filepath.Dir(path)
 	for _, d := range []string{dir, filepath.Join(dir, "chats")} {
+		_, statErr := os.Stat(d)
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
+		}
+		// A directory this store makes is private. One that was there (CCQC_DB may name a file in
+		// any folder) is left as it is, except chats/, which is ours.
+		if statErr != nil || filepath.Base(d) == "chats" {
+			_ = os.Chmod(d, 0o700)
 		}
 	}
 	node, err := openMigrated(filepath.Join(dir, "node.db"), NodeMigrations)

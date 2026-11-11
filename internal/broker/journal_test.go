@@ -359,7 +359,7 @@ func TestVerifyFindsAForgedPayloadABrokenChainAndAForeignNodeSignature(t *testin
 
 func TestTheJournalAndItsSignaturesSurviveARestart(t *testing.T) {
 	_, path, id, priv := runScenario(t)
-	db := reopen(t, path)
+	db := reopen(t, filepath.Join(filepath.Dir(filepath.Dir(path)), "ccqc.db")) // path is the chat's file
 	pub := priv.Public().(ed25519.PublicKey)
 	db.SetNode(node.Origin(pub), priv)
 	rep, err := db.Verify(id)

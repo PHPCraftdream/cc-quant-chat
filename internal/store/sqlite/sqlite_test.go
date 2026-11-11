@@ -233,7 +233,12 @@ func TestLoadKeepsOnlyTheNewestPerThreadButAllIDs(t *testing.T) {
 }
 
 func TestDatabaseFilesArePrivate(t *testing.T) {
-	db, path := openTemp(t)
+	path := filepath.Join(t.TempDir(), "data", "ccqc.db") // a directory the store makes itself
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
 	if _, err := db.Load(chatID, "x"); err != nil {
 		t.Fatal(err)
 	}
