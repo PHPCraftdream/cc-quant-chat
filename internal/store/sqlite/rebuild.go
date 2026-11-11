@@ -21,7 +21,7 @@ type projection struct {
 var projections = []projection{
 	{"rooms", nil}, {"room_members", nil}, {"nicks", []string{"seen", "key_hash"}}, {"messages", nil}, {"board_sprints", nil},
 	{"board_tasks", nil}, {"board_workflow", nil}, {"board_log", nil}, {"board_comments", nil},
-	{"docs", nil}, {"doc_versions", nil}, {"settings", nil}, {"remote_nicks", nil}, {"entity_refs", nil}, {"board_stamps", nil}, {"doc_vrefs", nil}, {"doc_heads", nil},
+	{"docs", nil}, {"doc_versions", nil}, {"settings", nil}, {"remote_nicks", nil}, {"entity_refs", nil}, {"board_stamps", nil}, {"doc_vrefs", nil}, {"doc_heads", nil}, {"origin_short", nil},
 }
 
 // RebuildReport: what a rebuild found. Diffs counts, per table, the rows that are in only one of

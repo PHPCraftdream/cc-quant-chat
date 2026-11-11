@@ -262,7 +262,7 @@ func remoteDoc(tx *sql.Tx, e events.Event, self string) error {
 			return err
 		}
 		if author != "" {
-			author = remoteName(self, e.Origin, author)
+			author = remoteName(tx, self, e.Origin, author)
 		}
 		if _, err := tx.Exec(`INSERT INTO doc_versions (path, version, ts, author, author_owner, title, body, note, deleted, origin, lamport, author_pub, sig, payload)
 			VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

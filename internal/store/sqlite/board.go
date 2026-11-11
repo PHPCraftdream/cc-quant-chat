@@ -208,7 +208,7 @@ func (b *boardTx) ListSprints() ([]store.Sprint, error) {
 }
 
 func (b *boardTx) ActiveSprint() (store.Sprint, bool, error) {
-	s, err := scanSprint(b.tx.QueryRow(`SELECT ` + sprintCols + ` FROM board_sprints WHERE state = 'active' AND deleted = 0`))
+	s, err := scanSprint(b.tx.QueryRow(`SELECT ` + sprintCols + ` FROM board_sprints WHERE state = 'active' AND deleted = 0 ORDER BY started_at DESC, id LIMIT 1`)) // two after a merge: the one started last
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Sprint{}, false, nil
 	}

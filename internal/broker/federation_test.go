@@ -1,11 +1,13 @@
 package broker
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/node"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
@@ -177,4 +179,63 @@ func textsOf(t *testing.T, db *sqlite.DB, id string) string {
 		out += k + "|"
 	}
 	return out
+}
+
+// A message of another node arrives while nobody is present at this node (the chat is not in
+// memory); the next message written here must not meet its number.
+func TestAForeignMessageTakenWhileTheChatIsNotLoadedDoesNotTakeTheNumberOfTheNextOne(t *testing.T) {
+	p := newTwoBrokers(t)
+	alice := p.a.connect(t)
+	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+		t.Fatalf("alice joins: %q", code)
+	}
+	for _, text := range []string{"one", "two", "three"} {
+		mustCode(t, "alice sends", func() string { _, c := alice.send(proto.RoomCommon, "", text); return c }())
+	}
+	eventually(t, "the messages reach b, where nobody is", func() bool { return textsOf(t, p.bdb, p.id) == "one|three|two|" })
+	p.b.mu.Lock()
+	loaded := len(p.b.chats)
+	p.b.mu.Unlock()
+	if loaded != 0 {
+		t.Fatalf("the chat of b is in memory with nobody present (%d)", loaded)
+	}
+
+	bob := p.b.connect(t)
+	if _, code := bob.join(p.tok, "bob", proto.LegacyProto); code != "" {
+		t.Fatalf("bob joins: %q", code)
+	}
+	id, code := bob.send(proto.RoomCommon, "", "four")
+	if code != "" || id != 4 {
+		t.Fatalf("the next number after three messages of another node: %d %q", id, code)
+	}
+	eventually(t, "the same messages on both nodes", func() bool {
+		return textsOf(t, p.adb, p.id) == textsOf(t, p.bdb, p.id) && strings.Contains(textsOf(t, p.adb, p.id), "four")
+	})
+	consistent(t, p.bdb, "a message after a foreign one (node b)")
+}
+
+// A node that takes away or replaces the key of one of its members says so to the chat: from then
+// on it speaks for that nick without a signature.
+func TestTheKeyOfAMemberOfAnotherNodeBeingResetIsToldToTheChat(t *testing.T) {
+	p := newTwoBrokers(t)
+	alice := p.a.connect(t)
+	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+		t.Fatalf("alice joins: %q", code)
+	}
+	bob := p.b.mustJoin(t, p.tok, "bob", newKey(t))
+	eventually(t, "alice knows bob", hasMember(t, alice, remote("bob", p.b)))
+	presenceTexts(alice)                                                                 // what was said so far
+	if err := p.bdb.Append(p.id, store.Record{T: "nick_key", Nick: "bob"}); err != nil { // the node of bob resets him
+		t.Fatal(err)
+	}
+	var told bool
+	for i := 0; i < 40 && !told; i++ {
+		for _, line := range presenceTexts(alice) {
+			told = told || strings.Contains(line, "the key of "+remote("bob", p.b)+" was reset by its node")
+		}
+	}
+	if !told {
+		t.Fatal("the chat was not told that the key of a member of another node was reset")
+	}
+	_ = bob
 }

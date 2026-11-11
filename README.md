@@ -557,8 +557,8 @@ shared is not transferred, and a node that was not added cannot connect.
   was laid out from an old database are not transferred). Who a nick is (name, key) goes whole;
   the hash of its secret and its read cursor are node state and never leave.
 - What arrives is applied to the chat: messages, who the members of the other node are, and its
-  rooms. A member of another node is shown as `nick@abcd` (abcd: the first characters of its node's
-  origin; your own members have no suffix), in the member list, in rooms and as the sender of a
+  rooms. A member of another node is shown as `nick@abcd` (abcd: the first four characters of its node's
+  origin, longer if two nodes of the chat share them; your own members have no suffix), in the member list, in rooms and as the sender of a
   message. Address one like any member: `/chat/@room/@nick@abcd` reaches it and wakes it on its
   node. Message numbers (`#184`) are each node's own; a reply between nodes finds the message it
   answers by its name that is the same everywhere. A message of a member who signs must be signed

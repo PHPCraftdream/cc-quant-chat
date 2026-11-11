@@ -33,15 +33,42 @@ const (
 	placeholderOrigin  = "~"
 )
 
-// remoteName is the name this node gives to a nick that an event of origin mentions.
-func remoteName(self, origin, name string) string {
+// remoteName is the name this node gives to a nick that an event of origin mentions: nick@abcd, abcd
+// being the short name of the origin (shortOf). A reference to one of our own members is written by
+// the other node nick@<the start of our origin>, whatever length it gave it: it is the bare name.
+func remoteName(tx *sql.Tx, self, origin, name string) string {
 	if i := strings.LastIndex(name, "@"); i >= 0 {
-		if name[i+1:] == node.Short(self) {
+		if suffix := name[i+1:]; len(suffix) >= 4 && strings.HasPrefix(self, suffix) {
 			return name[:i]
 		}
 		return name
 	}
-	return name + "@" + node.Short(origin)
+	return name + "@" + shortOf(tx, origin)
+}
+
+// shortOf is the short name of an origin in this chat: the first four characters of it, or more
+// when another origin of the chat already has those (two keys can be ground to one prefix). It is
+// given once, in the order the origins first appear, and never changes.
+func shortOf(tx *sql.Tx, origin string) string {
+	var short string
+	if err := tx.QueryRow(`SELECT short FROM origin_short WHERE origin = ?`, origin).Scan(&short); err == nil {
+		return short
+	}
+	for n := 4; n <= len(origin); n += 4 {
+		short = origin[:n]
+		var taken int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM origin_short WHERE short = ?`, short).Scan(&taken); err != nil || taken > 0 {
+			if err != nil {
+				break
+			}
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO origin_short (origin, short) VALUES (?, ?)`, origin, short); err == nil {
+			return short
+		}
+		break
+	}
+	return node.Short(origin)
 }
 
 type eventRef struct {
@@ -88,9 +115,25 @@ func remoteMsg(tx *sql.Tx, e events.Event, self string) ([]store.Record, error) 
 	if err := checkAuthor(tx, e, a.From); err != nil { // a nick with a key is spoken for only with that key
 		return nil, err
 	}
-	recs, err := ensureRoom(tx, room)
-	if err != nil {
+	var recs []store.Record
+	var rooms int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM rooms WHERE room = ?`, room).Scan(&rooms); err != nil {
 		return nil, err
+	}
+	if rooms == 0 { // the sender joined it before (the join of the same origin comes first): a room that is not here is not the room of a member
+		return nil, fmt.Errorf("message of %s: there is no room @%s here", a.From, room)
+	}
+	var registered, member int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM remote_nicks WHERE origin = ? AND nick = ?`, e.Origin, a.From).Scan(&registered); err != nil {
+		return nil, err
+	}
+	if registered > 0 {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM room_members WHERE room = ? AND nick = ?`, room, remoteName(tx, self, e.Origin, a.From)).Scan(&member); err != nil {
+			return nil, err
+		}
+		if member == 0 {
+			return nil, fmt.Errorf("message of %s: it is not in @%s", a.From, room)
+		}
 	}
 	var id int64
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM messages`).Scan(&id); err != nil {
@@ -102,9 +145,9 @@ func remoteMsg(tx *sql.Tx, e events.Event, self string) ([]store.Record, error) 
 	}
 	to := ""
 	if t := str(p, "to"); t != "" {
-		to = remoteName(self, e.Origin, t)
+		to = remoteName(tx, self, e.Origin, t)
 	}
-	from := remoteName(self, e.Origin, a.From)
+	from := remoteName(tx, self, e.Origin, a.From)
 	payload := ""
 	if e.Sig != "" {
 		payload = e.Payload
@@ -178,7 +221,7 @@ func remoteNick(tx *sql.Tx, e events.Event, self string) ([]store.Record, error)
 	if nick == "" || strings.Contains(nick, "@") {
 		return nil, errors.New("a nick of another node: a malformed name")
 	}
-	name, pub := remoteName(self, e.Origin, nick), str(p, "pub")
+	name, pub := remoteName(tx, self, e.Origin, nick), str(p, "pub")
 	switch e.Kind {
 	case "nick.register":
 		if _, err := tx.Exec(`INSERT INTO nicks (nick, key_hash, seen, pubkey) VALUES (?, '', 0, ?)
@@ -220,7 +263,7 @@ func remoteRoom(tx *sql.Tx, e events.Event, self string) ([]store.Record, error)
 	case "room.create":
 		by := ""
 		if c := str(p, "created_by"); c != "" {
-			by = remoteName(self, e.Origin, c)
+			by = remoteName(tx, self, e.Origin, c)
 		}
 		if room == proto.RoomCommon {
 			return nil, nil
@@ -242,7 +285,7 @@ func remoteRoom(tx *sql.Tx, e events.Event, self string) ([]store.Record, error)
 		if nick == "" || strings.Contains(nick, "@") {
 			return nil, errors.New("a member of another node: a malformed name")
 		}
-		name := remoteName(self, e.Origin, nick)
+		name := remoteName(tx, self, e.Origin, nick)
 		if e.Kind == "room.leave" {
 			if _, err := tx.Exec(`DELETE FROM room_members WHERE room = ? AND nick = ?`, room, name); err != nil {
 				return nil, err

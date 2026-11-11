@@ -2,6 +2,7 @@ package broker
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -46,6 +47,12 @@ func (b *Broker) takeRemote(ch *chat, recs []store.Record) {
 			if n := ch.nicks[r.Nick]; n != nil {
 				n.pub = r.Pub
 			}
+			// A key that its node replaced or took away no longer protects the nick: the members hear of it.
+			verb := "replaced"
+			if r.Pub == "" {
+				verb = "reset"
+			}
+			b.presence(ch, nil, "", fmt.Sprintf("the key of %s was %s by its node", r.Nick, verb))
 		case "room":
 			if rm := ch.rooms[r.Room]; rm == nil {
 				ch.replay(r)

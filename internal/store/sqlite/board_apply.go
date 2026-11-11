@@ -130,7 +130,7 @@ func (p *boardPlan) name(s string) string {
 	if s == "" {
 		return ""
 	}
-	return remoteName(p.self, p.e.Origin, s)
+	return remoteName(p.tx, p.self, p.e.Origin, s)
 }
 
 // resolve gives the number here of a thing of the event; 0 stays 0.
