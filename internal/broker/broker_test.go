@@ -101,16 +101,13 @@ func (c *client) callE(op string, args, out any) error {
 	}
 	select {
 	case r := <-c.replies:
-		if r.Op == "err" {
-			return &proto.Error{Code: r.Code, Msg: r.Msg, Data: r.Data}
-		}
-		if out != nil && len(r.Data) > 0 {
-			if err := json.Unmarshal(r.Data, out); err != nil {
-				c.t.Fatalf("%s reply: %v", op, err)
-			}
-		}
-		return nil
+		return c.answer(op, r, out)
 	case <-c.ended:
+		select { // the reply was filed before the connection ended
+		case r := <-c.replies:
+			return c.answer(op, r, out)
+		default:
+		}
 		if c.lax {
 			return &proto.Error{Code: "closed"}
 		}
@@ -120,6 +117,18 @@ func (c *client) callE(op string, args, out any) error {
 			return &proto.Error{Code: "timeout"}
 		}
 		c.t.Fatalf("%s: no reply", op)
+	}
+	return nil
+}
+
+func (c *client) answer(op string, r proto.Frame, out any) error {
+	if r.Op == "err" {
+		return &proto.Error{Code: r.Code, Msg: r.Msg, Data: r.Data}
+	}
+	if out != nil && len(r.Data) > 0 {
+		if err := json.Unmarshal(r.Data, out); err != nil {
+			c.t.Fatalf("%s reply: %v", op, err)
+		}
 	}
 	return nil
 }

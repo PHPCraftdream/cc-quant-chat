@@ -180,9 +180,9 @@ func TestTheReplyToAJoinComesBeforeTheEventsOfTheChat(t *testing.T) {
 		}
 	}()
 	defer func() { stop.Store(true); <-flooded }()
-	bob := b.raw(t)
 	key := ""
 	for round := 0; round < 40; round++ {
+		bob := b.raw(t) // a leave ends the connection
 		id := bob.send("join", proto.JoinArgs{Token: tok, Name: "bob", Key: key, Proto: proto.ProtoVersion})
 		first := bob.next()
 		if first.Op == "event" || first.ID != id {
@@ -216,7 +216,7 @@ func TestChatsLoadUnloadAndResetWhileBusy(t *testing.T) {
 	var bad atomic.Int32
 	check := func(what, code string) {
 		switch code {
-		case "", "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "rate_limited", "no_such_room", "not_in_room":
+		case "", "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "rate_limited", "no_such_room", "not_in_room", "room_exists":
 		default:
 			t.Errorf("%s: unexpected %q", what, code)
 			bad.Add(1)
@@ -305,7 +305,7 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 	var wg sync.WaitGroup
 	ok := func(what, code string) {
 		switch code {
-		case "", "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "closed", "timeout", "role_taken", "no_pinned_role", "rate_limited", "no_such_room", "not_in_room":
+		case "", "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "closed", "timeout", "role_taken", "no_pinned_role", "rate_limited", "no_such_room", "not_in_room", "room_exists":
 		default:
 			t.Errorf("%s: unexpected %q", what, code)
 		}
