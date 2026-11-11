@@ -9,9 +9,8 @@
   "keywords": ["chat", "ipc", "coordination", "multi-agent"],
   "mcpServers": {
     "chat": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ccqc",
-      "args": ["mcp"],
-      "env": { "CCQC_DELIVERY": "hook" }
+      "command": "ccqc",
+      "args": ["mcp"]
     }
   },
   "channels": [

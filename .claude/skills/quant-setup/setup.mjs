@@ -7,26 +7,40 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const isWin = process.platform === "win32";
 const folder = resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const exe = join(repo, "plugin", "bin", process.platform === "win32" ? "ccqc.exe" : "ccqc");
-if (!existsSync(exe)) {
-  fail(`ccqc binary not found at ${exe}; build it first: go build -o plugin/bin/ ./cmd/ccqc`);
+const repoExe = join(repo, "plugin", "bin", isWin ? "ccqc.exe" : "ccqc");
+
+// Which ccqc the folder runs (paths without ".exe": Claude Code adds it on Windows):
+// 1. the repository's own build, when setting up the repository itself (relative paths);
+// 2. the globally installed ccqc (install.sh / install.cmd), by name — no machine paths
+//    end up in the folder's files;
+// 3. otherwise the repository build by absolute path.
+const toSlash = (p) => p.split(sep).join("/");
+const repoBare = repoExe.replace(/\.exe$/i, "");
+const relPath = relative(folder, repoBare); // absolute when on another drive (Windows)
+const inside = relPath !== "" && !relPath.startsWith("..") && !isAbsolute(relPath);
+let mcpCommand, hookCommand, using;
+if (inside && existsSync(repoExe)) {
+  mcpCommand = `./${toSlash(relPath)}`;
+  hookCommand = `\${CLAUDE_PROJECT_DIR}/${toSlash(relPath)}`;
+  using = `this repository's build (${mcpCommand})`;
+} else if (globalCcqc()) {
+  mcpCommand = hookCommand = "ccqc";
+  using = `the installed ccqc (${globalCcqc()})`;
+} else if (existsSync(repoExe)) {
+  mcpCommand = hookCommand = toSlash(repoBare);
+  using = `${mcpCommand} (install ccqc globally to keep machine paths out of this folder)`;
+} else {
+  fail("ccqc not found: run install.cmd / install.sh, or build it: go build -o plugin/bin/ ./cmd/ccqc");
 }
 
-// Paths without ".exe": Claude Code resolves the extension itself on Windows.
-const bare = exe.replace(/\.exe$/i, "");
-const relPath = relative(folder, bare); // absolute when on another drive (Windows)
-const inside = relPath !== "" && !relPath.startsWith("..") && !isAbsolute(relPath);
-const rel = relPath.split(sep).join("/");
-const mcpCommand = inside ? `./${rel}` : bare.split(sep).join("/");
-const hookCommand = inside ? `\${CLAUDE_PROJECT_DIR}/${rel}` : bare.split(sep).join("/");
-
-// 1. MCP server; CCQC_DELIVERY=hook: events wait for the rewake hook from the start.
+// 1. MCP server.
 const mcpPath = join(folder, ".mcp.json");
 const mcp = readJSON(mcpPath);
 mcp.mcpServers ??= {};
-mcp.mcpServers.ccqc = { command: mcpCommand, args: ["mcp"], env: { CCQC_DELIVERY: "hook" } };
+mcp.mcpServers.ccqc = { command: mcpCommand, args: ["mcp"] };
 writeJSON(mcpPath, mcp);
 
 // 2. Hooks and permissions in local (personal, not shared) settings.
@@ -43,12 +57,25 @@ setHooks(st.hooks, "Stop", [wait]);
 writeJSON(settingsPath, st);
 
 console.log(`ccqc: folder ${folder} set up.
+- runs ${using}
 - written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks, permission mcp__ccqc)
-- restart Claude Code here; then, in each session: /quant-join <token> <nick>
+- restart Claude Code here (from a new terminal); then, in each session: /quant-join <token> <nick>
 - every session keeps its own chats and nick; resuming a session rejoins them automatically
 - incoming messages wake the session (rewake hook), no extra flags needed`);
 
 // --- helpers ---
+
+// globalCcqc: path of an installed ccqc (on PATH, or in the installers' default place); "" if none.
+function globalCcqc() {
+  const name = isWin ? "ccqc.exe" : "ccqc";
+  const dirs = (process.env.PATH || "").split(isWin ? ";" : ":").filter(Boolean);
+  dirs.push(isWin ? join(process.env.LOCALAPPDATA || "", "Programs", "ccqc") : join(process.env.HOME || "", ".local", "bin"));
+  for (const d of dirs) {
+    const p = join(d, name);
+    if (resolve(p) !== resolve(repoExe) && existsSync(p)) return p;
+  }
+  return "";
+}
 
 function fail(msg) {
   console.error(msg);
@@ -65,6 +92,7 @@ function readJSON(p) {
 }
 
 function writeJSON(p, v) {
+  if (existsSync(p) && JSON.stringify(readJSON(p)) === JSON.stringify(v)) return; // keep formatting
   mkdirSync(dirname(p), { recursive: true });
   const tmp = p + ".tmp";
   writeFileSync(tmp, JSON.stringify(v, null, 2) + "\n");

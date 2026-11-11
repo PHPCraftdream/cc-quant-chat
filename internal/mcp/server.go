@@ -11,10 +11,9 @@ import (
 	"log"
 	"os"
 	"sync"
-)
 
-// Version is set at release build time: -ldflags "-X .../internal/mcp.Version=v1.2.3".
-var Version = "0.1.0-dev"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/version"
+)
 
 // Older revisions first; 2026-07-28 is never offered (v2 client won't register channels on it).
 var supportedVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
@@ -116,7 +115,7 @@ func (srv *Server) route(req request) (any, *rpcError) {
 				"tools":        map[string]any{},
 				"experimental": map[string]any{"claude/channel": map[string]any{}},
 			},
-			"serverInfo":   map[string]any{"name": "ccqc", "version": Version},
+			"serverInfo":   map[string]any{"name": "ccqc", "version": version.Version},
 			"instructions": instructions,
 		}, nil
 	case "ping":

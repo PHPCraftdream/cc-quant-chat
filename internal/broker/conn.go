@@ -83,9 +83,11 @@ func (c *conn) writer() {
 }
 
 func (b *Broker) serve(nc net.Conn) {
+	defer b.serving.Done()
 	c := &conn{nc: nc, out: make(chan []byte, outQueue), done: make(chan struct{})}
 	b.mu.Lock()
 	b.active++
+	b.conns[c] = true
 	b.mu.Unlock()
 	go c.writer()
 
@@ -108,6 +110,7 @@ func (b *Broker) serve(nc net.Conn) {
 
 	b.mu.Lock()
 	b.active--
+	delete(b.conns, c)
 	if b.active == 0 {
 		b.idleAt = time.Now()
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/version"
 )
 
 const (
@@ -29,15 +30,21 @@ const (
 )
 
 type Broker struct {
-	mu       sync.Mutex
-	store    store.Backend
-	warning  string // set when history can't be saved; shown to every joiner
-	chats    map[string]*chat
-	active   int
-	idleAt   time.Time
-	idle     time.Duration
-	grace    time.Duration
-	stopping atomic.Bool
+	mu        sync.Mutex
+	store     store.Backend
+	storeDesc string
+	warning   string // set when history can't be saved; shown to every joiner
+	chats     map[string]*chat
+	conns     map[*conn]bool
+	active    int
+	idleAt    time.Time
+	idle      time.Duration
+	grace     time.Duration
+	started   time.Time
+	ln        net.Listener
+	serving   sync.WaitGroup // serve goroutines; waited for before the store closes
+	stopping  atomic.Bool
+	reason    atomic.Value // why the broker stops: "idle" or "requested"
 }
 
 type chat struct {
@@ -82,29 +89,77 @@ func Run() error {
 		return fmt.Errorf("listen %s: %w", ipc.Path(), err)
 	}
 	b := &Broker{
-		chats:  map[string]*chat{},
-		idleAt: time.Now(),
-		idle:   envDur("CCQC_BROKER_IDLE", 30*time.Minute),
-		grace:  envDur("CCQC_GRACE", 60*time.Second),
+		chats:   map[string]*chat{},
+		conns:   map[*conn]bool{},
+		idleAt:  time.Now(),
+		idle:    envDur("CCQC_BROKER_IDLE", 30*time.Minute),
+		grace:   envDur("CCQC_GRACE", 60*time.Second),
+		started: time.Now(),
+		ln:      ln,
 	}
 	b.openStore()
-	log.Printf("broker: listening on %s (pid %d)", ipc.Path(), os.Getpid())
-	go b.janitor(ln)
+	log.Printf("broker: %s listening on %s (pid %d)", version.Version, ipc.Path(), os.Getpid())
+	go b.janitor()
 	for {
 		nc, err := ln.Accept()
 		if err != nil {
 			if b.stopping.Load() {
-				log.Printf("broker: stopped (idle)")
-				if c, ok := b.store.(interface{ Close() error }); ok {
-					_ = c.Close()
-				}
-				return nil
+				break
 			}
 			log.Printf("broker: accept: %v", err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		b.serving.Add(1)
 		go b.serve(nc)
+	}
+	// Let connections record their state (seen marks) before the store closes.
+	done := make(chan struct{})
+	go func() { b.serving.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		log.Printf("broker: some connections did not finish in time")
+	}
+	if c, ok := b.store.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+	log.Printf("broker: stopped (%v)", b.reason.Load())
+	return nil
+}
+
+// shutdown stops accepting and closes every connection; clients reconnect to the next
+// broker on their own. Safe to call more than once.
+func (b *Broker) shutdown(reason string) {
+	if !b.stopping.CompareAndSwap(false, true) {
+		return
+	}
+	b.reason.Store(reason)
+	b.ln.Close()
+	b.mu.Lock()
+	conns := make([]*conn, 0, len(b.conns))
+	for c := range b.conns {
+		conns = append(conns, c)
+	}
+	b.mu.Unlock()
+	for _, c := range conns {
+		c.close()
+	}
+}
+
+// info: what `ccqc broker status` shows.
+func (b *Broker) info() proto.BrokerInfo {
+	clients := 0
+	for _, ch := range b.chats {
+		for _, m := range ch.members {
+			if m.conn != nil {
+				clients++
+			}
+		}
+	}
+	return proto.BrokerInfo{
+		Version: version.Version, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
+		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning,
 	}
 }
 
@@ -112,20 +167,20 @@ func Run() error {
 // If the database can't be opened the broker still runs, in memory, and warns every joiner.
 func (b *Broker) openStore() {
 	if os.Getenv("CCQC_STORE") == "memory" {
-		b.store = store.Memory{}
-		log.Printf("broker: store: memory (CCQC_STORE=memory)")
+		b.store, b.storeDesc = store.Memory{}, "memory (CCQC_STORE=memory)"
+		log.Printf("broker: store: %s", b.storeDesc)
 		return
 	}
 	path := sqlite.DefaultPath()
 	db, err := sqlite.Open(path)
 	if err != nil {
-		b.store = store.Memory{}
+		b.store, b.storeDesc = store.Memory{}, "memory (database failed)"
 		b.warning = fmt.Sprintf("chat history is not saved: database %s: %v", path, err)
 		log.Printf("broker: %s", b.warning)
 		return
 	}
-	b.store = db
-	log.Printf("broker: store: sqlite %s", path)
+	b.store, b.storeDesc = db, "sqlite "+path
+	log.Printf("broker: store: %s", b.storeDesc)
 }
 
 func envDur(key string, def time.Duration) time.Duration {
@@ -137,10 +192,13 @@ func envDur(key string, def time.Duration) time.Duration {
 	return def
 }
 
-func (b *Broker) janitor(ln net.Listener) {
+func (b *Broker) janitor() {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for range t.C {
+		if b.stopping.Load() {
+			return
+		}
 		b.mu.Lock()
 		now := time.Now()
 		for _, ch := range b.chats {
@@ -151,12 +209,9 @@ func (b *Broker) janitor(ln net.Listener) {
 			}
 		}
 		stop := b.active == 0 && now.Sub(b.idleAt) > b.idle
-		if stop {
-			b.stopping.Store(true)
-		}
 		b.mu.Unlock()
 		if stop {
-			ln.Close()
+			b.shutdown("idle")
 			return
 		}
 	}

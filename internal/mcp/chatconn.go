@@ -98,7 +98,7 @@ func (cc *chatConn) reconnect() *client.Conn {
 		if delay < 10*time.Second {
 			delay *= 2
 		}
-		conn, err := client.Connect()
+		conn, err := client.ConnectWaiting(restartWait) // give `ccqc broker restart` time to bring up the new broker
 		if err != nil {
 			log.Printf("reconnect /%s: %v", cc.local, err)
 			continue

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
@@ -130,9 +129,14 @@ func (s *Session) sessionID() string {
 	return s.sid
 }
 
-// setSessionID learns the Claude Code session id from a hook. The first id starts the
-// auto-join; a later different id (after /clear) takes over the remembered chats.
+// setSessionID learns the Claude Code session id from a hook. A hook talking to us means the
+// rewake hook is configured: from now on events wait for it instead of going out as channel
+// notifications. The first id starts the auto-join; a later id (after /clear) takes over
+// the remembered chats.
 func (s *Session) setSessionID(sid string) {
+	s.hookMu.Lock()
+	s.hook.used = true
+	s.hookMu.Unlock()
 	s.mu.Lock()
 	old := s.sid
 	s.sid = sid
@@ -161,7 +165,3 @@ func (s *Session) autoJoin(sid string) {
 		}
 	}
 }
-
-// hookDelivery: CCQC_DELIVERY=hook means the rewake hook is configured, so events wait
-// for it from the very start instead of going out as (possibly ignored) channel notifications.
-func hookDelivery() bool { return os.Getenv("CCQC_DELIVERY") == "hook" }

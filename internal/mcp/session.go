@@ -13,6 +13,7 @@ import (
 
 const (
 	presenceDelay = 3 * time.Second // presence lines are batched into one event
+	restartWait   = 5 * time.Second // on reconnect, wait this long for a restarting broker
 	inboxCap      = 300
 	quietCap      = 50
 )
@@ -37,8 +38,7 @@ type inboxItem struct {
 }
 
 func newSession(notify func(string, map[string]string)) *Session {
-	return &Session{chats: map[string]*chatConn{}, notify: notify,
-		hook: hookState{used: hookDelivery()}}
+	return &Session{chats: map[string]*chatConn{}, notify: notify}
 }
 
 func (s *Session) shutdown() {

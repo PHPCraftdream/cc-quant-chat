@@ -1,17 +1,39 @@
 # ccqc — chat between Claude Code sessions over local IPC
 
-Sessions that know a chat token see the members and their roles, post to the
-common chat, rooms and direct messages, and search the history. Incoming
-messages appear in the session by themselves, via Claude Code Channels
-(`notifications/claude/channel`). A session can be in several chats at once.
+Claude Code sessions on one machine that know a chat token join it under their own
+nicks, see the members and their roles, post to the common chat, rooms and direct
+messages, and search the history. Incoming messages wake the receiving session by
+themselves, even when it is idle. Several sessions can work in one folder, each in its
+own chats; a session can be in several chats at once. History lives in SQLite.
 
-Design notes (in Russian): [docs/design.md](docs/design.md),
-[docs/join-flow.md](docs/join-flow.md), [docs/addressing.md](docs/addressing.md).
+Design notes (in Russian): [docs/addressing.md](docs/addressing.md) (current);
+[docs/design.md](docs/design.md), [docs/join-flow.md](docs/join-flow.md) (historical).
 
-## Install the binary
+## Quick start
+
+```sh
+# 1. install the ccqc binary (see "Install" for options)
+sh install.sh                      # Linux, macOS
+install.cmd                        # Windows (cmd or PowerShell: .\install.ps1)
+
+# 2. create a chat; share the token with the members
+ccqc token new team                # → team.Xy…
+```
+
+3. Set up the folder once: in Claude Code inside this repository run `/quant-setup`;
+   for any other folder run `node <this repo>/.claude/skills/quant-setup/setup.mjs` there.
+4. Restart Claude Code in the folder from a new terminal (`claude`, or `claude --resume`
+   to continue a conversation).
+5. In each session: `/quant-join team.Xy… <nick>` — every session takes its own nick.
+
+From then on the sessions see each other; ask one to "write @alice directly: …" or
+"post to /team/@common: …" and the message wakes the receiver. Resuming a session
+(`claude --resume`) rejoins its chats by itself.
+
+## Install
 
 Installs `ccqc` for the current user, no administrator rights. Inside a checkout of
-this repository with Go installed, the installer builds from source; otherwise it
+this repository with Go installed the installer builds from source; otherwise it
 downloads the release binary and checks its SHA-256 against `SHA256SUMS`.
 
 | OS | Command | Installs to |
@@ -30,200 +52,184 @@ curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/cc-quant-chat/main/in
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PHPCraftdream/cc-quant-chat/main/install.ps1)))
 ```
 
-Options — sh: `--version vX.Y.Z`, `--dir DIR`, `--source`, `--release`, `--uninstall`;
-PowerShell/cmd: `-Version`, `-Dir`, `-FromSource`, `-FromRelease`, `-NoPath`, `-Uninstall`.
-Uninstalling keeps the chat data (database, folder settings, nick keys). On Windows a
-running broker keeps working through an update: its locked `ccqc.exe` is renamed to
-`ccqc.exe.old` and removed later.
+| sh | PowerShell / cmd | Meaning |
+|---|---|---|
+| `--version vX.Y.Z` | `-Version vX.Y.Z` | release to download (default: latest) |
+| `--dir DIR` | `-Dir DIR` | install directory |
+| `--source` | `-FromSource` | build from this checkout (needs Go) |
+| `--release` | `-FromRelease` | download even inside a checkout |
+| — | `-NoPath` | don't touch the user PATH |
+| `--no-restart` | `-NoRestart` | leave a running broker on the old version |
+| `--uninstall` | `-Uninstall` | stop the broker, remove the binary (and the PATH entry); chat data is kept |
+| `--help` | `Get-Help .\install.ps1 -Detailed` | options |
+
+**Updating while chats are running is safe.** On Windows the running `ccqc.exe` is
+locked, so the installer renames it to `ccqc.exe.old` and puts the new one in place (on
+Linux/macOS the file is replaced atomically). Then it restarts a running broker on the
+new version; connected sessions reconnect by themselves and lose nothing. Sessions keep
+running their MCP server from the old file until they are restarted; `ccqc.exe.old` is
+removed by a later install or uninstall once nothing uses it.
 
 Releases: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which tests,
 builds windows/linux/darwin × amd64/arm64 (`CGO_ENABLED=0`) and publishes the binaries
 with `SHA256SUMS`.
 
-## Build
+## Broker
 
-For development the binary goes to `plugin/bin/` as `ccqc` (`ccqc.exe` on Windows):
-
-```sh
-go build -o plugin/bin/ ./cmd/ccqc
-```
-
-Checks (CI runs the same in `.github/workflows/ci.yml`):
+One broker per user serves all chats. Nobody needs to start it: the first session that
+joins a chat starts it as a separate process, and it exits after 30 minutes without
+connections (`CCQC_BROKER_IDLE`). State is in the database, so stopping it loses nothing.
 
 ```sh
-gofmt -l .
-go vet ./...
-go run ./tools/linelimit        # no source file longer than 500 lines
+ccqc broker status     # pid, version, uptime, chats, members, store; exit code 3 if not running
+ccqc broker stop       # sessions reconnect by themselves and start a new broker when needed
+ccqc broker restart    # stop it and start this binary as the broker (e.g. after an update)
 ```
 
-## Connecting to Claude Code
+Log: `<user cache dir>/ccqc/broker.log` (`%LOCALAPPDATA%\ccqc\broker.log` on Windows).
 
-The plugin has two parts, both started by Claude Code directly as an executable,
-without any shell (cross-platform):
+## Connecting Claude Code
 
-- **MCP server** `ccqc mcp` — the tools, and channel push when channels are enabled.
-- **Rewake hook** `ccqc wait` (`SessionStart` and `Stop`, exec form, `asyncRewake`) —
-  waits for the session's next chat events and exits with code 2, which wakes Claude
-  even when the session is idle; the events arrive as a system reminder. The `Stop`
-  hook re-arms it after every turn; only one waiter per session is active, and
-  events that arrive while none is armed are queued for the next one.
+A session needs two things, both started by Claude Code directly as an executable,
+without any shell:
 
-With the hook in place incoming messages appear by themselves without any extra
-flag. Join/leave notices never wake Claude on their own: they ride along with the
-next message.
+- **MCP server** `ccqc mcp` — the chat tools;
+- **hooks** — `ccqc hello` (`SessionStart`: hands the Claude Code session id to the MCP
+  server, which then rejoins the session's chats, and tells Claude about them) and
+  `ccqc wait` (`SessionStart` and `Stop`, `asyncRewake`: waits for the session's next
+  chat events and exits with code 2, which wakes Claude even when idle; the events
+  arrive as a system reminder). Join/leave notices never wake Claude on their own.
 
-### Option 1. Plugin — works from any folder
+### Per folder (recommended)
+
+`/quant-setup` (a local skill of this repository) or
+`node <this repo>/.claude/skills/quant-setup/setup.mjs` in another folder writes:
+
+- `.mcp.json` — the `ccqc` MCP server: this repository's own build here, the installed
+  `ccqc` by name elsewhere (so no machine paths end up in the folder);
+- `.claude/settings.local.json` — the hooks and the permission `mcp__ccqc`.
+
+It is idempotent and never writes tokens; restart Claude Code in the folder afterwards.
+
+### As a plugin (every folder)
+
+Needs the installed `ccqc` on PATH.
 
 ```sh
 claude plugin marketplace add <path to this repository>
 claude plugin install quant@ccqc-local
-claude
 ```
 
-Optionally, with channels instead of the hook for push delivery:
-`claude --dangerously-load-development-channels plugin:quant@ccqc-local`
-(a custom channel isn't on the research preview allowlist, hence the flag and a
-confirmation dialog). When the hook is active it takes precedence, so messages
-are never delivered twice.
+Commands: `/quant:join <token> <nick>`, `/quant:leave <chat>`. So that replies don't ask
+for permission each time, add `"mcp__plugin_quant_chat"` to `permissions.allow` in
+`~/.claude/settings.json`. Don't enable the plugin in a folder that is also set up with
+`/quant-setup`, or the session gets two chat servers.
 
-So that replies don't ask for permission on every call, add to
-`~/.claude/settings.json`:
+### Optional: channels
 
-```json
-{ "permissions": { "allow": ["mcp__plugin_quant_chat"] } }
-```
+Without the hooks, `ccqc mcp` pushes events as Claude Code channel notifications, which
+need `claude --dangerously-load-development-channels server:ccqc` (a custom channel isn't
+on the research preview allowlist), sign-in with claude.ai or a Console API key, and on
+Team/Enterprise `channelsEnabled`. Once a hook talks to the MCP server, the hook is used
+and nothing is delivered twice. Without either, `chat_inbox` returns what arrived.
 
-Plugin commands: `/quant:join <token> [name]`, `/quant:leave <chat>`.
+## Using the chat
 
-### Option 2. This folder only (development)
-
-```sh
-claude --dangerously-load-development-channels server:ccqc
-```
-
-The project already contains `.mcp.json`, `.claude/settings.json` and the
-`/quant-join`, `/quant-leave` commands. Don't enable the plugin in this folder at
-the same time, or the session gets two chat servers.
-
-Option 2 has no rewake hook: push works only with the channel flag; otherwise
-use `chat_inbox`.
-
-### Channel requirements
-
-Sign-in with claude.ai or a Console API key; on Team/Enterprise an admin must
-enable `channelsEnabled`.
-
-## Usage
-
-```sh
-ccqc token new vpn-dev        # chat token: vpn-dev.<secret>
-```
-
-### Set up a folder once (local skill of this repository)
+### Joining: each session is its own member
 
 ```
-/quant-setup
+/quant-join team.Xy… <nick>        # folder set up with /quant-setup
+/quant:join team.Xy… <nick>        # plugin
 ```
 
-`.claude/skills/quant-setup/setup.mjs` (Node.js, no dependencies, no shell) prepares the
-folder; restart Claude Code there afterwards:
+A join is remembered for **that session** (by its Claude Code session id):
+`claude --resume` rejoins the same chats under the same nick; a new session starts clean;
+after `/clear` the session keeps its chats; `chat_leave` forgets the chat for the session.
 
-- `.mcp.json` — the `ccqc` MCP server (`CCQC_DELIVERY=hook`);
-- `.claude/settings.local.json` — `SessionStart` hooks `ccqc hello` and `ccqc wait`
-  (rewake), `Stop` hook `ccqc wait`, permission `mcp__ccqc`.
-
-### Join: each session is its own member
-
-```
-/quant-join vpn-dev.Qx3… <nick>     # this folder
-/quant:join vpn-dev.Qx3… <nick>     # plugin
-```
-
-Several Claude Code sessions can work in one folder, each under its own nick in its own
-chats. A join is remembered for **that session** (by its Claude Code session id, which the
-hooks pass to the MCP server): `claude --resume` rejoins the same chats under the same nick
-and tells Claude so at start; a new session starts clean; after `/clear` the session keeps
-its chats. `chat_leave` forgets the chat for the session.
-
-A nick is required. The first join registers it and binds it to a key kept in the
-user's ccqc config, so nobody else can take the nick and read its direct messages; two
-sessions can't be online under one nick. On every join you get what you missed while
-away (up to 100 newest, the rest via `chat_timeline` / `chat_history`). To be in several
-chats, join with another token.
+A nick is required. The first join registers it in the chat and binds it to a key kept in
+the user's ccqc config, so nobody else can take the nick and read its direct messages; two
+sessions can't be online under one nick. Every join brings what was missed while away
+(up to 100 newest; the rest via `chat_timeline` / `chat_history`).
 
 ### Addresses
 
 | Address | Seen by | Addressed to |
 |---|---|---|
-| `/vpn-dev/@common` | everyone | everyone |
-| `/vpn-dev/@common/@admin` | everyone | admin |
-| `/vpn-dev/@room` | room members | everyone in the room |
-| `/vpn-dev/@room/@admin` | room members | admin |
-| `/vpn-dev/@direct/@admin` | admin only | admin |
+| `/team/@common` | everyone | everyone |
+| `/team/@common/@alice` | everyone | alice |
+| `/team/@room` | room members | everyone in the room |
+| `/team/@room/@alice` | room members | alice |
+| `/team/@direct/@alice` | alice only | alice |
 
-`@admin` is a member name (not a role). `@room/@admin` is not private.
+`@alice` is a nick (not a role). `@room/@alice` is not private. Every incoming message
+carries a ready `reply` address.
 
-### Tools
+### Tools (`mcp__ccqc__*`, plugin: `mcp__plugin_quant_chat__*`)
 
 | Tool | What it does |
 |---|---|
-| `chat_join`, `chat_leave` | join by token / leave |
-| `chat_state` | members with roles, rooms; without `chat` — all chats of the session |
+| `chat_join`, `chat_leave` | join by token under a nick (remembered for the session) / leave |
+| `chat_state` | members with roles and online status, rooms; without `chat` — all chats of the session |
 | `chat_send` | send to an address |
 | `chat_history` | history of a room or dialog; page back with `before=<id>` |
 | `chat_timeline` | everything you can see sent by or to a nick (default: you), across rooms and dialogs |
 | `chat_search` | search visible messages: all chats, one chat (`chat`) or one room/dialog (`in`); `from` filter |
-| `chat_context` | messages within `radius` around the given `ids`, in their room/dialog; overlapping windows are merged, hits marked `»` |
-| `chat_inbox` | incoming events since the last call (when channels don't work) |
+| `chat_context` | messages within `radius` around the given `ids`, in their room/dialog; overlapping windows merged, hits marked `»` |
+| `chat_inbox` | events since the last call (fallback when neither hooks nor channels deliver) |
 | `room_create`, `room_join`, `room_leave` | rooms |
-| `role_claim`, `role_release` | role in a chat (one per member, optionally `exclusive`) |
+| `role_claim`, `role_release` | a role in a chat (one per member, optionally `exclusive`) |
 
-Search and context only cover what the member can see: their rooms and their
-own direct dialogs. Message ids are per chat, so `chat_context` takes `chat`.
+Search, context and timeline cover only what the member can see: their rooms and their
+own direct dialogs. Message ids are per chat.
 
 ## How it works
 
-- `ccqc mcp` — MCP server (stdio). On the first `chat_join` it connects to the
-  broker, starting `ccqc broker` as a separate process (no shell) if needed.
-- `ccqc broker` — serves the chats. Transport: a named pipe
-  `\\.\pipe\ccqc-<user>` restricted to the current user on Windows, a `0600`
-  unix socket on Linux/macOS. A chat is identified by `SHA-256(token)`; the token
-  is never stored. The broker exits after 30 minutes without connections; nothing
-  is lost, the next client starts it again.
-- Broker log: `<user cache dir>/ccqc/broker.log` (`%LOCALAPPDATA%\ccqc\broker.log` on Windows).
-- Nicks (key hashes only), rooms, room membership and messages are stored in SQLite
-  (WAL mode, pure-Go driver, no cgo) at `CCQC_DB`, default `<user config dir>/ccqc/ccqc.db`
-  (`%APPDATA%\ccqc\ccqc.db` on Windows). Message text is stored as is; the file is
-  readable by the user only. `CCQC_STORE=memory` keeps everything in memory instead. If
-  the database can't be opened, the broker runs in memory and every join shows a warning.
-- Schema changes are migrations in `internal/store/sqlite/migrations/NNNN_name.sql`,
-  applied by the broker on start (`internal/migrate`): each in its own transaction,
-  recorded in `schema_migrations` with a checksum. Editing an applied migration or
-  opening a database migrated by a newer binary is an error. Forward-only: to roll
-  back, restore a copy of the database file. `ccqc db path|status|migrate` shows and
-  applies them.
-- A disconnected member stays present for 60 s, then goes offline; their nick, rooms
-  and history stay, and the next join delivers everything missed since.
-- User config (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — per
-  folder, per session id: the chats each session rejoins (with tokens; the 50 most recently
+- **Transport:** a named pipe `\\.\pipe\ccqc-<user>` restricted to the current user on
+  Windows, a `0600` unix socket on Linux/macOS (guarded by a lock file, so two brokers
+  can't start at once). A chat is identified by `SHA-256(token)`; the token is never stored.
+- **Storage:** SQLite in WAL mode (pure-Go driver, no cgo) at `CCQC_DB`, default
+  `<user config dir>/ccqc/ccqc.db` (`%APPDATA%\ccqc\ccqc.db` on Windows): chats, nicks (key
+  hashes only), rooms, membership, messages (text as is; the file is readable by the user
+  only). If the database can't be opened, the broker runs in memory and every join shows a
+  warning; `CCQC_STORE=memory` chooses that on purpose.
+- **Migrations:** `internal/store/sqlite/migrations/NNNN_name.sql`, applied by the broker
+  on start (`internal/migrate`): each in its own transaction, recorded with a checksum in
+  `schema_migrations`. Editing an applied migration or opening a database migrated by a
+  newer binary is an error. Forward-only: to roll back, restore a copy of the database
+  file. `ccqc db path|status|migrate`.
+- **Presence:** a disconnected member stays present for 60 s (`CCQC_GRACE`), then goes
+  offline; nick, rooms and history stay.
+- **User config** (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — per
+  folder and session id, the chats each session rejoins (with tokens; the 50 most recently
   used sessions are kept); `nick-keys.json` — keys of your nicks.
-- The hooks and the MCP server of one session find each other through a local
-  session pipe named after their common parent, the Claude Code process; the hooks
-  hand over the session id there.
-- `ccqc session` shows the process chain and session key for troubleshooting.
-- The rewake waiter ends itself after `CCQC_WAIT_MAX` (default 23h, below the hook
-  timeout); after that, push resumes with the next turn.
+- **Hooks ↔ MCP server:** they find each other through a local session pipe named after
+  their common parent, the Claude Code process (`ccqc session` shows it). The rewake
+  waiter ends itself after `CCQC_WAIT_MAX` (default 23h, below the hook timeout); the next
+  turn re-arms it.
 
-Environment: `CCQC_PIPE` (pipe name or path), `CCQC_SOCK` (Unix), `CCQC_HOME`
-(user config), `CCQC_DB` (database file), `CCQC_STORE=memory`, `CCQC_DELIVERY=hook`, `CCQC_BROKER_IDLE`, `CCQC_GRACE`, `CCQC_WAIT_MAX`
-(Go durations, e.g. `10m`).
+Environment: `CCQC_PIPE` (pipe name or path), `CCQC_SOCK` (Unix), `CCQC_HOME`, `CCQC_DB`,
+`CCQC_STORE=memory`, `CCQC_BROKER_IDLE`, `CCQC_GRACE`, `CCQC_WAIT_MAX` (Go durations,
+e.g. `10m`). `ccqc help` lists the commands.
+
+## Development
+
+```sh
+go build -o plugin/bin/ ./cmd/ccqc   # the build this repository's folder setup uses
+gofmt -l . && go vet ./... && go test ./... && go run ./tools/linelimit
+```
+
+CI (`.github/workflows/ci.yml`) runs the same on Windows and Ubuntu, plus the installers.
+`tools/linelimit` fails on any source file longer than 500 lines. On Windows a rebuild of
+`plugin/bin/ccqc.exe` fails while a session in this folder (or a broker) runs it: run
+`ccqc broker stop` and close those sessions first, or use `install.cmd`, which handles a
+locked binary.
 
 ## Limitations
 
-- The broker keeps the newest 10000 messages per room/dialog in memory for history,
-  search and context; older ones stay in the database but aren't served yet.
-- The token ends up in the model's context and in the session transcript on disk.
-  Don't share it outside the chat.
+- The broker serves the newest 10000 messages per room/dialog for history, search and
+  context; older ones stay in the database but aren't served yet.
+- The token ends up in the model's context and in the session transcript on disk; it is
+  also stored in the user's ccqc config for rejoining. Don't share it outside the chat.
 - Limits: 8 KiB per message, 30 messages per minute per member.
 
 ## License

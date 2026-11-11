@@ -23,7 +23,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
-          ldflags="-s -w -X github.com/PHPCraftdream/cc-quant-chat/internal/mcp.Version=${GITHUB_REF_NAME}"
+          ldflags="-s -w -X github.com/PHPCraftdream/cc-quant-chat/internal/version.Version=${GITHUB_REF_NAME}"
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os=${target%/*}; arch=${target#*/}
             ext=""; [ "$os" = windows ] && ext=".exe"

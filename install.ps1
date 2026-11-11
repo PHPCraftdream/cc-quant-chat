@@ -8,6 +8,25 @@
   %LOCALAPPDATA%\Programs\ccqc and adds that folder to the user PATH.
   Chat data (%APPDATA%\ccqc) is never touched.
 
+  Reinstalling over a running broker is safe: the locked ccqc.exe is renamed to
+  ccqc.exe.old, the new one takes its place, and the running broker is restarted on the
+  new version (connected sessions reconnect by themselves). -NoRestart leaves it running.
+
+.PARAMETER Version
+  Release tag to download (default: latest).
+.PARAMETER Dir
+  Install directory (default: %LOCALAPPDATA%\Programs\ccqc).
+.PARAMETER FromSource
+  Build from this checkout (needs Go).
+.PARAMETER FromRelease
+  Download the release binary even inside a checkout.
+.PARAMETER NoPath
+  Don't touch the user PATH.
+.PARAMETER NoRestart
+  Don't restart a running broker after the update.
+.PARAMETER Uninstall
+  Stop the broker, remove the binary and the PATH entry; chat data is kept.
+
 .EXAMPLE
   .\install.ps1
   .\install.ps1 -Version v0.2.0
@@ -21,6 +40,7 @@ param(
     [switch]$FromSource,
     [switch]$FromRelease,
     [switch]$NoPath,
+    [switch]$NoRestart,
     [switch]$Uninstall
 )
 
@@ -64,12 +84,18 @@ function Test-PathEntry([string]$PathValue, [string]$Entry) {
 
 if ($Uninstall) {
     if (Test-Path $Exe) {
+        # Only binaries that know `broker stop` get it: an old one would start a broker instead.
+        $help = & { $ErrorActionPreference = 'Continue'; & $Exe help 2>&1 | Out-String }
+        if ($help -match 'broker stop') {
+            & { $ErrorActionPreference = 'Continue'; & $Exe broker stop *> $null }
+            Start-Sleep -Milliseconds 300
+        }
         try {
             Remove-Item $Exe -Force
         } catch {
-            # A running broker locks the exe; renaming still works, the file goes on next install.
+            # A running ccqc (session or broker) locks the exe; renaming still works.
             Move-Item $Exe "$Exe.old" -Force
-            Say 'ccqc is running (broker); it was renamed to ccqc.exe.old and stops on its own'
+            Say 'ccqc.exe is in use (a Claude Code session or the broker); renamed to ccqc.exe.old'
         }
         Say "removed $Exe"
     } else {
@@ -77,7 +103,7 @@ if ($Uninstall) {
     }
     Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue
     if (Test-Path "$Exe.old") {
-        Say "$Exe.old belongs to a running broker; run -Uninstall again after it exits (30 idle minutes)"
+        Say "$Exe.old is still used by a running ccqc (a Claude Code session); run -Uninstall again after those sessions end"
     } elseif ((Test-Path $Dir) -and -not (Get-ChildItem $Dir -Force)) {
         Remove-Item $Dir -Force
     }
@@ -117,7 +143,7 @@ try {
         $env:CGO_ENABLED = '0'
         Push-Location $src
         try {
-            & go build -trimpath -ldflags "-s -w -X github.com/$Repo/internal/mcp.Version=$ver" -o $new ./cmd/ccqc
+            & go build -trimpath -ldflags "-s -w -X github.com/$Repo/internal/version.Version=$ver" -o $new ./cmd/ccqc
             if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
         } finally { Pop-Location }
     } else {
@@ -152,6 +178,18 @@ try {
     Move-Item $new $Exe -Force
     Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue # still running: removed next time
     Say "installed $(& $Exe version) to $Exe"
+
+    # A running broker keeps the old code: restart it on the new binary.
+    if (-not $NoRestart) {
+        & { $ErrorActionPreference = 'Continue'; & $Exe broker status *> $null }
+        if ($LASTEXITCODE -eq 0) {
+            Say 'restarting the running broker on the new version (sessions reconnect by themselves)'
+            & $Exe broker restart
+            if ($LASTEXITCODE -ne 0) { Say "broker restart failed; run 'ccqc broker restart' later" }
+            Start-Sleep -Milliseconds 500
+            Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     if (-not $NoPath) {
         $userPath = Get-UserPath

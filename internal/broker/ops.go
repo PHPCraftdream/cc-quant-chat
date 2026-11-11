@@ -13,6 +13,13 @@ import (
 func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 	switch f.Op {
 	case "ping":
+		return b.info(), nil
+	case "shutdown":
+		// Reply first, then stop: the caller (ccqc broker stop/restart) waits for the pipe to go.
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			b.shutdown("requested")
+		}()
 		return nil, nil
 	case "join":
 		var a proto.JoinArgs

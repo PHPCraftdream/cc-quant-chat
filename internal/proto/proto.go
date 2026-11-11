@@ -204,6 +204,17 @@ type Welcome struct {
 	Warning     string  `json:"warning,omitempty"`      // e.g. history is not being saved
 }
 
+// BrokerInfo: reply to "ping"; shown by `ccqc broker status`.
+type BrokerInfo struct {
+	Version string `json:"version"`
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
+	Chats   int    `json:"chats"`   // loaded chats
+	Clients int    `json:"clients"` // connected members
+	Store   string `json:"store"`
+	Warning string `json:"warning,omitempty"`
+}
+
 type SendResult struct {
 	ID int64 `json:"id"`
 }

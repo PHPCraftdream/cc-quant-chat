@@ -6,24 +6,38 @@ import (
 	"log"
 	"os"
 
-	"github.com/PHPCraftdream/cc-quant-chat/internal/broker"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/mcp"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proc"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/version"
 )
 
 const usage = `ccqc — chat between Claude Code sessions over local IPC
 
-usage:
-  ccqc mcp                MCP stdio server (started by Claude Code)
-  ccqc wait               asyncRewake hook: wait for the session's next events, exit 2 to wake Claude
-  ccqc hello              SessionStart hook: join the session's remembered chats, tell Claude
-  ccqc broker             run the broker (normally auto-started)
-  ccqc token new <chat>   print a new chat token: <chat>.<secret>
-  ccqc db path|status|migrate
-                          chat database (SQLite, WAL): location, migration status, apply migrations
-  ccqc session            show the parent process chain and session key (hook troubleshooting)
-  ccqc version`
+Setup:
+  ccqc token new <chat>     print a new chat token: <chat>.<secret> (share it with the members)
+  ccqc version              print the version
+  ccqc help                 this help
+
+Broker (started automatically; one per user):
+  ccqc broker status        is it running: pid, version, uptime, chats, members, store
+                            (exit code 3 when it is not running)
+  ccqc broker stop          stop it; connected sessions reconnect by themselves
+  ccqc broker restart       stop it and start this binary as the broker (e.g. after an update)
+  ccqc broker [run]         run the broker in the foreground
+
+Database (SQLite, WAL; CCQC_DB, default <user config dir>/ccqc/ccqc.db):
+  ccqc db path              print the database location
+  ccqc db status            applied and pending schema migrations
+  ccqc db migrate           apply pending migrations (the broker also does it on start)
+
+Used by Claude Code (configured by /quant-setup or the plugin):
+  ccqc mcp                  MCP stdio server: the chat tools
+  ccqc hello                SessionStart hook: hands the session id over, tells Claude its chats
+  ccqc wait                 asyncRewake hook: waits for the session's next chat events
+  ccqc session              troubleshooting: process chain and session key of the hooks
+
+Docs: https://github.com/PHPCraftdream/cc-quant-chat`
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -36,7 +50,9 @@ func main() {
 	case "mcp":
 		err = mcp.Run()
 	case "broker":
-		err = broker.Run()
+		err = runBroker(os.Args[2:])
+	case "help", "-h", "--help":
+		fmt.Println(usage)
 	case "wait":
 		os.Exit(mcp.RunWait())
 	case "hello":
@@ -55,7 +71,7 @@ func main() {
 			fmt.Println(tok)
 		}
 	case "version":
-		fmt.Println("ccqc", mcp.Version)
+		fmt.Println("ccqc", version.Version)
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

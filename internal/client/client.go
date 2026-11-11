@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,24 +34,11 @@ type Conn struct {
 	once    sync.Once
 }
 
-// Connect dials the broker, starting it if it isn't running.
-func Connect() (*Conn, error) {
+// Dial connects to a running broker; it never starts one.
+func Dial() (*Conn, error) {
 	nc, err := ipc.Dial(time.Second)
 	if err != nil {
-		if serr := spawnBroker(); serr != nil {
-			return nil, fmt.Errorf("start broker: %w", serr)
-		}
-		deadline := time.Now().Add(8 * time.Second)
-		for {
-			nc, err = ipc.Dial(time.Second)
-			if err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				return nil, fmt.Errorf("broker not reachable at %s: %w", ipc.Path(), err)
-			}
-			time.Sleep(150 * time.Millisecond)
-		}
+		return nil, err
 	}
 	c := &Conn{
 		nc:      nc,
@@ -60,6 +48,37 @@ func Connect() (*Conn, error) {
 	}
 	go c.readLoop()
 	return c, nil
+}
+
+// Connect dials the broker, starting it if it isn't running.
+func Connect() (*Conn, error) { return ConnectWaiting(0) }
+
+// ConnectWaiting first waits up to wait for a broker to appear (e.g. one that
+// `ccqc broker restart` is starting) and only then starts one itself.
+func ConnectWaiting(wait time.Duration) (*Conn, error) {
+	if c, err := WaitDial(wait); err == nil {
+		return c, nil
+	}
+	if err := SpawnBroker(); err != nil {
+		return nil, fmt.Errorf("start broker: %w", err)
+	}
+	c, err := WaitDial(8 * time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("broker not reachable at %s: %w", ipc.Path(), err)
+	}
+	return c, nil
+}
+
+// WaitDial retries Dial until it succeeds or wait passes (at least one attempt).
+func WaitDial(wait time.Duration) (*Conn, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		c, err := Dial()
+		if err == nil || !time.Now().Before(deadline) {
+			return c, err
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
 }
 
 func (c *Conn) Done() <-chan struct{} { return c.done }
@@ -152,9 +171,9 @@ func (c *Conn) Call(op string, args, out any) error {
 	}
 }
 
-// spawnBroker starts "<self> broker" detached; output goes to <cache>/ccqc/broker.log.
-func spawnBroker() error {
-	exe, err := os.Executable()
+// SpawnBroker starts "<self> broker" detached; output goes to <cache>/ccqc/broker.log.
+func SpawnBroker() error {
+	exe, err := installedExe()
 	if err != nil {
 		return err
 	}
@@ -183,4 +202,21 @@ func spawnBroker() error {
 		}
 	}
 	return err
+}
+
+// installedExe: the path this binary is installed under. After an update while running,
+// the process may still point at its old file: "ccqc.exe.old" (renamed by the Windows
+// installer) or "ccqc (deleted)" (replaced on Linux) — the broker must start from the new one.
+func installedExe() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	if trimmed := strings.TrimSuffix(exe, ".old"); trimmed != exe {
+		if _, err := os.Stat(trimmed); err == nil {
+			exe = trimmed
+		}
+	}
+	return exe, nil
 }
