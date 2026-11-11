@@ -186,3 +186,29 @@ func TestOldClientsAreToldToRestart(t *testing.T) {
 		t.Fatalf("by proto = %v", info.ByProto)
 	}
 }
+
+func TestStopDoesNotWaitForeverForSeveralStuckClients(t *testing.T) {
+	tok, _ := token(t)
+	b := stoppable(t, newTestBroker(newMemStore()))
+	a := b.connect(t)
+	a.join(tok, "alice", proto.ProtoVersion)
+	var gates []chan struct{}
+	for _, name := range []string{"bob", "carol", "dave"} {
+		c := b.connect(t)
+		c.join(tok, name, proto.ProtoVersion)
+		gates = append(gates, c.hold()) // a frozen process: it never reads again
+	}
+	for i := 0; i < 20; i++ {
+		a.send(proto.RoomCommon, "", "more than the pipe holds")
+	}
+	stopped := make(chan struct{})
+	go func() { b.shutdown("test"); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(drainWait + 3*time.Second):
+		t.Fatal("shutdown is stuck on clients that don't read")
+	}
+	for _, g := range gates {
+		close(g)
+	}
+}

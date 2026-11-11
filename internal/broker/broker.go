@@ -165,11 +165,13 @@ func (b *Broker) shutdown(reason string) {
 	for _, c := range conns {
 		c.finish()
 	}
-	deadline := time.After(drainWait)
+	expired := make(chan struct{}) // closed, so every waiter sees it (a timer channel fires once)
+	t := time.AfterFunc(drainWait, func() { close(expired) })
+	defer t.Stop()
 	for _, c := range conns {
 		select {
 		case <-c.done:
-		case <-deadline:
+		case <-expired:
 		}
 	}
 	for _, c := range conns {

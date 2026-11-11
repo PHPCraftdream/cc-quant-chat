@@ -112,6 +112,10 @@ the conversation:
   it; the broker tells such a session so at join, and `ccqc broker status` shows how many
   connected clients run each protocol level (`proto 0` = old). Restart those sessions, or
   update while the chats are quiet.
+- **No way back without a copy of the database.** The new broker applies the schema
+  migrations (0002, 0003 so far); an older binary then refuses to open the database ("migrated
+  by a newer version"). Copy `ccqc.db` (`ccqc db path`) before updating if you may want to
+  go back.
 - **Windows:** the installer works around the locked `ccqc.exe`. A build placed in
   `plugin/bin/` by hand (`go build -o plugin/bin/ ./cmd/ccqc`) fails while a session of this
   folder or the broker runs that file: run `ccqc broker stop`, close those sessions, build,
