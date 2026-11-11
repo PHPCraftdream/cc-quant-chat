@@ -86,9 +86,9 @@ test('a batch that does not hold the events it claims is shown as plain text', a
 
 test('a batch the row does not carry is drawn from the row the session appended', async ($, on) => {
   let uuid = ''
-  on('session.append', (_, e) => {
+  on('session.append', ($, e, next) => {
     uuid = e.uuid
-    return { message: e.message, uuid: e.uuid }
+    return next(e)
   })
   await $.session.append({
     message: { type: 'user', content: [{ type: 'text', text: 'Stop hook feedback:\n' + batch }] },

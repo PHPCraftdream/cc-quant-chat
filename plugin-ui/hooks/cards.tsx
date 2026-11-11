@@ -69,8 +69,7 @@ function MsgRow(ui: UI, p: CardProps, m: Msg, i: number) {
         ) : (
           <Button key={`${p.key}:p:${k}`} plain onPress={() => p.onToggle(k)}>
             <Text wrap="truncate-end" dimColor>
-              {firstLine(m.text)}
-              {extra > 0 ? `  (+${extra} line${extra === 1 ? '' : 's'})` : ''}
+              {firstLine(m.text) + (extra > 0 ? `  (+${extra} line${extra === 1 ? '' : 's'})` : '')}
             </Text>
           </Button>
         )}
