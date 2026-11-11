@@ -13,26 +13,6 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// RunTail is a monitor: prints this session's chat events, one per line.
-func RunTail() error {
-	key, err := proc.SessionKey()
-	if err != nil {
-		return err
-	}
-	for {
-		c, err := ipc.DialSession(key, 2*time.Second)
-		if err != nil {
-			time.Sleep(2 * time.Second) // MCP server not up yet or restarting
-			continue
-		}
-		if _, err := c.Write([]byte("tail\n")); err == nil {
-			_, _ = io.Copy(os.Stdout, c)
-		}
-		c.Close()
-		time.Sleep(time.Second)
-	}
-}
-
 // RunHello is a SessionStart hook: tells Claude which chats this folder joins automatically.
 func RunHello() {
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin) }()

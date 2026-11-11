@@ -2,8 +2,9 @@ package mcp
 
 import (
 	"fmt"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"strings"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 func replyAddr(local string, m *proto.Message, toMe bool) string {

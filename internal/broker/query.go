@@ -1,9 +1,10 @@
 package broker
 
 import (
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"sort"
 	"strings"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 func (ch *chat) history(m *member, a proto.HistoryArgs) (any, *proto.Error) {

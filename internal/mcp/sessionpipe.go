@@ -14,10 +14,7 @@ import (
 )
 
 // Session pipe: local endpoint for helpers of this Claude Code session.
-// The first line from a helper selects its mode:
-//
-//	"tail" — monitor: receives every event as one line.
-//	"wait" — rewake hook: receives the next batch of events; the hook then exits 2 to wake Claude.
+// The helper sends "wait"; it gets the next batch of events and exits 2 to wake Claude.
 const (
 	waitBatchDelay = 300 * time.Millisecond // collect a burst into one wake-up
 	waitBatchMax   = 50
@@ -61,12 +58,6 @@ func (s *Session) handshake(c net.Conn) {
 		return
 	}
 	switch strings.TrimSpace(mode) {
-	case "tail":
-		s.subsMu.Lock()
-		s.subs[c] = true
-		s.subsMu.Unlock()
-		_, _ = io.Copy(io.Discard, c) // returns when the monitor goes away
-		s.dropSub(c)
 	case "wait":
 		s.addWaiter(c)
 	default:
@@ -74,19 +65,12 @@ func (s *Session) handshake(c net.Conn) {
 	}
 }
 
-func (s *Session) dropSub(c net.Conn) {
-	s.subsMu.Lock()
-	delete(s.subs, c)
-	s.subsMu.Unlock()
-	c.Close()
-}
-
 // addWaiter keeps one waiter per session; extra ones are told "busy" and exit quietly.
 func (s *Session) addWaiter(c net.Conn) {
-	s.subsMu.Lock()
+	s.hookMu.Lock()
 	s.hook.used = true
 	if s.hook.waiter != nil {
-		s.subsMu.Unlock()
+		s.hookMu.Unlock()
 		_, _ = c.Write([]byte("busy\n"))
 		c.Close()
 		return
@@ -95,22 +79,19 @@ func (s *Session) addWaiter(c net.Conn) {
 	if len(s.hook.pending) > 0 && s.hook.timer == nil {
 		s.hook.timer = time.AfterFunc(waitBatchDelay, s.flushWaiter)
 	}
-	s.subsMu.Unlock()
+	s.hookMu.Unlock()
 	_, _ = io.Copy(io.Discard, c) // returns when the hook process ends
-	s.subsMu.Lock()
+	s.hookMu.Lock()
 	if s.hook.waiter == c {
 		s.hook.waiter = nil
 	}
-	s.subsMu.Unlock()
+	s.hookMu.Unlock()
 }
 
-// route delivers event lines via monitor or hook; false means: use a channel notification.
+// route queues event lines for the rewake hook; false means: use a channel notification.
 func (s *Session) route(lines []string) bool {
-	if s.pushLines(lines) {
-		return true
-	}
-	s.subsMu.Lock()
-	defer s.subsMu.Unlock()
+	s.hookMu.Lock()
+	defer s.hookMu.Unlock()
 	if !s.hook.used {
 		return false
 	}
@@ -122,23 +103,23 @@ func (s *Session) route(lines []string) bool {
 }
 
 func (s *Session) flushWaiter() {
-	s.subsMu.Lock()
+	s.hookMu.Lock()
 	s.hook.timer = nil
 	c, batch := s.hook.waiter, s.hook.pending
 	if c == nil || len(batch) == 0 {
-		s.subsMu.Unlock()
+		s.hookMu.Unlock()
 		return
 	}
 	s.hook.waiter, s.hook.pending = nil, nil
-	s.subsMu.Unlock()
+	s.hookMu.Unlock()
 
 	_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	_, err := c.Write([]byte(renderBatch(batch)))
 	c.Close()
 	if err != nil { // hook gone: keep events for the next one
-		s.subsMu.Lock()
+		s.hookMu.Lock()
 		s.hook.pending = append(batch, s.hook.pending...)
-		s.subsMu.Unlock()
+		s.hookMu.Unlock()
 	}
 }
 
@@ -154,29 +135,4 @@ func renderBatch(lines []string) string {
 		b.WriteString(l + "\n")
 	}
 	return b.String()
-}
-
-// pushLines writes lines to attached monitors, one event per line; false if none took them.
-func (s *Session) pushLines(lines []string) bool {
-	var buf strings.Builder
-	for _, l := range lines {
-		buf.WriteString("ccqc " + strings.ReplaceAll(strings.ReplaceAll(l, "\r\n", "\n"), "\n", " ⏎ ") + "\n")
-	}
-	b := []byte(buf.String())
-	s.subsMu.Lock()
-	subs := make([]net.Conn, 0, len(s.subs))
-	for c := range s.subs {
-		subs = append(subs, c)
-	}
-	s.subsMu.Unlock()
-	ok := false
-	for _, c := range subs {
-		_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		if _, err := c.Write(b); err != nil {
-			s.dropSub(c)
-			continue
-		}
-		ok = true
-	}
-	return ok
 }

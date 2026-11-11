@@ -2,11 +2,12 @@ package mcp
 
 import (
 	"fmt"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 func (s *Session) history(target string, limit int, before int64) (string, error) {

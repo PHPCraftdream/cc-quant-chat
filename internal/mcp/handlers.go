@@ -2,11 +2,12 @@ package mcp
 
 import (
 	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
-	"sort"
-	"strings"
 )
 
 func (s *Session) send(to, text string, replyTo int64) (string, error) {

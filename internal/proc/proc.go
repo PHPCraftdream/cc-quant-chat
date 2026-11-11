@@ -16,7 +16,6 @@ type Proc struct {
 var wrappers = map[string]bool{
 	"cmd.exe": true, "bash.exe": true, "sh.exe": true, "powershell.exe": true, "pwsh.exe": true, "conhost.exe": true,
 	"bash": true, "sh": true, "zsh": true, "dash": true, "fish": true, "pwsh": true, "env": true,
-	"timeout.exe": true, "timeout": true, "nohup": true, "nice": true, "stdbuf": true,
 }
 
 // Ancestors: parent chain of the current process, nearest first.

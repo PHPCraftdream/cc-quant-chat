@@ -3,11 +3,12 @@ package broker
 import (
 	"bufio"
 	"encoding/json"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"log"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 type conn struct {

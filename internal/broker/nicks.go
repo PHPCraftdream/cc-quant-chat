@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"sort"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
@@ -60,7 +61,7 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 			key = newNickKey()
 			issued = key
 		}
-		nk = &nick{hash: hashNickKey(key)}
+		nk = &nick{hash: hashNickKey(key), seen: ch.nextID} // nothing is "unread" for a new nick
 		ch.nicks[a.Name] = nk
 		ch.rooms[proto.RoomCommon].members[a.Name] = true
 		ch.save(store.Record{T: "nick", Nick: a.Name, Hash: nk.hash})
@@ -75,7 +76,7 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	}
 	backlog, total := ch.unread(a.Name, nk.seen)
 	if m != nil {
-		m.conn, m.offline = c, zeroTime
+		m.conn, m.offline = c, time.Time{}
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
 		m = &member{name: a.Name, conn: c}

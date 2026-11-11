@@ -3,13 +3,14 @@ package mcp
 import (
 	"errors"
 	"fmt"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 // chatConn: membership in one chat. Token lives only in memory, used to rejoin after broker loss.

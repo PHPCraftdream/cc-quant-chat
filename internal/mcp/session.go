@@ -3,7 +3,6 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -27,9 +26,8 @@ type Session struct {
 	read   int64
 	quiet  []string // presence lines held until the next message
 
-	subsMu sync.Mutex        // guards subs and hook
-	subs   map[net.Conn]bool // attached `ccqc tail` monitors
-	hook   hookState         // `ccqc wait` rewake hook
+	hookMu sync.Mutex // guards hook
+	hook   hookState  // `ccqc wait` rewake hook
 }
 
 type inboxItem struct {
@@ -38,7 +36,7 @@ type inboxItem struct {
 }
 
 func newSession(notify func(string, map[string]string)) *Session {
-	return &Session{chats: map[string]*chatConn{}, notify: notify, subs: map[net.Conn]bool{},
+	return &Session{chats: map[string]*chatConn{}, notify: notify,
 		hook: hookState{used: hookDelivery()}}
 }
 
@@ -56,7 +54,7 @@ func (s *Session) shutdown() {
 }
 
 // emit records an event for chat_inbox and pushes it into the session:
-// via a monitor or the rewake hook if in use, else as a channel notification.
+// via the rewake hook if in use, else as a channel notification.
 // Quiet events (presence) don't wake Claude: they ride along with the next loud one.
 func (s *Session) emit(content string, meta map[string]string, line string, quiet bool) {
 	s.mu.Lock()

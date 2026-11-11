@@ -3,9 +3,10 @@ package mcp
 import "encoding/json"
 
 const instructions = `ccqc: token-gated chat between Claude Code sessions over local IPC.
-Join: the user runs /quant-join <token> <nick>; call chat_join. A nick is required; the first join registers it
-to this machine, so only you can use it later, and your whole history stays attached to it.
-A folder set up with /quant-setup joins its chats automatically on session start.
+Join: the user runs /quant:join <token> <nick> (plugin) or /quant-join <token> <nick>; call chat_join.
+A nick is required; the first join registers it to this machine, so only you can use it later,
+and your whole history stays attached to it. A folder set up with /quant-setup joins its chats
+automatically on session start.
 
 Addresses (chat name is always required):
   /<chat>/@common               everyone in the chat
@@ -17,7 +18,7 @@ Addresses (chat name is always required):
 
 Incoming events arrive by themselves, as
   <channel source="ccqc" kind="msg|dm|presence" chat=".." room=".." from=".." from_role=".." to=".." to_me="1" msg_id=".." reply="<address>">text</channel>
-  or as a hook/monitor text starting with "ccqc", one event per line:
+  or as a wake-up text starting with "ccqc: N new chat event(s)", one event per line:
   [/<chat>/@<room> #<msg_id> <ts>] from(role) → @to: text   (reply: <address>)
 To answer, call chat_send with to = the reply address.
 

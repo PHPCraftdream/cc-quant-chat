@@ -163,8 +163,7 @@ own direct dialogs. Message ids are per chat, so `chat_context` takes `chat`.
   each folder joins automatically (with tokens); `nick-keys.json` — keys of your nicks.
 - The hook and the MCP server of one session find each other through a local
   session pipe named after their common parent, the Claude Code process.
-- `ccqc tail` prints the session's events line by line for an external monitor;
-  `ccqc session` shows the process chain and session key for troubleshooting.
+- `ccqc session` shows the process chain and session key for troubleshooting.
 - The rewake waiter ends itself after `CCQC_WAIT_MAX` (default 23h, below the hook
   timeout); after that, push resumes with the next turn.
 

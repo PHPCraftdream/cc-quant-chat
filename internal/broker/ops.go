@@ -10,8 +10,6 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-var zeroTime time.Time
-
 func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 	switch f.Op {
 	case "ping":

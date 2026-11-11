@@ -4,7 +4,7 @@
 // Usage: node setup.mjs <token> <nick> [alias]
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const [token, nickArg, alias] = process.argv.slice(2);
@@ -22,8 +22,9 @@ if (!existsSync(exe)) {
 
 // Paths without ".exe": Claude Code resolves the extension itself on Windows.
 const bare = exe.replace(/\.exe$/i, "");
-const inside = !relative(folder, bare).startsWith("..");
-const rel = relative(folder, bare).split(sep).join("/");
+const relPath = relative(folder, bare); // absolute when on another drive (Windows)
+const inside = relPath !== "" && !relPath.startsWith("..") && !isAbsolute(relPath);
+const rel = relPath.split(sep).join("/");
 const mcpCommand = inside ? `./${rel}` : bare.split(sep).join("/");
 const hookCommand = inside ? `\${CLAUDE_PROJECT_DIR}/${rel}` : bare.split(sep).join("/");
 

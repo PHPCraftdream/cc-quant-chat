@@ -16,14 +16,13 @@ const usage = `ccqc — chat between Claude Code sessions over local IPC
 
 usage:
   ccqc mcp                MCP stdio server (started by Claude Code)
-  ccqc tail               print this Claude Code session's chat events (monitor)
   ccqc wait               asyncRewake hook: wait for the session's next events, exit 2 to wake Claude
   ccqc hello              SessionStart hook: tell Claude which chats this folder joins automatically
   ccqc remember <token> <nick> [alias]
                           make the current folder join a chat automatically
   ccqc broker             run the broker (normally auto-started)
   ccqc token new <chat>   print a new chat token: <chat>.<secret>
-  ccqc session            show the parent process chain and session key (monitor troubleshooting)
+  ccqc session            show the parent process chain and session key (hook troubleshooting)
   ccqc version`
 
 func main() {
@@ -38,8 +37,6 @@ func main() {
 		err = mcp.Run()
 	case "broker":
 		err = broker.Run()
-	case "tail":
-		err = mcp.RunTail()
 	case "wait":
 		os.Exit(mcp.RunWait())
 	case "hello":
