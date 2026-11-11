@@ -10,7 +10,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | quarantine <origin> [reason] | release <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin> | invite | join | code | confirm (ccqc peer invite --help style: " + peerPairUsage + ")"
+const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | quarantine <origin> [reason] | release <origin> | revert <origin> [--since <time>] | revert --undo <id> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin> | invite | join | code | confirm (ccqc peer invite --help style: " + peerPairUsage + ")"
 
 // runPeer: the nodes this broker exchanges chats with. `list` is read-only; the rest are
 // administrator operations signed with the owner key.
@@ -43,6 +43,8 @@ func runPeer(args []string) error {
 		return peerOp(c, "peer_trust", proto.PeerTrust{Origin: args[1], Level: args[2]})
 	case args[0] == "quarantine" && len(args) >= 2:
 		return peerOp(c, "peer_quarantine", proto.PeerQuarantine{Origin: args[1], Reason: strings.Join(args[2:], " ")})
+	case args[0] == "revert":
+		return peerRevert(c, args[1:])
 	case args[0] == "release" && len(args) == 2:
 		return peerOp(c, "peer_release", proto.PeerQuarantine{Origin: args[1]})
 	case args[0] == "remove" && len(args) == 2:

@@ -281,6 +281,13 @@ func (d *DB) AcceptEvent(chatID string, e events.Event) ([]store.Record, error) 
 		if _, err := tx.Exec(`UPDATE chat SET lamport = MAX(lamport, ?)`, e.Lamport); err != nil {
 			return err
 		}
+		rules, err := loadRules(tx)
+		if err != nil {
+			return err
+		}
+		if newSkipper(rules, key.origin).skipsOrigin(e) { // a reverted node: kept in the journal, not shown
+			return nil
+		}
 		effects, err = applyRemote(tx, e, key.origin)
 		return err
 	})

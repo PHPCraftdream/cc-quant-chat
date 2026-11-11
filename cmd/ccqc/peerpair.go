@@ -92,3 +92,26 @@ func peerJoin(c *client.Conn, args []string) error {
 	}
 	return peerOp(c, "peer_join", a)
 }
+
+// peerRevert: ccqc peer revert <origin> [--since <time|36h|7d>] | --undo <id>.
+func peerRevert(c *client.Conn, args []string) error {
+	var a proto.PeerRevert
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--undo" && i+1 < len(args) && a.Undo == "":
+			i++
+			a.Undo = args[i]
+		case args[i] == "--since" && i+1 < len(args) && a.Since == "":
+			i++
+			a.Since = args[i]
+		case !strings.HasPrefix(args[i], "--") && a.Origin == "":
+			a.Origin = args[i]
+		default:
+			return errors.New("usage: ccqc peer revert <origin> [--since <time|36h|7d>] | ccqc peer revert --undo <id>")
+		}
+	}
+	if (a.Undo == "") == (a.Origin == "") || (a.Undo != "" && a.Since != "") {
+		return errors.New("usage: ccqc peer revert <origin> [--since <time|36h|7d>] | ccqc peer revert --undo <id>")
+	}
+	return peerOp(c, "peer_revert", a)
+}

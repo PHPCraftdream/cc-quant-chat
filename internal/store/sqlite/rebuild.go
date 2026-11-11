@@ -27,9 +27,12 @@ var projections = []projection{
 // RebuildReport: what a rebuild found. Diffs counts, per table, the rows that are in only one of
 // the current and the rebuilt projection ("chat.lamport" is 1 when the clock differs).
 type RebuildReport struct {
-	Events   int
-	Diffs    map[string]int
-	Replaced bool
+	Events int
+	// Skipped: events the projections leave out because of a revert of a node (SkippedOwn: of them,
+	// this node's own, that named something the reverted node made).
+	Skipped, SkippedOwn int
+	Diffs               map[string]int
+	Replaced            bool
 }
 
 // Total is the number of differing rows over all tables.
@@ -93,8 +96,21 @@ func (d *DB) Rebuild(chatID string, dryRun bool) (RebuildReport, error) {
 	}
 	defer os.RemoveAll(dir)
 	shadow := filepath.Join(dir, "shadow.db")
-	if rep.Events, err = c.replayInto(shadow); err != nil {
+	rules, err := loadRules(c.db)
+	if err != nil {
 		return rep, err
+	}
+	self := ""
+	if key := c.s.nodeKey(); key != nil {
+		self = key.origin
+	}
+	sk := newSkipper(rules, self)
+	if rep.Events, err = c.replayInto(shadow, sk); err != nil {
+		return rep, err
+	}
+	for _, cnt := range sk.count {
+		rep.Skipped += cnt.Skipped
+		rep.SkippedOwn += cnt.SkippedOwn
 	}
 	if _, err := c.db.Exec(`ATTACH DATABASE ? AS shadow`, shadow); err != nil {
 		return rep, err
@@ -126,6 +142,11 @@ func (d *DB) Rebuild(chatID string, dryRun bool) (RebuildReport, error) {
 	if clocks > 0 {
 		rep.Diffs["chat.lamport"] = clocks
 	}
+	if !dryRun {
+		if err := c.saveRevertStats(sk); err != nil {
+			return rep, err
+		}
+	}
 	if rep.Total() == 0 || dryRun {
 		return rep, nil
 	}
@@ -137,7 +158,7 @@ func (d *DB) Rebuild(chatID string, dryRun bool) (RebuildReport, error) {
 }
 
 // replayInto writes a chat database at path with the projections the events give.
-func (c *chatDB) replayInto(path string) (int, error) {
+func (c *chatDB) replayInto(path string, sk *skipper) (int, error) {
 	sh, err := openMigrated(path, ChatMigrations)
 	if err != nil {
 		return 0, err
@@ -163,10 +184,7 @@ func (c *chatDB) replayInto(path string) (int, error) {
 		return 0, err
 	}
 	defer rows.Close()
-	self := ""
-	if key := c.s.nodeKey(); key != nil {
-		self = key.origin
-	}
+	self := sk.self
 	n := 0
 	for rows.Next() {
 		var remote bool
@@ -175,6 +193,13 @@ func (c *chatDB) replayInto(path string) (int, error) {
 			return n, err
 		}
 		if e.Redacted() { // kept for the chain only
+			n++
+			continue
+		}
+		if sk.skip(e) { // a reverted node's event, or one that names what it made: in the journal, not in the projections
+			if _, err := tx.Exec(`UPDATE chat SET lamport = MAX(lamport, ?)`, e.Lamport); err != nil {
+				return n, err
+			}
 			n++
 			continue
 		}

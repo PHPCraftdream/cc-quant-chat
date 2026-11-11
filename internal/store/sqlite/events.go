@@ -225,6 +225,8 @@ func applyEvent(tx *sql.Tx, e events.Event) error {
 	switch {
 	case e.Kind == "msg":
 		return applyMsg(tx, e)
+	case strings.HasPrefix(e.Kind, "peer."): // a revert is read from the journal when the projections are built; it changes no row
+		return nil
 	case strings.HasPrefix(e.Kind, "nick."), strings.HasPrefix(e.Kind, "room."), e.Kind == "config.set":
 		return applySimple(tx, e)
 	}
@@ -243,6 +245,9 @@ func applyMsg(tx *sql.Tx, e events.Event) error {
 	var replyTo int64
 	if f, ok := p["reply_to"].(float64); ok {
 		replyTo = int64(f)
+	}
+	if a.ReplyRef != nil { // the global name decides: a message a revert leaves out is not replied to (0)
+		replyTo, _ = localID(tx, "msg", a.ReplyRef.Origin, a.ReplyRef.Seq)
 	}
 	payload := ""
 	if e.Sig != "" {

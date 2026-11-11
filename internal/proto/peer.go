@@ -42,6 +42,7 @@ type PeerInfo struct {
 	Sources    int      `json:"sources,omitempty"`    // sources (not neighbors here) that it has brought
 	Quarantine string   `json:"quarantine,omitempty"` // in quarantine: why, since when, by whom
 	Bytes      int64    `json:"bytes,omitempty"`      // taken from it today
+	Reverted   string   `json:"reverted,omitempty"`   // what reverts leave out of what it gave: events, of them this node's own
 }
 
 type PeerList struct {
@@ -84,4 +85,12 @@ type PeerCode struct {
 type PeerQuarantine struct {
 	Origin string `json:"origin"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// PeerRevert: leave a node's contribution out of the chats (from Since, a time; empty: all of it), or
+// undo a revert by its id.
+type PeerRevert struct {
+	Origin string `json:"origin,omitempty"`
+	Since  string `json:"since,omitempty"`
+	Undo   string `json:"undo,omitempty"`
 }

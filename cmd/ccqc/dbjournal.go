@@ -81,6 +81,11 @@ func runDBVerify(chat string) error {
 			fmt.Println(i)
 		}
 		events, signed, problems = events+rep.Events, signed+rep.Signed, problems+len(rep.Issues)
+		if st, err := db.RevertStats(id); err == nil {
+			for origin, r := range st {
+				fmt.Printf("chat %.8s: the revert of node %s leaves %d event(s) out of the projections, %d of this node's own that depended on them\n", id, origin, r.Skipped, r.SkippedOwn)
+			}
+		}
 	}
 	fmt.Printf("checked %d event(s) in %d chat(s); %d carry a verified author's signature; %d problem(s)\n", events, len(ids), signed, problems)
 	if problems > 0 {

@@ -174,6 +174,7 @@ func (b *Broker) peerList() (any, *proto.Error) {
 		return nil, proto.Errf("store_failed", "%v", err)
 	}
 	out.Quarantined = b.quarantineLines()
+	reverts := b.revertStats()
 	connected := b.peerMgr.Sessions()
 	for _, p := range peers {
 		reason, _, _ := fed.Flagged(p.Origin)
@@ -185,6 +186,9 @@ func (b *Broker) peerList() (any, *proto.Error) {
 		st := b.peerMgr.Stats(p.Origin)
 		info.Accepted = st.Accepted
 		info.Bytes = b.peerMgr.DayStats(p.Origin).Bytes
+		if r, ok := reverts[p.Origin]; ok {
+			info.Reverted = fmt.Sprintf("%d events left out by a revert, %d of this node's own that depended on them", r.Skipped, r.SkippedOwn)
+		}
 		if q, ok := b.peerMgr.InQuarantine(p.Origin); ok {
 			info.Quarantine = q.Reason + " (since " + q.Since + ", by " + q.By + ")"
 		}
