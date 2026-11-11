@@ -39,9 +39,13 @@ func (b *Broker) docOp(ch *chat, m *member, a proto.DocArgs, raw json.RawMessage
 		}
 		var res docs.Result
 		err := ds.DoDocs(ch.id, func(tx store.DocsTx) error {
+			now := time.Now()
 			var err error
-			res, err = applyDoc(docs.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Origin: b.origin, Sig: sg, Now: time.Now()}, a)
-			return err
+			if res, err = applyDoc(docs.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Origin: b.origin, Sig: sg, Now: now}, a); err != nil {
+				return err
+			}
+			return tx.RecordEvent(store.EventIn{Kind: "doc." + a.Op, Payload: sg.Canon, AuthorPub: sg.Pub, Sig: sg.Sig,
+				Actor: m.name, Owner: m.owner, TS: now.UTC().Format(time.RFC3339)})
 		})
 		if err != nil {
 			return nil, boardError(err)

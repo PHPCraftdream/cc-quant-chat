@@ -3,6 +3,7 @@
 package store
 
 import (
+	"crypto/ed25519"
 	"errors"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -42,6 +43,7 @@ type EventSig struct {
 	Pub     string
 	Sig     string
 	Payload string
+	Canon   string // the request in canonical JSON, signed or not: the payload of its event
 }
 
 // Clock is the optional part of a backend that knows a chat's logical clock (the value of the
@@ -94,6 +96,14 @@ type OwnerStore interface {
 // puts it on rows written before there was one.
 type NodeStore interface {
 	RegisterOrigin(origin string, pub []byte) error
+}
+
+// Journal is the optional part of a backend that keeps the journal of events: SetNode gives it
+// the identity its events are signed with; BackfillEvents moves the rows that predate the
+// journal into it (once; it reports how many chats and events this run moved).
+type Journal interface {
+	SetNode(origin string, priv ed25519.PrivateKey)
+	BackfillEvents() (chats, events int, err error)
 }
 
 // ErrOwnerExists: an owner is registered already.

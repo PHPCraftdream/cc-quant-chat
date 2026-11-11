@@ -94,6 +94,21 @@ type TaskFilter struct {
 	Limit       int // 0: no limit
 }
 
+// EventIn describes the change a transaction just made, for the journal of the chat: the request
+// as the author signed it (Payload, AuthorPub, Sig; the first alone for an unsigned one), who the
+// node took it for, and when. RecordEvent writes the event with images of the rows the
+// transaction wrote, in the same transaction.
+type EventIn struct {
+	Kind      string
+	Payload   string
+	AuthorPub string
+	Sig       string
+	Actor     string
+	Owner     bool
+	Grant     string
+	TS        string
+}
+
 // BoardTx is the board of one chat inside a transaction. Reads see the transaction's own writes.
 type BoardTx interface {
 	NextTaskID() (int64, error)
@@ -129,6 +144,10 @@ type BoardTx interface {
 	LogsAfter(entity string, entityID, after int64) ([]LogEntry, error)
 	// LogFor: newest first; entity "" means the whole board; before 0 means from the newest.
 	LogFor(entity string, entityID int64, before int64, limit int) ([]LogEntry, error)
+
+	// RecordEvent adds the event of this change to the chat's journal (nothing if the
+	// transaction wrote nothing). An error rolls the transaction back, rows and all.
+	RecordEvent(in EventIn) error
 }
 
 // Board is the optional part of a backend that keeps task boards. Do runs fn in a transaction

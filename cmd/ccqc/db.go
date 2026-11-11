@@ -11,10 +11,20 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
-// runDB: ccqc db path | status | migrate.
+// runDB: ccqc db path | status | migrate | verify | rebuild.
 func runDB(args []string) error {
+	const usage = "usage: ccqc db path|status|migrate|verify|rebuild"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	switch args[0] {
+	case "verify":
+		return runDBVerify(args[1:])
+	case "rebuild":
+		return runDBRebuild(args[1:])
+	}
 	if len(args) != 1 {
-		return errors.New("usage: ccqc db path|status|migrate")
+		return errors.New(usage)
 	}
 	path := sqlite.DefaultPath()
 	switch args[0] {
@@ -31,7 +41,7 @@ func runDB(args []string) error {
 		defer db.Close()
 		return dbStatus(path)
 	}
-	return errors.New("usage: ccqc db path|status|migrate")
+	return errors.New(usage)
 }
 
 func dbStatus(path string) error {

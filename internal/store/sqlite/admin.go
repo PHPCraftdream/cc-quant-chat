@@ -1,6 +1,9 @@
 package sqlite
 
 import (
+	"database/sql"
+	"errors"
+
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
@@ -27,8 +30,18 @@ func (d *DB) Settings() (map[string]map[string]string, error) {
 	return out, rows.Err()
 }
 
-// SetSetting stores a value, replacing an earlier one.
+// SetSetting stores a value, replacing an earlier one. A setting of a chat (scope is its id) is an
+// event of that chat.
 func (d *DB) SetSetting(scope, key, value string) error {
+	if scope != "" {
+		var one int
+		switch err := d.db.QueryRow(`SELECT 1 FROM chats WHERE id = ?`, scope).Scan(&one); {
+		case err == nil:
+			return d.setChatSetting(scope, key, value)
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+	}
 	_, err := d.db.Exec(`INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)`, scope, key, value)
 	return err
 }

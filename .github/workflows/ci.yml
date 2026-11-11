@@ -28,6 +28,11 @@ jobs:
       - name: test (race detector)
         if: runner.os == 'Linux'
         run: go test -race ./...
+      - name: journal at scale (100k messages: sizes and start times)
+        if: runner.os == 'Linux'
+        env:
+          CCQC_SCALE: "1"
+        run: go test ./internal/store/sqlite -run TestJournalScale -v -count=1 -timeout 30m
       - name: build
         run: go build ./...
 

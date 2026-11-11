@@ -45,7 +45,11 @@ func DefaultPath() string {
 }
 
 type DB struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
+	node *nodeKey // signs events; see SetNode
+
+	afterBackfillChat func(i int) error // test hook: called after each chat is moved into the journal
 }
 
 var _ store.Backend = (*DB)(nil)
@@ -96,7 +100,12 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
-	return &DB{db: db}, nil
+	// A database without chats has nothing that predates the journal: nothing to move into it.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) SELECT 'events_backfill', 'done' WHERE NOT EXISTS (SELECT 1 FROM chats)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &DB{db: db, path: path}, nil
 }
 
 func (d *DB) Close() error { return d.db.Close() }
@@ -215,65 +224,49 @@ func (d *DB) inTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// Append applies one record.
+// Append applies one record: as an event of the chat's journal and, in the same transaction, to
+// the projections. The read cursor ("seen") is the node's own state, not an event.
 func (d *DB) Append(chatID string, r store.Record) error {
-	var err error
-	switch r.T {
-	case "nick":
-		// Plain INSERT: an existing nick keeps its key; a clash is an error, never an overwrite.
-		// The nick and its place in @common are written together.
-		err = d.inTx(func(tx *sql.Tx) error {
-			if _, err := tx.Exec(`INSERT INTO nicks (chat_id, nick, key_hash, seen, pubkey) VALUES (?, ?, ?, ?, ?)`,
-				chatID, r.Nick, r.Hash, r.ID, r.Pub); err != nil {
-				return err
-			}
-			_, err := tx.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`,
-				chatID, proto.RoomCommon, r.Nick)
-			return err
-		})
-	case "pin":
-		_, err = d.db.Exec(`UPDATE nicks SET pinned_role = ? WHERE chat_id = ? AND nick = ?`, r.Role, chatID, r.Nick)
-	case "nick_key": // the nick's credentials as they are now: reset (both empty), rebound, or bound anew
-		_, err = d.db.Exec(`UPDATE nicks SET key_hash = ?, pubkey = ? WHERE chat_id = ? AND nick = ?`, r.Hash, r.Pub, chatID, r.Nick)
-	case "seen":
-		_, err = d.db.Exec(`UPDATE nicks SET seen = ? WHERE chat_id = ? AND nick = ? AND seen < ?`, r.ID, chatID, r.Nick, r.ID)
-	case "room":
-		_, err = d.db.Exec(`INSERT OR IGNORE INTO rooms (chat_id, room, topic, created_by) VALUES (?, ?, ?, ?)`,
-			chatID, r.Room, r.Topic, r.Nick)
-	case "in":
-		_, err = d.db.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`, chatID, r.Room, r.Nick)
-	case "out":
-		_, err = d.db.Exec(`DELETE FROM room_members WHERE chat_id = ? AND room = ? AND nick = ?`, chatID, r.Room, r.Nick)
-	case "msg":
-		if r.Msg == nil {
-			return fmt.Errorf("sqlite: msg record without message")
+	if r.T == "seen" {
+		_, err := d.db.Exec(`UPDATE nicks SET seen = ? WHERE chat_id = ? AND nick = ? AND seen < ?`, r.ID, chatID, r.Nick, r.ID)
+		if err != nil {
+			return fmt.Errorf("sqlite: %s: %w", r.T, err)
 		}
-		m := r.Msg
-		err = d.inTx(func(tx *sql.Tx) error {
-			// The chat's logical clock advances with every message (and journal row).
-			if _, err := tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, chatID); err != nil {
-				return err
-			}
-			var lamport int64
-			if err := tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, chatID).Scan(&lamport); err != nil {
-				return err
-			}
-			_, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport, author_pub, sig, payload)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner, r.Origin, lamport,
-				r.AuthorPub, r.Sig, r.Payload)
-			return err
-		})
-		if err != nil && r.ClientID != "" {
-			// A repeat of an earlier send? Then the earlier message is the answer.
-			var id int64
-			if q := d.db.QueryRow(`SELECT id FROM messages WHERE chat_id = ? AND from_nick = ? AND client_msg_id = ?`,
-				chatID, m.From, r.ClientID).Scan(&id); q == nil {
-				return &store.DuplicateError{ID: id}
-			}
-		}
-	default:
+		return nil
+	}
+	if _, ok, _ := recordEvent(chatID, store.Record{T: r.T, Msg: &proto.Message{}}, 0); !ok {
 		return fmt.Errorf("sqlite: unknown record kind %q", r.T)
+	}
+	if r.T == "msg" && r.Msg == nil {
+		return fmt.Errorf("sqlite: msg record without message")
+	}
+	err := d.inTx(func(tx *sql.Tx) error {
+		var lamport int64
+		var err error
+		if r.T == "msg" { // the chat's logical clock advances with every message (and journal row)
+			lamport, err = tick(tx, chatID)
+		} else { // other events carry the clock as it is
+			lamport, err = chatClock(tx, chatID)
+		}
+		if err != nil {
+			return err
+		}
+		e, _, err := recordEvent(chatID, r, lamport)
+		if err != nil {
+			return err
+		}
+		if e, err = d.appendEvent(tx, e); err != nil {
+			return err
+		}
+		return applyEvent(tx, e)
+	})
+	if err != nil && r.T == "msg" && r.ClientID != "" {
+		// A repeat of an earlier send? Then the earlier message is the answer.
+		var id int64
+		if q := d.db.QueryRow(`SELECT id FROM messages WHERE chat_id = ? AND from_nick = ? AND client_msg_id = ?`,
+			chatID, r.Msg.From, r.ClientID).Scan(&id); q == nil {
+			return &store.DuplicateError{ID: id}
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("sqlite: %s: %w", r.T, err)

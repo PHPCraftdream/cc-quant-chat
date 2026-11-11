@@ -42,9 +42,13 @@ func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs, raw json.RawMes
 			if err := b.authorize(tx, who, manager, a); err != nil {
 				return err
 			}
+			now := time.Now()
 			var err error
-			change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Grant: who.grant, Origin: b.origin, Sig: sg, Now: time.Now()}, a)
-			return err
+			if change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Grant: who.grant, Origin: b.origin, Sig: sg, Now: now}, a); err != nil {
+				return err
+			}
+			return tx.RecordEvent(store.EventIn{Kind: a.Op, Payload: sg.Canon, AuthorPub: sg.Pub, Sig: sg.Sig,
+				Actor: m.name, Owner: m.owner, Grant: who.grant, TS: now.UTC().Format(time.RFC3339)})
 		})
 		if err != nil {
 			return nil, boardError(err)

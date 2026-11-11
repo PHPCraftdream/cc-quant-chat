@@ -61,6 +61,10 @@ type DocsTx interface {
 
 	// NextLamport advances and returns the chat's logical clock.
 	NextLamport() (int64, error)
+
+	// RecordEvent adds the event of this change to the chat's journal (nothing if the
+	// transaction wrote nothing). An error rolls the transaction back, rows and all.
+	RecordEvent(in EventIn) error
 }
 
 // Docs is the optional part of a backend that keeps document trees.

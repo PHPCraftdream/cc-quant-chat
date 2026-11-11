@@ -16,7 +16,7 @@ func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if err := fn(&docsTx{tx: tx, chat: chatID}); err != nil {
+	if err := fn(&docsTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -29,13 +29,16 @@ func (d *DB) ViewDocs(chatID string, fn func(tx store.DocsTx) error) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // reads only
-	return fn(&docsTx{tx: tx, chat: chatID})
+	return fn(&docsTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}})
 }
 
 type docsTx struct {
 	tx   *sql.Tx
 	chat string
+	rec  recorder
 }
+
+func (t *docsTx) RecordEvent(in store.EventIn) error { return t.rec.RecordEvent(in) }
 
 const docCols = `path, title, body, version, author, author_owner, ts, deleted`
 
@@ -56,6 +59,7 @@ func (t *docsTx) GetDoc(path string) (store.Doc, bool, error) {
 }
 
 func (t *docsTx) PutDoc(d store.Doc) error {
+	t.rec.touch("docs", d.Path)
 	_, err := t.tx.Exec(`INSERT OR REPLACE INTO docs (chat_id, `+docCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.chat, d.Path, d.Title, d.Body, d.Version, d.Author, boolInt(d.AuthorOwner), d.TS, boolInt(d.Deleted))
 	return err
@@ -118,6 +122,7 @@ func scanVersion(row interface{ Scan(...any) error }) (store.DocVersion, error) 
 }
 
 func (t *docsTx) AddVersion(v store.DocVersion) error {
+	t.rec.touch("doc_versions", v.Path, v.Version)
 	_, err := t.tx.Exec(`INSERT INTO doc_versions (chat_id, `+versionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.chat, v.Path, v.Version, v.TS, v.Author, boolInt(v.AuthorOwner), v.Title, v.Body, v.Note, boolInt(v.Deleted), v.Origin, v.Lamport,
 		v.AuthorPub, v.Sig, v.Payload)
@@ -178,5 +183,8 @@ func (t *docsTx) NextLamport() (int64, error) {
 	}
 	var n int64
 	err := t.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, t.chat).Scan(&n)
+	if t.rec.lamport == 0 {
+		t.rec.lamport = n // the event carries the clock of the change's first write
+	}
 	return n, err
 }

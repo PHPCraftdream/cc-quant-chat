@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -45,7 +46,21 @@ func (b *Broker) initNode() error {
 	pub := priv.Public().(ed25519.PublicKey)
 	b.origin = node.Origin(pub)
 	if ns, ok := b.store.(store.NodeStore); ok {
-		return ns.RegisterOrigin(b.origin, pub)
+		if err := ns.RegisterOrigin(b.origin, pub); err != nil {
+			return err
+		}
+	}
+	if j, ok := b.store.(store.Journal); ok {
+		j.SetNode(b.origin, priv)
+		// Rows that predate the journal become events before anything is served (once).
+		t := time.Now()
+		chats, evs, err := j.BackfillEvents()
+		if err != nil {
+			return fmt.Errorf("moving the history into the journal: %w", err)
+		}
+		if chats > 0 {
+			log.Printf("broker: moved %d chat(s), %d events into the journal in %s", chats, evs, time.Since(t).Round(time.Millisecond))
+		}
 	}
 	return nil
 }

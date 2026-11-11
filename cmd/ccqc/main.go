@@ -57,6 +57,9 @@ Database (SQLite, WAL; CCQC_DB, default <user config dir>/ccqc/ccqc.db):
   ccqc db path              print the database location
   ccqc db status            applied and pending schema migrations
   ccqc db migrate           apply pending migrations (the broker also does it on start)
+  ccqc db verify [--chat ID]   check the journal of events: chains, node and author signatures
+  ccqc db rebuild [--chat ID]  build messages, board, documents, nicks again from the journal
+                               and replace what differs (the broker must be stopped)
 
 Used by Claude Code (configured by /quant-setup or the plugin):
   ccqc mcp                  MCP stdio server: the chat tools

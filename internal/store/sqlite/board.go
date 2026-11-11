@@ -18,7 +18,7 @@ func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if err := fn(&boardTx{tx: tx, chat: chatID}); err != nil {
+	if err := fn(&boardTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -31,13 +31,16 @@ func (d *DB) View(chatID string, fn func(tx store.BoardTx) error) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // reads only
-	return fn(&boardTx{tx: tx, chat: chatID})
+	return fn(&boardTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}})
 }
 
 type boardTx struct {
 	tx   *sql.Tx
 	chat string
+	rec  recorder
 }
+
+func (b *boardTx) RecordEvent(in store.EventIn) error { return b.rec.RecordEvent(in) }
 
 func (b *boardTx) nextID(table string) (int64, error) {
 	var n int64
@@ -68,6 +71,7 @@ func (b *boardTx) GetTask(id int64) (store.Task, bool, error) {
 }
 
 func (b *boardTx) PutTask(t store.Task) error {
+	b.rec.touch("board_tasks", t.ID)
 	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_tasks (chat_id, `+taskCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.chat, t.ID, t.Title, t.Description, t.Status, t.Sprint, t.Assignee, t.Priority, t.CreatedBy, t.CreatedAt, t.UpdatedAt, boolInt(t.Deleted))
 	return err
@@ -169,6 +173,7 @@ func (b *boardTx) GetSprint(id int64) (store.Sprint, bool, error) {
 }
 
 func (b *boardTx) PutSprint(s store.Sprint) error {
+	b.rec.touch("board_sprints", s.ID)
 	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_sprints (chat_id, `+sprintCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.chat, s.ID, s.Name, s.Goal, s.State, s.CreatedAt, s.StartedAt, s.ClosedAt, boolInt(s.Deleted))
 	return err
@@ -216,6 +221,7 @@ func (b *boardTx) GetWorkflow() (store.Workflow, bool, error) {
 }
 
 func (b *boardTx) PutWorkflow(w store.Workflow, ts string) error {
+	b.rec.touch("board_workflow")
 	raw, err := json.Marshal(w)
 	if err != nil {
 		return err
@@ -244,6 +250,7 @@ func scanLog(row interface{ Scan(...any) error }) (store.LogEntry, error) {
 }
 
 func (b *boardTx) AppendLog(e store.LogEntry) error {
+	b.rec.touch("board_log", e.ID)
 	before, err := json.Marshal(nonNil(e.Before))
 	if err != nil {
 		return err
@@ -318,6 +325,9 @@ func (b *boardTx) NextLamport() (int64, error) {
 	}
 	var n int64
 	err := b.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, b.chat).Scan(&n)
+	if b.rec.lamport == 0 {
+		b.rec.lamport = n // the event carries the clock of the change's first write
+	}
 	return n, err
 }
 
@@ -334,6 +344,7 @@ func scanComment(row interface{ Scan(...any) error }) (store.Comment, error) {
 }
 
 func (b *boardTx) PutComment(c store.Comment) error {
+	b.rec.touch("board_comments", c.ID)
 	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (chat_id, `+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.chat, c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport, c.AuthorPub, c.Sig)
 	return err

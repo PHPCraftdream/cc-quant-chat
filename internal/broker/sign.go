@@ -94,19 +94,20 @@ func staleClock(next int64) *proto.Error {
 // below 4) is not signed: its events are stored with an empty signature. A client that has a key
 // and speaks proto 4 must sign.
 func (b *Broker) verifyWrite(ch *chat, m *member, kind string, raw json.RawMessage) (store.EventSig, *proto.Error) {
-	key := b.authorKey(m)
-	if key == nil {
-		return store.EventSig{}, nil
-	}
 	s, err := proto.SplitSigned(raw)
 	if err != nil {
 		return store.EventSig{}, proto.Errf("bad_args", "%v", err)
+	}
+	canon := store.EventSig{Canon: string(s.Canon)} // what an unsigned write is stored with
+	key := b.authorKey(m)
+	if key == nil {
+		return canon, nil
 	}
 	if s.Sig == "" {
 		if m.proto >= proto.ProtoVersion {
 			return store.EventSig{}, proto.Errf("unsigned", "this client has a signing key: sign the %s (origin, lamport, sig)", kind)
 		}
-		return store.EventSig{}, nil
+		return canon, nil
 	}
 	if s.Origin != b.origin {
 		return store.EventSig{}, proto.Errf("wrong_origin", "the request is addressed to the node %q, this is %q", s.Origin, b.origin)
@@ -122,5 +123,5 @@ func (b *Broker) verifyWrite(ch *chat, m *member, kind string, raw json.RawMessa
 	if s.Lamport != cur+1 {
 		return store.EventSig{}, staleClock(cur + 1)
 	}
-	return store.EventSig{Pub: owner.Encode(key), Sig: s.Sig, Payload: string(s.Canon)}, nil
+	return store.EventSig{Pub: owner.Encode(key), Sig: s.Sig, Payload: string(s.Canon), Canon: string(s.Canon)}, nil
 }

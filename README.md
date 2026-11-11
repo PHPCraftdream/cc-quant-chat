@@ -442,6 +442,44 @@ secret and join with it as before (their events are stored unsigned again). A ni
 first registered with a key has no secret, and an older broker sees it as free: the first join
 under that name would take it over. Roll back only with the chats' members away, or not at all.
 
+## The journal of events (`events`)
+
+Every change of a chat is an event: a message, a nick joining (`nick.register`, `nick.key`,
+`nick.reset`, `nick.pin`), a room (`room.create`, `room.join`, `room.leave`), a chat setting
+(`config.set`), a board operation (`task.create`, `sprint.close`, ...) and a document operation
+(`doc.put`, ...). An event holds what the author sent and signed (`payload`), what the broker
+added (`assigned`: issued ids and images of the rows it wrote), the chat's clock (`lamport`) and
+a place in the broker's chain for that chat: `seq`, `prev` (the ID of the previous event) and
+`node_sig`, a signature with the node key `broker.key` over origin, seq, prev and a hash of the
+rest. An event is written in the same transaction as the change it describes: if either fails,
+neither is kept.
+
+`messages`, the board tables, `docs`/`doc_versions`, `nicks`, `rooms`, `room_members` and chat
+settings are **projections** of the journal; reads still go to them. The read cursors (`seen`),
+`admin_log` and broker-wide settings are not events.
+
+- `ccqc db verify [--chat ID]` checks the chains (no gaps, each `prev` right), the node's and the
+  authors' signatures and the chat's clock, and prints what does not hold. It changes nothing.
+- `ccqc db rebuild [--chat ID]` builds the projections again from the journal into a scratch
+  database, compares them with the current ones and replaces the tables that differ (the read
+  cursors are kept). With an owner registered it asks for the owner's password. Both commands
+  work on the database file, so the broker must be stopped.
+- **First start after the update**: the broker moves the rows that predate the journal into it
+  (one transaction per chat, marked in `meta`, so an interrupted start continues and a finished
+  one does nothing; the log says how long it took). Rows keep their payload, key and signature;
+  unsigned ones get an empty signature. Board state without per-change history (tasks, sprints,
+  comments, the process) and the pages come in as one snapshot event each (`import.board`,
+  `import.docs`).
+- Events of nicks, rooms and settings carry the chat's clock as it is, without advancing it, so the
+  rule "a signed write carries the next clock value" is unchanged.
+- The journal grows with the history (about as much as the messages themselves): `CCQC_SCALE=1 go
+  test ./internal/store/sqlite -run TestJournalScale -v` prints the sizes and the start times on a
+  database of 100,000 messages.
+- **Rollback** to a broker without the journal is not safe for the journal: the older broker
+  ignores `events` and writes rows without events. `ccqc db verify` then reports the clock
+  "ahead of its events"; do not run `ccqc db rebuild` on such a database (it would drop those
+  rows). Copy `ccqc.db` before updating (see "Updating").
+
 ## Cards in the transcript (`quant-ui`)
 
 By default a wake-up shows in Claude Code as a bare "Stop hook feedback" row. The optional
@@ -500,7 +538,7 @@ and the other test fails until both agree.
   on start (`internal/migrate`): each in its own transaction, recorded with a checksum in
   `schema_migrations`. Editing an applied migration or opening a database migrated by a
   newer binary is an error. Forward-only: to roll back, restore a copy of the database
-  file. `ccqc db path|status|migrate`.
+  file. `ccqc db path|status|migrate|verify|rebuild`.
 - **Presence:** a disconnected member stays present for 60 s (`CCQC_GRACE`), then goes
   offline; nick, rooms and history stay.
 - **Delivery:** each nick has a read cursor. It moves when the session confirms delivery
