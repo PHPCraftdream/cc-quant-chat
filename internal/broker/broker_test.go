@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -126,6 +127,7 @@ func (c *client) answer(op string, r proto.Frame, out any) error {
 		return &proto.Error{Code: r.Code, Msg: r.Msg, Data: r.Data}
 	}
 	if out != nil && len(r.Data) > 0 {
+		reflect.ValueOf(out).Elem().SetZero() // a reused value keeps the fields a reply leaves out (omitempty)
 		if err := json.Unmarshal(r.Data, out); err != nil {
 			c.t.Fatalf("%s reply: %v", op, err)
 		}
