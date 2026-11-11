@@ -39,6 +39,13 @@ func (s *memStore) Append(id string, r store.Record) error {
 	if s.appendErr != nil {
 		return s.appendErr
 	}
+	if r.T == "msg" && r.ClientID != "" { // like the database's unique index
+		for _, old := range s.recs[id] {
+			if old.T == "msg" && old.ClientID == r.ClientID && old.Msg.From == r.Msg.From {
+				return &store.DuplicateError{ID: old.Msg.ID}
+			}
+		}
+	}
 	s.recs[id] = append(s.recs[id], r)
 	return nil
 }
@@ -65,6 +72,17 @@ type client struct {
 	events  chan proto.Event
 	replies chan proto.Frame
 	key     string
+	gateMu  sync.Mutex
+	gate    chan struct{} // while set and open, the reader takes no more frames
+	ended   chan struct{} // closed when the connection is over
+}
+
+func (c *client) hold() chan struct{} {
+	g := make(chan struct{})
+	c.gateMu.Lock()
+	c.gate = g
+	c.gateMu.Unlock()
+	return g
 }
 
 func (b *Broker) connect(t *testing.T) *client {
@@ -72,11 +90,18 @@ func (b *Broker) connect(t *testing.T) *client {
 	srv, cl := net.Pipe()
 	b.serving.Add(1)
 	go b.serve(srv)
-	c := &client{t: t, nc: cl, events: make(chan proto.Event, 256), replies: make(chan proto.Frame, 16)}
+	c := &client{t: t, nc: cl, events: make(chan proto.Event, 256), replies: make(chan proto.Frame, 16), ended: make(chan struct{})}
 	go func() {
+		defer close(c.ended)
 		sc := bufio.NewScanner(cl)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
 		for sc.Scan() {
+			c.gateMu.Lock()
+			g := c.gate
+			c.gateMu.Unlock()
+			if g != nil {
+				<-g
+			}
 			var f proto.Frame
 			if json.Unmarshal(sc.Bytes(), &f) != nil {
 				continue
@@ -132,8 +157,13 @@ func (c *client) join(token, name string, level int) (proto.Welcome, string) {
 
 func (c *client) send(room, to, text string) (int64, string) {
 	c.t.Helper()
+	return c.sendID(room, to, text, "")
+}
+
+func (c *client) sendID(room, to, text, cid string) (int64, string) {
+	c.t.Helper()
 	var r proto.SendResult
-	code := c.call("send", proto.SendArgs{Room: room, To: to, Text: text}, &r)
+	code := c.call("send", proto.SendArgs{Room: room, To: to, Text: text, ClientMsgID: cid}, &r)
 	return r.ID, code
 }
 

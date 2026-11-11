@@ -10,7 +10,17 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
+// changes: ops that alter state; a stopping broker refuses them so the client repeats them
+// against the next broker.
+var changes = map[string]bool{
+	"join": true, "send": true, "room_create": true, "room_join": true, "room_leave": true,
+	"role_claim": true, "role_release": true, "nick_reset": true,
+}
+
 func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
+	if changes[f.Op] && b.stopping.Load() {
+		return nil, proto.Errf("restarting", "the broker is restarting; repeat in a moment")
+	}
 	switch f.Op {
 	case "ping":
 		return b.info(), nil
@@ -112,6 +122,12 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 }
 
 func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error) {
+	if len(a.ClientMsgID) > maxClientID {
+		return nil, proto.Errf("bad_args", "client_msg_id is longer than %d bytes", maxClientID)
+	}
+	if id, ok := ch.sentID(m.name, a.ClientMsgID); ok { // a repeat of a send that went through
+		return proto.SendResult{ID: id, Dup: true}, nil
+	}
 	if strings.TrimSpace(a.Text) == "" {
 		return nil, proto.Errf("empty", "text is empty")
 	}
@@ -159,9 +175,16 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 		}
 	}
 	msg.ID = ch.nextID + 1
-	if e := ch.save(store.Record{T: "msg", Key: key, Msg: &msg}); e != nil {
+	var dup *store.DuplicateError
+	if e := ch.saveMsg(store.Record{T: "msg", Key: key, Msg: &msg, ClientID: a.ClientMsgID}, &dup); e != nil {
 		return nil, e // not stored: no id taken, nothing delivered
 	}
+	if dup != nil { // stored by an earlier attempt (the database knows, e.g. across a broker restart)
+		b.refund(ch, m.name, "msg")
+		ch.rememberSent(m.name, a.ClientMsgID, dup.ID)
+		return proto.SendResult{ID: dup.ID, Dup: true}, nil
+	}
+	ch.rememberSent(m.name, a.ClientMsgID, msg.ID)
 	ch.nextID = msg.ID
 	ch.keep(key, msg)
 	for _, name := range recipients {

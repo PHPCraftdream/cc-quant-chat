@@ -106,15 +106,15 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	backlog, total := ch.unread(a.Name, nk.seen)
 	acks := a.Proto >= 2
 	if m != nil {
-		m.conn, m.offline, m.acks = c, time.Time{}, acks
+		m.conn, m.offline, m.acks, m.proto = c, time.Time{}, acks, a.Proto
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
-		m = &member{name: a.Name, conn: c, acks: acks}
+		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto}
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}
 	c.ch, c.m = ch, m
-	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warning}, nil
+	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion}, nil
 }
 
 // nickReset frees a registered nick whose key is lost: the next join binds a new key, and the

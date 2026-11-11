@@ -16,7 +16,15 @@ type Record struct {
 	Nick  string         `json:"n,omitempty"`
 	Hash  string         `json:"h,omitempty"` // nick key hash
 	ID    int64          `json:"id,omitempty"`
+	// ClientID: idempotency key of a msg (per sender); "" = none.
+	ClientID string `json:"cid,omitempty"`
 }
+
+// DuplicateError: Append refused a msg whose sender and ClientID were stored before; ID is the
+// id of that earlier message.
+type DuplicateError struct{ ID int64 }
+
+func (e *DuplicateError) Error() string { return "duplicate client message id" }
 
 // ThreadWindow: how many of the newest messages per room/dialog Load returns.
 const ThreadWindow = 10000

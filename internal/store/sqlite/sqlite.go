@@ -243,9 +243,17 @@ func (d *DB) Append(chatID string, r store.Record) error {
 			return fmt.Errorf("sqlite: msg record without message")
 		}
 		m := r.Msg
-		_, err = d.db.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS)
+		_, err = d.db.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID)
+		if err != nil && r.ClientID != "" {
+			// A repeat of an earlier send? Then the earlier message is the answer.
+			var id int64
+			if q := d.db.QueryRow(`SELECT id FROM messages WHERE chat_id = ? AND from_nick = ? AND client_msg_id = ?`,
+				chatID, m.From, r.ClientID).Scan(&id); q == nil {
+				return &store.DuplicateError{ID: id}
+			}
+		}
 	default:
 		return fmt.Errorf("sqlite: unknown record kind %q", r.T)
 	}

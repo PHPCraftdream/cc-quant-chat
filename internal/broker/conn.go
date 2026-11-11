@@ -30,6 +30,16 @@ func (c *conn) close() {
 	})
 }
 
+// finish asks the writer to flush the queue and close the connection. A full queue means a
+// client that isn't reading: that one is cut off at once.
+func (c *conn) finish() {
+	select {
+	case c.out <- nil:
+	default:
+		c.close()
+	}
+}
+
 // push enqueues without blocking; a client that can't keep up is dropped.
 func (c *conn) push(f proto.Frame) {
 	raw, err := json.Marshal(f)
@@ -68,6 +78,9 @@ func (c *conn) writer() {
 		case b := <-c.out:
 			if b == nil {
 				_ = w.Flush()
+				if f, ok := c.nc.(interface{ Flush() error }); ok {
+					_ = f.Flush() // named pipes: wait until the peer has read everything
+				}
 				c.close()
 				return
 			}

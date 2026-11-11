@@ -63,12 +63,13 @@ curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/cc-quant-chat/main/in
 | `--uninstall` | `-Uninstall` | stop the broker, remove the binary (and the PATH entry); chat data is kept |
 | `--help` | `Get-Help .\install.ps1 -Detailed` | options |
 
-**Updating while chats are running is safe.** On Windows the running `ccqc.exe` is
-locked, so the installer renames it to `ccqc.exe.old` and puts the new one in place (on
-Linux/macOS the file is replaced atomically). Then it restarts a running broker on the
-new version; connected sessions reconnect by themselves and lose nothing. Sessions keep
-running their MCP server from the old file until they are restarted; `ccqc.exe.old` is
-removed by a later install or uninstall once nothing uses it.
+**Updating while chats are running is safe** (details, guarantees and limits: see
+[Updating](#updating)). On Windows the running `ccqc.exe` is locked, so the installer
+renames it to `ccqc.exe.old-<id>` and puts the new one in place (on Linux/macOS the file is
+replaced atomically). Then it restarts a running broker on the new version; connected
+sessions reconnect by themselves. Sessions keep running their MCP server from the old file
+until they are restarted; the renamed file is removed by a later install or uninstall once
+nothing uses it.
 
 Releases: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which tests,
 builds windows/linux/darwin × amd64/arm64 (`CGO_ENABLED=0`) and publishes the binaries
@@ -87,6 +88,34 @@ ccqc broker restart    # stop it and start this binary as the broker (e.g. after
 ```
 
 Log: `<user cache dir>/ccqc/broker.log` (`%LOCALAPPDATA%\ccqc\broker.log` on Windows).
+
+### Updating
+
+`ccqc broker restart` (also run by the installers) replaces the broker without a gap in
+the conversation:
+
+- **Stopping is orderly.** The old broker first refuses changes (a send, a room or role
+  change answers `restarting`), lets every connection send what is already queued (up to
+  2 s), then closes. Sessions reconnect to the new broker by themselves.
+- **Incoming messages are not lost or repeated.** The read cursor moves only when a
+  session confirms delivery, so whatever was in flight comes back in the new broker's
+  backlog; repeats are dropped by message id.
+- **Outgoing messages are not lost or doubled.** `chat_send` carries a random
+  `client_msg_id`. If the connection drops or the broker answers `restarting`, the MCP
+  server waits for the reconnect (up to about 30 s) and sends again with the same id; the
+  broker, checking the database, returns the id of the stored message instead of storing
+  or delivering it twice, and a repeat doesn't count against the rate limit. After 30 s
+  the tool answers "not sent" (a rare repeat then could show the message twice). Answers
+  like `rate_limited` or `not_in_room` are final and not repeated.
+- **Not covered:** a session whose MCP server still runs the old code (it was started
+  before the update) has no confirmations and no retry until Claude Code is restarted in
+  it; the broker tells such a session so at join, and `ccqc broker status` shows how many
+  connected clients run each protocol level (`proto 0` = old). Restart those sessions, or
+  update while the chats are quiet.
+- **Windows:** the installer works around the locked `ccqc.exe`. A build placed in
+  `plugin/bin/` by hand (`go build -o plugin/bin/ ./cmd/ccqc`) fails while a session of this
+  folder or the broker runs that file: run `ccqc broker stop`, close those sessions, build,
+  or use `install.cmd`.
 
 ## Connecting Claude Code
 

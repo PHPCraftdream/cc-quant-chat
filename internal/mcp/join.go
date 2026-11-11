@@ -64,6 +64,10 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 			keyNote = fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that `ccqc nick reset - %s` (token on stdin) is needed to use it again.\n\n", name, err, name)
 		}
 	}
+	brokerNote := ""
+	if w.Proto < proto.ProtoVersion {
+		brokerNote = "the broker runs an older ccqc without delivery confirmations: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
+	}
 	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, conn: conn,
 		role: w.State.MyRole, rooms: set(w.State.MyRooms)}
 
@@ -86,6 +90,9 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 		if w.Warning != "" {
 			cc.presence("warning: " + w.Warning)
 		}
+		if brokerNote != "" {
+			cc.presence("warning: " + brokerNote)
+		}
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
 		}
@@ -102,6 +109,9 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	b.WriteString(keyNote)
 	if w.Warning != "" {
 		b.WriteString("warning: " + w.Warning + "\n\n")
+	}
+	if brokerNote != "" {
+		b.WriteString("warning: " + brokerNote + "\n\n")
 	}
 	b.WriteString(renderState(lname, &w.State))
 	if w.UnreadTotal > 0 {

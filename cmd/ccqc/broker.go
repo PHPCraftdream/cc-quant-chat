@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/broker"
@@ -79,6 +82,21 @@ func printInfo(i proto.BrokerInfo) {
 	}
 	fmt.Printf("broker %s, pid %d, up %s, %d chat(s) loaded, %d member(s) connected\n  store: %s\n  pipe:  %s\n",
 		i.Version, i.PID, up, i.Chats, i.Clients, i.Store, ipc.Path())
+	if len(i.ByProto) > 0 {
+		levels := make([]string, 0, len(i.ByProto))
+		for l := range i.ByProto {
+			levels = append(levels, l)
+		}
+		sort.Strings(levels)
+		parts := make([]string, len(levels))
+		for k, l := range levels {
+			parts[k] = fmt.Sprintf("proto %s: %d", l, i.ByProto[l])
+			if n, _ := strconv.Atoi(l); n < proto.ProtoVersion {
+				parts[k] += " (older: no confirmations until restarted)"
+			}
+		}
+		fmt.Println("  clients:", strings.Join(parts, "; "))
+	}
 	if i.Warning != "" {
 		fmt.Println("  warning:", i.Warning)
 	}

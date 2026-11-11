@@ -4,10 +4,12 @@
 package broker
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,6 +23,8 @@ import (
 
 const (
 	histCap     = store.ThreadWindow // messages kept in memory per room/dialog
+	drainWait   = 2 * time.Second    // how long a stopping broker lets writers flush their queues
+	maxClientID = 64                 // bytes of a client_msg_id
 	rateLimit   = 30                 // messages per minute per nick (kept across leave/join)
 	ctlLimit    = 60                 // room and role changes per minute per nick
 	maxRooms    = 100                // rooms per chat
@@ -59,6 +63,8 @@ type chat struct {
 	dms      map[string][]proto.Message
 	roles    map[string]*role
 	where    map[int64]string // msg id → thread key: "r:<room>" | "d:<a>|<b>"
+	sent     map[string]int64 // "<nick>|<client_msg_id>" → msg id: recent idempotent sends
+	sentOrd  []string         // insertion order of sent, to cap it
 	store    store.Backend
 }
 
@@ -73,6 +79,7 @@ type member struct {
 	conn    *conn
 	offline time.Time
 	acks    bool // the client confirms delivery with "ack" (proto 2+)
+	proto   int  // protocol level the client announced in join
 }
 
 type role struct {
@@ -153,6 +160,18 @@ func (b *Broker) shutdown(reason string) {
 		conns = append(conns, c)
 	}
 	b.mu.Unlock()
+	// From here handle() refuses changes ("restarting"). Every writer first sends what is
+	// queued, then closes its connection; whoever is not done in time is cut off.
+	for _, c := range conns {
+		c.finish()
+	}
+	deadline := time.After(drainWait)
+	for _, c := range conns {
+		select {
+		case <-c.done:
+		case <-deadline:
+		}
+	}
 	for _, c := range conns {
 		c.close()
 	}
@@ -161,16 +180,18 @@ func (b *Broker) shutdown(reason string) {
 // info: what `ccqc broker status` shows.
 func (b *Broker) info() proto.BrokerInfo {
 	clients := 0
+	byProto := map[string]int{}
 	for _, ch := range b.chats {
 		for _, m := range ch.members {
 			if m.conn != nil {
 				clients++
+				byProto[strconv.Itoa(m.proto)]++
 			}
 		}
 	}
 	return proto.BrokerInfo{
 		Version: version.Version, Proto: proto.ProtoVersion, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
-		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning,
+		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning, ByProto: byProto,
 	}
 }
 
@@ -239,6 +260,7 @@ func newChat(id, name string) *chat {
 		dms:     map[string][]proto.Message{},
 		roles:   map[string]*role{},
 		where:   map[int64]string{},
+		sent:    map[string]int64{},
 	}
 }
 
@@ -303,6 +325,25 @@ func (ch *chat) save(r store.Record) *proto.Error {
 		return nil
 	}
 	if err := ch.store.Append(ch.id, r); err != nil {
+		log.Printf("broker: chat %s#%s: store: %v", ch.name, ch.id[:8], err)
+		return proto.Errf("store_failed", "history could not be saved (%v); nothing was changed, try again", err)
+	}
+	return nil
+}
+
+// saveMsg stores a message; a repeat of an earlier send (same sender and client id) comes back
+// in *dup instead of as an error.
+func (ch *chat) saveMsg(r store.Record, dup **store.DuplicateError) *proto.Error {
+	if ch.store == nil {
+		return nil
+	}
+	err := ch.store.Append(ch.id, r)
+	var d *store.DuplicateError
+	if errors.As(err, &d) {
+		*dup = d
+		return nil
+	}
+	if err != nil {
 		log.Printf("broker: chat %s#%s: store: %v", ch.name, ch.id[:8], err)
 		return proto.Errf("store_failed", "history could not be saved (%v); nothing was changed, try again", err)
 	}

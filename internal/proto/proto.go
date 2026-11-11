@@ -122,6 +122,9 @@ type SendArgs struct {
 	To      string `json:"to,omitempty"`
 	Text    string `json:"text"`
 	ReplyTo int64  `json:"reply_to,omitempty"`
+	// ClientMsgID makes a send idempotent: repeating it (after a lost reply or a broker
+	// restart) returns the id of the stored message and delivers nothing again.
+	ClientMsgID string `json:"client_msg_id,omitempty"`
 }
 
 type HistoryArgs struct {
@@ -220,6 +223,7 @@ type Welcome struct {
 	UnreadTotal int     `json:"unread_total,omitempty"` // backlog may be cut to the newest
 	Key         string  `json:"key,omitempty"`          // set once, when the nick is registered
 	Warning     string  `json:"warning,omitempty"`      // e.g. history is not being saved
+	Proto       int     `json:"proto,omitempty"`        // protocol level of the broker; 0 = older than levels
 }
 
 // BrokerInfo: reply to "ping"; shown by `ccqc broker status`.
@@ -232,10 +236,13 @@ type BrokerInfo struct {
 	Clients int    `json:"clients"` // connected members
 	Store   string `json:"store"`
 	Warning string `json:"warning,omitempty"`
+	// ByProto: connected members per protocol level of their client ("0" = no acks).
+	ByProto map[string]int `json:"by_proto,omitempty"`
 }
 
 type SendResult struct {
-	ID int64 `json:"id"`
+	ID  int64 `json:"id"`
+	Dup bool  `json:"dup,omitempty"` // the message had been stored by an earlier attempt
 }
 
 type HistoryResult struct {
