@@ -549,19 +549,85 @@ settings are **projections** of the journal; reads still go to them. The read cu
 
 ## Exchanging chats with other nodes (`ccqc peer`)
 
-Two brokers can keep the same chat. Nothing leaves a node unless the owner says so:
+Two brokers can keep the same chat. Nothing leaves a node unless the owner says so. All of the
+operations below except `peer list` are administrator operations (the owner's password).
+
+### Connecting a second node: invitation, code, confirmation
+
+Once, on the node that invites (A): `ccqc config set peer.listen 0.0.0.0:7700` and
+`ccqc config set peer.advertise <host:port others reach it at>`, then restart the broker.
 
 ```
-ccqc config set peer.listen 0.0.0.0:7700     # this broker accepts nodes (default: off; restart to apply)
+A:   ccqc peer invite --chat team --trust member [--ttl 15m] [--addr host:port]
+       prints one line, ccqc1.…; it works once. Give it to the owner of the other node by your own channel.
+B:   ccqc peer join <the line> [--trust member]
+       connects to A (pinned to A's key from the line), prints A's origin and a 6-digit CODE.
+A:   ccqc peer list                  # the pending node B and its origin
+     ccqc peer code <origin of B>    # prints the same code
+both, after comparing the code by voice or another channel:
+A:   ccqc peer confirm <origin of B> <code>
+B:   ccqc peer confirm <origin of A> <code>
+```
+
+When both owners have confirmed, the node is active: B makes the chats A offered (`--chat`, the same
+id and name; a chat B already has under that id is only shared) and the exchange starts. Until then the
+nodes see each other and exchange nothing. `--trust` is the level at which the one who gives it takes
+events from the other (`read`, `member`, `trusted`; default `member` on both sides, below).
+
+- **Why compare the code.** The invitation line could have been intercepted and used by a third
+  party first. Then A has a pending node that B does not know, and the codes **do not match**: do not
+  confirm. The code is derived from the connection itself, so nobody else can make it match.
+- **`peer join` says `invite_invalid`:** the invitation was already used (by someone else, or by you
+  before), is expired, was revoked or burnt (three wrong proofs). On A remove a pending node you do not
+  recognise (`ccqc peer remove <origin>`), revoke the old invitation if it is still open
+  (`ccqc peer invite revoke <id>`, the id was printed with it) and issue a new one.
+- A pending node is dropped 15 minutes after the invitation was used (it is not extended), and after
+  three wrong codes; the owner is told in the chats offered to it and in the admin log. The invitation
+  line and the code are never written to the log or to a chat.
+- A stranger's connection to the listening port is closed unless it shows an invitation within 10
+  seconds; at most 10 such connections are served a minute.
+
+### What is taken from a node, and from whom
+
+The level is what **this** node accepts from the other (each side has its own); what is shared is always
+sent. `ccqc peer trust <origin> read|member|trusted` changes it (a loud line goes to the shared chats).
+
+| level | taken from the node |
+|---|---|
+| `read` | nothing: it gets our events, its own are refused |
+| `member` | events of its own source only |
+| `trusted` | also the events of other sources it brings: a source that is a neighbour here is held to its own level (read or pending: nothing), any other is counted against the neighbour that brought it, at most 16 per neighbour |
+
+Downgrading keeps what was already taken. Limits are **per source** (the origin of an event, whoever brought it):
+300 events a minute, 50 MiB a day, and the **excess** of its clock over ours (an event's clock minus ours plus
+one, summed) at most 1000 an hour — settings `peer.limit.events_per_minute`, `mib_per_day`, `lamport_per_hour`,
+`sources` (`ccqc config`). Over a limit an event is refused and the session goes on. A breach that goes on for
+five minutes or comes three times in a day (counted in the node's database, so a restart does not reset it) puts
+the source in **quarantine**, and so does a fork: its new events are not taken, directly or through anyone; a
+neighbour in quarantine is disconnected; what was taken stays and is shown marked `quarantined` (history,
+members). A loud line with the reason goes to the shared chats. Only the owner lifts it: `ccqc peer release
+<origin>`; by hand: `ccqc peer quarantine <origin> [reason]`.
+
+**Reverting a node's contribution:** `ccqc peer revert <origin> [--since <time|36h|7d>]` writes a signed event
+`peer.revert` in every chat that holds its events and builds the projections without its events from then on and
+without the events that depend on them (a comment on its task, a page over its version); a reply to its message
+stays, without the link. The journal keeps everything (`ccqc db verify` passes and says how many of this node's own
+events were left out); what the node gives afterwards is kept and not shown. `ccqc peer revert --undo <id>`
+brings it all back under the same numbers.
+
+### Adding a node by hand
+
+The invitation is the way; the older primitive stays for nodes you already know (the added node is `trusted`):
+
+```
 ccqc peer add <addr> <origin>                # addr is tcp://host:port (host:port alone is tcp); origin: see its "ccqc broker status"
 ccqc peer share <chat> <origin>              # the chat is exchanged with that node (both sides must share it)
-ccqc peer list                               # nodes, what is shared, whether connected or flagged
+ccqc peer list                               # nodes, levels, what is shared, whether connected, quarantine, counters
 ccqc peer unshare <chat> <origin>  /  ccqc peer remove <origin>
 ```
 
-All of these except `list` are administrator operations (the owner's password). The chat must exist
-on both nodes (join it on each with the same token) and be shared on both sides; a chat that is not
-shared is not transferred, and a node that was not added cannot connect.
+The chat must exist on both nodes and be shared on both sides; a chat that is not
+shared is not transferred, and a node that was not added (or invited) cannot connect.
 
 - The link is TLS 1.3 with a self-signed Ed25519 certificate made from `broker.key`; each side
   checks that the certificate's key is the one its origin was derived from, so a node at the right
@@ -571,8 +637,8 @@ shared is not transferred, and a node that was not added cannot connect.
   connected). A node is known by its key, not by the address it comes from, so a tunnel to a loopback
   port works.
 - The nodes compare, per chat, the highest `seq` they hold of each origin and send each other what
-  is missing, in the order of the chat's clock, including the events of a third node (a node need
-  not trust the one it hears them from: it checks them itself). New events are pushed at once; a
+  is missing, in the order of the chat's clock, including the events of a third node (taken only
+  from a `trusted` neighbour, and checked here all the same). New events are pushed at once; a
   broken connection is made again with a growing pause and catches up.
 - Every event is checked before it is kept: the chain (`prev`), the signature of the node that wrote
   it, the author's signature, and that the chat's clock does not jump more than 1000 above what is
