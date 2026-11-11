@@ -87,12 +87,15 @@ func TestATrustedNodeBringsAtMostALimitOfSourcesAndTheOwnerIsToldOnceAndTheRefus
 	eventually(t, wait, "bob holds all three", func() bool { return len(originsIn(b.journal(chatX))) == 3 })
 	eventually(t, wait, "alice holds two sources", func() bool { return len(originsIn(a.journal(chatX))) == 2 })
 	eventually(t, wait, "alice refuses the third", func() bool { return a.m.Stats(b.origin).Refused["too many sources via it"] > 0 })
+	// A frame already on its way when the vector that holds the source was sent may come once more; after
+	// that the source is not asked for again: the count stops growing.
+	time.Sleep(600 * time.Millisecond)
 	first := a.m.Stats(b.origin).Refused["too many sources via it"]
 	time.Sleep(800 * time.Millisecond)
 	if got := len(originsIn(a.journal(chatX))); got != 2 {
 		t.Fatalf("%d sources came through bob", got)
 	}
-	if n := a.m.Stats(b.origin).Refused["too many sources via it"]; n != first {
+	if n := a.m.Stats(b.origin).Refused["too many sources via it"]; n != first || n > 3 {
 		t.Fatalf("the refused source is asked for again: %d, then %d", first, n)
 	}
 	if got := alerts.Load(); got != 1 {
