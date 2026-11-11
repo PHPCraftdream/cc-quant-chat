@@ -31,7 +31,7 @@ const tool = (name: string, input: unknown, extra: Record<string, unknown> = {})
 test('a batch draws as a card; a click opens a message, another closes it', async $ => {
   const seen: string[] = []
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({ ...row(batch), surface })
+    const ui = await $.ui.mount({ ...row(batch, `msg-${surface}`), surface }) // open/closed is kept per row id
     const text = async (re: RegExp) =>
       (await ui.find({ type: 'Text', text: re }))?.text ??
       'MISSING of ' + JSON.stringify((await ui.findAll({ type: 'Text' })).map(t => t.text))
