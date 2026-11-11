@@ -118,7 +118,13 @@ func noteDocs(tx *sql.Tx, e events.Event, imgs []image, parents map[string][]eve
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO doc_vrefs (path, version, origin, seq) VALUES (?, ?, ?, ?)`, path, ver, e.Origin, e.Seq); err != nil {
 			return err
 		}
-		if err := replaceHeads(tx, path, ver, parents[path]); err != nil {
+		refs, named := parents[path]
+		if !named { // written over the page as it stood (events of this node before the names existed, and a first version)
+			if _, err := tx.Exec(`DELETE FROM doc_heads WHERE path = ?`, path); err != nil {
+				return err
+			}
+		}
+		if err := replaceHeads(tx, path, ver, refs); err != nil {
 			return err
 		}
 	}
@@ -163,11 +169,7 @@ func deriveDocRefs(tx *sql.Tx) error {
 		if err != nil {
 			return fmt.Errorf("event %s#%d: assigned: %w", e.Origin, e.Seq, err)
 		}
-		parents, err := docParents(tx, a.Rows)
-		if err != nil {
-			return err
-		}
-		if err := noteDocs(tx, e, a.Rows, parents); err != nil {
+		if err := noteDocs(tx, e, a.Rows, nil); err != nil {
 			return err
 		}
 	}

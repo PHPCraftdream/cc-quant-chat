@@ -108,6 +108,16 @@ func (n *tnode) chat(id string) {
 // say writes a message of this node to the chat (an event of its journal).
 func (n *tnode) say(chat, text string) {
 	n.t.Helper()
+	// The broker numbers messages after the newest one the store holds, those of other nodes included.
+	recs, err := n.db.Load(chat, "")
+	if err != nil {
+		n.t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.T == "maxid" {
+			n.ids[chat] = max(n.ids[chat], r.ID)
+		}
+	}
 	n.ids[chat]++
 	m := &proto.Message{ID: n.ids[chat], TS: time.Now().UTC().Format(time.RFC3339), Room: proto.RoomCommon, From: n.name, Text: text}
 	if err := n.db.Append(chat, store.Record{T: "msg", Key: "r:common", Msg: m}); err != nil {
