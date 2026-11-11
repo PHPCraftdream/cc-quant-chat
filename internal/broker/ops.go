@@ -204,7 +204,7 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 	}
 	msg.ID = ch.nextID + 1
 	var dup *store.DuplicateError
-	if e := ch.saveMsg(store.Record{T: "msg", Key: key, Msg: &msg, ClientID: a.ClientMsgID}, &dup); e != nil {
+	if e := ch.saveMsg(store.Record{T: "msg", Key: key, Msg: &msg, ClientID: a.ClientMsgID, Origin: b.origin}, &dup); e != nil {
 		return nil, e // not stored: no id taken, nothing delivered
 	}
 	if dup != nil { // stored by an earlier attempt (the database knows, e.g. across a broker restart)

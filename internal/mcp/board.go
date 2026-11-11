@@ -41,6 +41,7 @@ type boardToolArgs struct {
 	Priority    *int            `json:"priority"`
 	Sprint      *ref            `json:"sprint"`
 	Status      string          `json:"status"`
+	Text        string          `json:"text"`
 	Mine        bool            `json:"mine"`
 	Done        bool            `json:"done"`
 	Name        *string         `json:"name"`
@@ -70,7 +71,7 @@ func taskNumber(r ref) (int64, error) {
 }
 
 var boardOps = map[string][]string{
-	"task":   {"create", "update", "move", "delete", "get", "list"},
+	"task":   {"create", "update", "move", "delete", "comment", "comments", "get", "list"},
 	"sprint": {"create", "update", "start", "close", "list"},
 	"board":  {"log", "revert", "workflow_get", "workflow_set"},
 }
@@ -124,6 +125,12 @@ func (a boardToolArgs) build(tool string) (proto.BoardArgs, error) {
 		out.Status = a.Status
 		return out, needID()
 	case "task.delete", "task.get":
+		return out, needID()
+	case "task.comment":
+		out.Text = a.Text
+		return out, needID()
+	case "task.comments":
+		out.Limit, out.Before = a.Limit, a.Before
 		return out, needID()
 	case "task.list":
 		if a.Sprint != nil {

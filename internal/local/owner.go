@@ -29,3 +29,6 @@ func FindChatToken(chat string) (string, bool) {
 	}
 	return best, best != ""
 }
+
+// NodeKeyPath is where the broker's node key lives: <CCQC_HOME>/broker.key.
+func NodeKeyPath() string { return filepath.Join(home(), "broker.key") }

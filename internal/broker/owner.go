@@ -7,6 +7,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/node"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
@@ -24,14 +26,40 @@ func (b *Broker) loadOwner() error {
 	if !ok {
 		return nil
 	}
-	pub, found, err := os.Owner()
+	pub, since, found, err := os.Owner()
 	if err != nil {
 		return err
 	}
 	if found {
-		b.ownerPub = ed25519.PublicKey(pub)
+		b.ownerPub, b.ownerAt = ed25519.PublicKey(pub), since
 	}
 	return nil
+}
+
+// initNode loads (or, on the first run, creates) the node key and records the origin.
+func (b *Broker) initNode() error {
+	priv, err := node.Load(local.NodeKeyPath())
+	if err != nil {
+		return err
+	}
+	pub := priv.Public().(ed25519.PublicKey)
+	b.origin = node.Origin(pub)
+	if ns, ok := b.store.(store.NodeStore); ok {
+		return ns.RegisterOrigin(b.origin, pub)
+	}
+	return nil
+}
+
+// announce tells every present member of every loaded chat, loudly: a change of who the owner
+// is must not pass quietly.
+func (b *Broker) announce(text string) {
+	for _, ch := range b.chats {
+		for name, m := range ch.members {
+			if m.conn != nil {
+				b.deliver(ch, name, proto.Event{Kind: "notice", Text: text, Wake: true})
+			}
+		}
+	}
 }
 
 // challenge issues a one-time nonce bound to the connection.
@@ -103,9 +131,10 @@ func (b *Broker) ownerRegister(a proto.OwnerRegisterArgs) (any, *proto.Error) {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
 	}
-	b.ownerPub = pub
+	b.ownerPub, b.ownerAt = pub, time.Now().UTC().Format(time.RFC3339)
 	log.Printf("broker: owner key registered (%s)", owner.Fingerprint(pub))
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub)}, nil
+	b.announce("owner key registered: " + owner.Fingerprint(pub))
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: b.ownerAt}, nil
 }
 
 // ownerRotate replaces the key. Both keys sign the request: the old one authorizes, the new one
@@ -131,19 +160,20 @@ func (b *Broker) ownerRotate(a proto.OwnerRotateArgs) (any, *proto.Error) {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
 	}
-	b.ownerPub = pub
+	b.ownerPub, b.ownerAt = pub, time.Now().UTC().Format(time.RFC3339)
 	for _, ch := range b.chats { // connections verified with the old key no longer count
 		for _, m := range ch.members {
 			m.owner = false
 		}
 	}
 	log.Printf("broker: owner key replaced (%s)", owner.Fingerprint(pub))
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub)}, nil
+	b.announce("owner key replaced: " + owner.Fingerprint(pub))
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: b.ownerAt}, nil
 }
 
 func (b *Broker) ownerInfo() proto.OwnerInfo {
 	if b.ownerPub == nil {
 		return proto.OwnerInfo{}
 	}
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(b.ownerPub)}
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(b.ownerPub), Since: b.ownerAt}
 }

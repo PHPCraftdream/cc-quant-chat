@@ -138,6 +138,7 @@ type OwnerRotateArgs struct {
 type OwnerInfo struct {
 	Registered  bool   `json:"registered"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	Since       string `json:"since,omitempty"` // when the key was registered (RFC 3339)
 }
 
 // OwnerNick is reserved for the owner once one is registered.
@@ -253,6 +254,7 @@ type BoardArgs struct {
 	Priority    *int    `json:"priority,omitempty"`
 	Sprint      *int64  `json:"sprint,omitempty"`
 	Status      string  `json:"status,omitempty"`
+	Text        string  `json:"text,omitempty"`  // task.comment
 	Carry       int64   `json:"carry,omitempty"` // sprint.close: where unfinished tasks go (0: backlog)
 	LogID       int64   `json:"log_id,omitempty"`
 	Force       bool    `json:"force,omitempty"`
@@ -350,6 +352,11 @@ type BrokerInfo struct {
 	Warning string `json:"warning,omitempty"`
 	// ByProto: connected members per protocol level of their client ("0" = no acks).
 	ByProto map[string]int `json:"by_proto,omitempty"`
+	// Node: this broker's identity (origin). Owner: fingerprint of the registered owner key, ""
+	// while no owner is initialized.
+	Node       string `json:"node,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	OwnerSince string `json:"owner_since,omitempty"`
 }
 
 type SendResult struct {

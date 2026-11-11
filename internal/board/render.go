@@ -61,12 +61,16 @@ func countsLine(wf store.Workflow, counts map[string]int) string {
 	return strings.Join(parts, " · ")
 }
 
-func taskLine(t store.Task) string {
+func taskLine(t store.Task, comments int) string {
 	who := "-"
 	if t.Assignee != "" {
 		who = "@" + t.Assignee
 	}
-	return fmt.Sprintf("%s %s %s p%d %s", TaskRef(t.ID), t.Status, who, t.Priority, clip(t.Title, TitleInList))
+	n := ""
+	if comments > 0 {
+		n = fmt.Sprintf(" [%dc]", comments) // only the count: `task comments` has the text
+	}
+	return fmt.Sprintf("%s %s %s p%d %s%s", TaskRef(t.ID), t.Status, who, t.Priority, clip(t.Title, TitleInList), n)
 }
 
 // List renders a short listing: a heading with the sprint and counts, one line per task (no
@@ -123,14 +127,25 @@ func List(tx store.BoardTx, actor string, a ListArgs) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	shown := tasks
+	if len(shown) > ListLines {
+		shown = shown[:ListLines]
+	}
+	ids := make([]int64, len(shown))
+	for i, t := range shown {
+		ids[i] = t.ID
+	}
+	nComments, err := tx.CountComments(ids)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", heading, countsLine(wf, counts))
-	for i, t := range tasks {
-		if i == ListLines {
-			fmt.Fprintf(&b, "…and %d more (narrow with status, assignee or sprint)\n", len(tasks)-ListLines)
-			break
-		}
-		b.WriteString(taskLine(t) + "\n")
+	for _, t := range shown {
+		b.WriteString(taskLine(t, nComments[t.ID]) + "\n")
+	}
+	if len(tasks) > ListLines {
+		fmt.Fprintf(&b, "…and %d more (narrow with status, assignee or sprint)\n", len(tasks)-ListLines)
 	}
 	if len(tasks) == 0 {
 		b.WriteString("no tasks match\n")
@@ -162,6 +177,20 @@ func Get(tx store.BoardTx, id int64) (string, error) {
 		b.WriteString("(no description)\n")
 	} else {
 		b.WriteString(t.Description + "\n")
+	}
+	counts, err := tx.CountComments([]int64{id})
+	if err != nil {
+		return "", err
+	}
+	if total := counts[id]; total > 0 {
+		latest, err := tx.ListComments(id, 0, CommentsInGet)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "comments (%d of %d, newest first; all of them: task op=comments):\n", len(latest), total)
+		for _, cm := range latest {
+			fmt.Fprintf(&b, "  %s\n", clip(oneLine(commentLine(cm)), 300))
+		}
 	}
 	log, err := tx.LogFor("task", id, 0, 5)
 	if err != nil {
@@ -219,6 +248,13 @@ func logLine(e store.LogEntry) string {
 		what = e.Entity
 	}
 	var parts []string
+	if _, isComment := e.After["comment"]; isComment {
+		verb := "comment"
+		if e.Kind == "revert" {
+			verb = "comment hidden/shown"
+		}
+		return strings.TrimSpace(fmt.Sprintf("#%d %s %s %s %s #%s", e.ID, shortTS(e.TS), who, e.Kind, what, strings.Trim(string(e.After["comment"]), `"`)+" "+verb))
+	}
 	for _, f := range sortedFields(e.After) {
 		if e.Kind == "workflow.set" || f == "workflow" {
 			parts = append(parts, "process")

@@ -89,6 +89,9 @@ func short(v json.RawMessage) string {
 // ---- tasks ----
 
 func revertTask(c Ctx, e store.LogEntry, force bool) (Change, error) {
+	if _, isComment := e.After["comment"]; isComment {
+		return revertComment(c, e, force)
+	}
 	t, ok, err := c.Tx.GetTask(e.EntityID)
 	if err != nil {
 		return Change{}, err

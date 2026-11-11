@@ -62,6 +62,22 @@ type LogEntry struct {
 	After      map[string]json.RawMessage
 	Reverts    int64
 	Note       string
+	Origin     string // the node that wrote the entry
+	Lamport    int64  // the chat's logical clock at that write
+	ActorGrant string // reserved: a grant the actor held (empty for now)
+}
+
+// Comment is a note on a task. Append-only: Deleted hides it.
+type Comment struct {
+	ID          int64
+	TaskID      int64
+	TS          string
+	Author      string
+	AuthorOwner bool
+	Text        string
+	Deleted     bool
+	Origin      string
+	Lamport     int64
 }
 
 // TaskFilter selects tasks for a listing. Sprint: -1 any, 0 backlog, n that sprint.
@@ -89,6 +105,17 @@ type BoardTx interface {
 
 	GetWorkflow() (Workflow, bool, error)
 	PutWorkflow(w Workflow, ts string) error
+
+	// NextLamport advances and returns the chat's logical clock.
+	NextLamport() (int64, error)
+
+	NextCommentID() (int64, error)
+	PutComment(c Comment) error // insert or replace by ID
+	GetComment(id int64) (Comment, bool, error)
+	// ListComments: live comments of a task, newest first; before 0 means from the newest.
+	ListComments(taskID, before int64, limit int) ([]Comment, error)
+	// CountComments: live comments per task, for the given tasks.
+	CountComments(taskIDs []int64) (map[int64]int, error)
 
 	NextLogID() (int64, error)
 	AppendLog(e LogEntry) error

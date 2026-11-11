@@ -33,10 +33,12 @@ const (
 
 // Ctx is who acts, when, and on which transaction.
 type Ctx struct {
-	Tx    store.BoardTx
-	Actor string
-	Owner bool // the actor is the verified owner
-	Now   time.Time
+	Tx     store.BoardTx
+	Actor  string
+	Owner  bool   // the actor is the verified owner
+	Grant  string // reserved: a grant the actor holds (empty for now)
+	Origin string // this node, written on every journal row
+	Now    time.Time
 }
 
 func (c Ctx) ts() string { return c.Now.UTC().Format(time.RFC3339) }
@@ -47,6 +49,16 @@ type Change struct {
 	LogID  int64
 	Task   store.Task // the task after the change (zero for sprint and workflow changes)
 	Fields []string   // task fields that changed
+	// Notes, when set, say exactly who is told about the change; empty means the broker applies
+	// its default (the task's assignee, if somebody else made the change).
+	Notes []Note
+}
+
+// Note is a message to one member about a board change.
+type Note struct {
+	To   string
+	Text string
+	Wake bool
 }
 
 // DefaultWorkflow is the process of a board that never set its own.
@@ -89,13 +101,24 @@ func contains(list []string, s string) bool {
 // ---- journal ----
 
 func (c Ctx) log(kind, entity string, id int64, before, after map[string]json.RawMessage, reverts int64) (int64, error) {
+	n, _, err := c.logL(kind, entity, id, before, after, reverts)
+	return n, err
+}
+
+// logL also returns the logical clock value the entry was written with.
+func (c Ctx) logL(kind, entity string, id int64, before, after map[string]json.RawMessage, reverts int64) (int64, int64, error) {
 	n, err := c.Tx.NextLogID()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
+	}
+	lamport, err := c.Tx.NextLamport()
+	if err != nil {
+		return 0, 0, err
 	}
 	err = c.Tx.AppendLog(store.LogEntry{ID: n, TS: c.ts(), Actor: c.Actor, ActorOwner: c.Owner, Kind: kind,
-		Entity: entity, EntityID: id, Before: before, After: after, Reverts: reverts})
-	return n, err
+		Entity: entity, EntityID: id, Before: before, After: after, Reverts: reverts,
+		Origin: c.Origin, Lamport: lamport, ActorGrant: c.Grant})
+	return n, lamport, err
 }
 
 func raw(v any) json.RawMessage {

@@ -52,10 +52,10 @@ func (s *memStore) Append(id string, r store.Record) error {
 }
 
 // The owner key, as the database keeps it.
-func (s *memStore) Owner() ([]byte, bool, error) {
+func (s *memStore) Owner() ([]byte, string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.owner, s.owner != nil, nil
+	return s.owner, "2026-11-11T12:00:00Z", s.owner != nil, nil
 }
 
 func (s *memStore) SetOwner(pub []byte) error {
@@ -88,7 +88,7 @@ func newTestBroker(be store.Backend) *Broker {
 	return &Broker{
 		store: be, storeDesc: "test",
 		chats: map[string]*chat{}, conns: map[*conn]bool{}, hits: map[string][]time.Time{},
-		idle: time.Hour, grace: time.Hour, started: time.Now(),
+		idle: time.Hour, grace: time.Hour, started: time.Now(), origin: "0123456789abcdef0123456789abcdef",
 	}
 }
 

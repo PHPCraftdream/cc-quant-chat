@@ -11,7 +11,7 @@ import (
 
 func TestOwnerKeyIsRegisteredOnceAndReplacedOnlyFromTheCurrentOne(t *testing.T) {
 	db, path := openTemp(t)
-	if _, found, err := db.Owner(); err != nil || found {
+	if _, _, found, err := db.Owner(); err != nil || found {
 		t.Fatalf("fresh database: found %v, err %v", found, err)
 	}
 	k1, k2, k3 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), bytes.Repeat([]byte{3}, 32)
@@ -34,7 +34,7 @@ func TestOwnerKeyIsRegisteredOnceAndReplacedOnlyFromTheCurrentOne(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer again.Close()
-	got, found, err := again.Owner()
+	got, _, found, err := again.Owner()
 	if err != nil || !found || !bytes.Equal(got, k2) {
 		t.Fatalf("after reopening: %x, found %v, err %v; want the replaced key", got, found, err)
 	}

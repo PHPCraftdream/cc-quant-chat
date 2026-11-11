@@ -1,0 +1,74 @@
+package sqlite
+
+import (
+	"testing"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
+)
+
+func TestMessagesCarryTheNodeAndAChatClock(t *testing.T) {
+	db, _ := openTemp(t)
+	if _, err := db.Load(chatID, "x"); err != nil {
+		t.Fatal(err)
+	}
+	add := func(id int64, origin string) {
+		m := proto.Message{ID: id, TS: "t", Room: proto.RoomCommon, From: "a", Text: "x"}
+		mustAppend(t, db, store.Record{T: "msg", Key: "r:common", Msg: &m, Origin: origin})
+	}
+	add(1, "") // written before the node had an identity
+	add(2, "node-one")
+	add(3, "node-one")
+
+	row := func(id int64) (origin string, lamport int64) {
+		if err := db.db.QueryRow(`SELECT origin, lamport FROM messages WHERE chat_id = ? AND id = ?`, chatID, id).Scan(&origin, &lamport); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if o, l := row(2); o != "node-one" || l != 2 {
+		t.Fatalf("message 2: origin %q lamport %d", o, l)
+	}
+	if _, l := row(3); l != 3 {
+		t.Fatalf("the chat's clock must advance with every write, got %d", l)
+	}
+
+	// Registering the node gives its name to the rows that had none, once, and keeps the key.
+	pub := []byte("0123456789abcdef0123456789abcdef")
+	if err := db.RegisterOrigin("node-one", pub); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterOrigin("node-one", pub); err != nil {
+		t.Fatalf("registering again: %v", err)
+	}
+	if o, _ := row(1); o != "node-one" {
+		t.Fatalf("the old row's origin = %q, want the node", o)
+	}
+	var n int
+	if err := db.db.QueryRow(`SELECT count(*) FROM origins`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("origins rows: %d, err %v", n, err)
+	}
+}
+
+func TestJournalClockIsSharedWithMessages(t *testing.T) {
+	db, _ := openTemp(t)
+	if _, err := db.Load(chatID, "x"); err != nil {
+		t.Fatal(err)
+	}
+	m := proto.Message{ID: 1, TS: "t", Room: proto.RoomCommon, From: "a", Text: "x"}
+	mustAppend(t, db, store.Record{T: "msg", Key: "r:common", Msg: &m})
+	var first, second int64
+	if err := db.Do(chatID, func(tx store.BoardTx) error {
+		var err error
+		if first, err = tx.NextLamport(); err != nil {
+			return err
+		}
+		second, err = tx.NextLamport()
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if first != 2 || second != 3 {
+		t.Fatalf("clock = %d, %d after one message; want 2, 3", first, second)
+	}
+}

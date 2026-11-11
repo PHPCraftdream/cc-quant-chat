@@ -97,6 +97,14 @@ func printInfo(i proto.BrokerInfo) {
 		}
 		fmt.Println("  clients:", strings.Join(parts, "; "))
 	}
+	if i.Node != "" {
+		fmt.Println("  node:  ", i.Node)
+	}
+	if i.Owner != "" {
+		fmt.Printf("  owner:  %s (registered %s)\n", i.Owner, i.OwnerSince)
+	} else {
+		fmt.Println("  owner:  not initialized: run `ccqc owner init` before agents run")
+	}
 	if i.Warning != "" {
 		fmt.Println("  warning:", i.Warning)
 	}

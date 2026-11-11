@@ -16,7 +16,7 @@ const boardLimit = 60 // board changes per minute per nick
 
 // changesBoard: the board ops that write; a stopping broker refuses them like other changes.
 var changesBoard = map[string]bool{
-	"task.create": true, "task.update": true, "task.move": true, "task.delete": true,
+	"task.create": true, "task.update": true, "task.move": true, "task.delete": true, "task.comment": true,
 	"sprint.create": true, "sprint.update": true, "sprint.start": true, "sprint.close": true,
 	"board.revert": true, "board.workflow_set": true,
 }
@@ -39,15 +39,25 @@ func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs) (any, *proto.Er
 			return nil, e
 		}
 		var change board.Change
+		who := actor{nick: m.name, owner: m.owner}
 		err := bs.Do(ch.id, func(tx store.BoardTx) error {
+			if err := b.authorize(tx, who, a); err != nil {
+				return err
+			}
 			var err error
-			change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Now: time.Now()}, a)
+			change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Grant: who.grant, Origin: b.origin, Now: time.Now()}, a)
 			return err
 		})
 		if err != nil {
 			return nil, boardError(err)
 		}
-		b.notifyAssignee(ch, m, change)
+		if len(change.Notes) > 0 {
+			for _, n := range change.Notes {
+				b.deliver(ch, n.To, proto.Event{Kind: "board", Text: n.Text, Wake: n.Wake})
+			}
+		} else {
+			b.notifyAssignee(ch, m, change)
+		}
 		return proto.BoardReply{Text: change.Text}, nil
 	}
 	var text string
@@ -109,6 +119,8 @@ func applyBoard(c board.Ctx, a proto.BoardArgs) (board.Change, error) {
 		return board.MoveTask(c, a.ID, a.Status)
 	case "task.delete":
 		return board.DeleteTask(c, a.ID)
+	case "task.comment":
+		return board.CommentTask(c, a.ID, a.Text)
 	case "sprint.create":
 		return board.CreateSprint(c, str(a.Name), str(a.Goal))
 	case "sprint.update":
@@ -133,6 +145,8 @@ func readBoard(tx store.BoardTx, actor string, a proto.BoardArgs) (string, error
 	switch a.Op {
 	case "task.get":
 		return board.Get(tx, a.ID)
+	case "task.comments":
+		return board.Comments(tx, a.ID, a.Limit, a.Before)
 	case "task.list":
 		return board.List(tx, actor, board.ListArgs{Sprint: a.SprintFilter, Status: a.Status,
 			Assignee: strings.TrimPrefix(a.AssigneeFilter, "@"), Mine: a.Mine, Done: a.Done})
@@ -178,4 +192,35 @@ func (b *Broker) notifyAssignee(ch *chat, actor *member, c board.Change) {
 		text = fmt.Sprintf("@%s assigned you %s %q (log #%d)", actor.name, board.TaskRef(t.ID), t.Title, c.LogID)
 	}
 	b.deliver(ch, t.Assignee, proto.Event{Kind: "board", Text: text, Wake: wake})
+}
+
+// actor is who asks to change the board: the nick, whether the connection proved it holds the
+// owner key, and (reserved) a grant it holds.
+type actor struct {
+	nick  string
+	owner bool
+	grant string
+}
+
+// authorize is the one place that decides whether an actor may make a board change. t is the
+// task the op is about (loaded here), nil for ops that are not about one task.
+func (b *Broker) authorize(tx store.BoardTx, who actor, a proto.BoardArgs) error {
+	var t *store.Task
+	if strings.HasPrefix(a.Op, "task.") && a.Op != "task.create" {
+		if task, ok, err := tx.GetTask(a.ID); err != nil {
+			return err
+		} else if ok {
+			t = &task
+		}
+	}
+	if e := b.canBoard(who, a.Op, t); e != nil {
+		return e
+	}
+	return nil
+}
+
+// canBoard: may who do op (on task t, if any)? For now every member of the chat may do
+// everything; the signature is where a rule about roles will go.
+func (b *Broker) canBoard(who actor, op string, t *store.Task) *proto.Error {
+	return nil
 }

@@ -46,7 +46,7 @@ func (e *env) do(actor string, fn func(c Ctx) (Change, error)) (Change, error) {
 	var ch Change
 	err := e.db.Do(chatA, func(tx store.BoardTx) error {
 		var err error
-		ch, err = fn(Ctx{Tx: tx, Actor: actor, Now: e.now})
+		ch, err = fn(Ctx{Tx: tx, Actor: actor, Origin: "00112233445566778899aabbccddeeff", Now: e.now})
 		return err
 	})
 	return ch, err

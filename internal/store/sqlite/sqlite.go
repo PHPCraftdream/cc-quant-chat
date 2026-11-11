@@ -243,9 +243,20 @@ func (d *DB) Append(chatID string, r store.Record) error {
 			return fmt.Errorf("sqlite: msg record without message")
 		}
 		m := r.Msg
-		_, err = d.db.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner)
+		err = d.inTx(func(tx *sql.Tx) error {
+			// The chat's logical clock advances with every message (and journal row).
+			if _, err := tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, chatID); err != nil {
+				return err
+			}
+			var lamport int64
+			if err := tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, chatID).Scan(&lamport); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner, r.Origin, lamport)
+			return err
+		})
 		if err != nil && r.ClientID != "" {
 			// A repeat of an earlier send? Then the earlier message is the answer.
 			var id int64

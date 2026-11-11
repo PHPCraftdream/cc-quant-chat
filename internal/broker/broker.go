@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/ipc"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
@@ -45,6 +46,8 @@ type Broker struct {
 	conns     map[*conn]bool
 	hits      map[string][]time.Time // rate limiter: chat/nick/class → recent actions
 	ownerPub  ed25519.PublicKey      // the registered owner key, nil if none
+	ownerAt   string                 // when it was registered
+	origin    string                 // this broker's identity: first 16 bytes of SHA-256(node key), hex
 	active    int
 	idleAt    time.Time
 	idle      time.Duration
@@ -109,6 +112,10 @@ func Run() error {
 	}
 	if err := b.openStore(); err != nil {
 		return err
+	}
+	if err := b.initNode(); err != nil {
+		b.closeStore()
+		return fmt.Errorf("node key: %w", err)
 	}
 	if err := b.loadOwner(); err != nil {
 		b.closeStore()
@@ -199,9 +206,14 @@ func (b *Broker) info() proto.BrokerInfo {
 			}
 		}
 	}
+	ownerFP := ""
+	if b.ownerPub != nil {
+		ownerFP = owner.Fingerprint(b.ownerPub)
+	}
 	return proto.BrokerInfo{
+		Owner: ownerFP, OwnerSince: b.ownerAt,
 		Version: version.Version, Proto: proto.ProtoVersion, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
-		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning, ByProto: byProto,
+		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning, ByProto: byProto, Node: b.origin,
 	}
 }
 

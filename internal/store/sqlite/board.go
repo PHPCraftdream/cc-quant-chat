@@ -224,13 +224,13 @@ func (b *boardTx) PutWorkflow(w store.Workflow, ts string) error {
 	return err
 }
 
-const logCols = `id, ts, actor, actor_owner, kind, entity, entity_id, before_json, after_json, reverts, note`
+const logCols = `id, ts, actor, actor_owner, kind, entity, entity_id, before_json, after_json, reverts, note, origin, lamport, actor_grant`
 
 func scanLog(row interface{ Scan(...any) error }) (store.LogEntry, error) {
 	var e store.LogEntry
 	var owner int
 	var before, after string
-	if err := row.Scan(&e.ID, &e.TS, &e.Actor, &owner, &e.Kind, &e.Entity, &e.EntityID, &before, &after, &e.Reverts, &e.Note); err != nil {
+	if err := row.Scan(&e.ID, &e.TS, &e.Actor, &owner, &e.Kind, &e.Entity, &e.EntityID, &before, &after, &e.Reverts, &e.Note, &e.Origin, &e.Lamport, &e.ActorGrant); err != nil {
 		return e, err
 	}
 	e.ActorOwner = owner != 0
@@ -252,8 +252,9 @@ func (b *boardTx) AppendLog(e store.LogEntry) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.tx.Exec(`INSERT INTO board_log (chat_id, `+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, e.ID, e.TS, e.Actor, boolInt(e.ActorOwner), e.Kind, e.Entity, e.EntityID, string(before), string(after), e.Reverts, e.Note)
+	_, err = b.tx.Exec(`INSERT INTO board_log (chat_id, `+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.chat, e.ID, e.TS, e.Actor, boolInt(e.ActorOwner), e.Kind, e.Entity, e.EntityID, string(before), string(after), e.Reverts, e.Note,
+		e.Origin, e.Lamport, e.ActorGrant)
 	return err
 }
 
@@ -308,4 +309,88 @@ func (b *boardTx) LogFor(entity string, entityID int64, before int64, limit int)
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)
 	return b.queryLog(q, args...)
+}
+
+// NextLamport advances the chat's logical clock and returns the new value.
+func (b *boardTx) NextLamport() (int64, error) {
+	if _, err := b.tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, b.chat); err != nil {
+		return 0, err
+	}
+	var n int64
+	err := b.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, b.chat).Scan(&n)
+	return n, err
+}
+
+func (b *boardTx) NextCommentID() (int64, error) { return b.nextID("board_comments") }
+
+const commentCols = `id, task_id, ts, author, author_owner, text, deleted, origin, lamport`
+
+func scanComment(row interface{ Scan(...any) error }) (store.Comment, error) {
+	var c store.Comment
+	var owner, del int
+	err := row.Scan(&c.ID, &c.TaskID, &c.TS, &c.Author, &owner, &c.Text, &del, &c.Origin, &c.Lamport)
+	c.AuthorOwner, c.Deleted = owner != 0, del != 0
+	return c, err
+}
+
+func (b *boardTx) PutComment(c store.Comment) error {
+	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (chat_id, `+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.chat, c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport)
+	return err
+}
+
+func (b *boardTx) GetComment(id int64) (store.Comment, bool, error) {
+	c, err := scanComment(b.tx.QueryRow(`SELECT `+commentCols+` FROM board_comments WHERE chat_id = ? AND id = ?`, b.chat, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Comment{}, false, nil
+	}
+	return c, err == nil, err
+}
+
+func (b *boardTx) ListComments(taskID, before int64, limit int) ([]store.Comment, error) {
+	q := `SELECT ` + commentCols + ` FROM board_comments WHERE chat_id = ? AND task_id = ? AND deleted = 0`
+	args := []any{b.chat, taskID}
+	if before > 0 {
+		q += ` AND id < ?`
+		args = append(args, before)
+	}
+	rows, err := b.tx.Query(q+` ORDER BY id DESC LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Comment
+	for rows.Next() {
+		c, err := scanComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (b *boardTx) CountComments(taskIDs []int64) (map[int64]int, error) {
+	out := map[int64]int{}
+	if len(taskIDs) == 0 {
+		return out, nil
+	}
+	args := []any{b.chat}
+	for _, id := range taskIDs {
+		args = append(args, id)
+	}
+	rows, err := b.tx.Query(`SELECT task_id, count(*) FROM board_comments WHERE chat_id = ? AND deleted = 0 AND task_id IN (`+placeholders(len(taskIDs))+`) GROUP BY task_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }

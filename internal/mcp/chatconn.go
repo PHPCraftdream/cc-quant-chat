@@ -238,6 +238,9 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 		cc.s.emit(m.Text, meta, eventLine(cc.local, m, ev.ToMe), false, ackRef{cc, m.ID})
 	case "presence":
 		cc.presence(ev.Text)
+	case "notice":
+		// Something every member must hear (a change of owner key): loud, and no way to miss it.
+		cc.s.emit(ev.Text, map[string]string{"kind": "notice", "chat": cc.local}, "[/"+cc.local+"] "+ev.Text, false, ackRef{})
 	case "board":
 		// A change of a task assigned to you. An assignment or a new status wakes the session;
 		// other changes ride along with the next wake-up.

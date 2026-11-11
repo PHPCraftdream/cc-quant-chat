@@ -22,6 +22,8 @@ type Record struct {
 	ID    int64          `json:"id,omitempty"`
 	// ClientID: idempotency key of a msg (per sender); "" = none.
 	ClientID string `json:"cid,omitempty"`
+	// Origin: the node (broker) that wrote a msg; see NodeStore.
+	Origin string `json:"origin,omitempty"`
 }
 
 // DuplicateError: Append refused a msg whose sender and ClientID were stored before; ID is the
@@ -43,11 +45,18 @@ type Backend interface {
 // OwnerStore is the optional part of a backend that keeps the owner's public key (one per
 // broker). A backend without it keeps the key in the broker's memory only.
 type OwnerStore interface {
-	Owner() (pub []byte, found bool, err error)
+	// Owner returns the key and when it was registered (RFC 3339).
+	Owner() (pub []byte, since string, found bool, err error)
 	// SetOwner registers the first owner key; ErrOwnerExists when there is one already.
 	SetOwner(pub []byte) error
 	// ReplaceOwner swaps the key if the stored one is old (compare-and-set).
 	ReplaceOwner(old, pub []byte) error
+}
+
+// NodeStore is the optional part of a backend that records this broker's identity (origin) and
+// puts it on rows written before there was one.
+type NodeStore interface {
+	RegisterOrigin(origin string, pub []byte) error
 }
 
 // ErrOwnerExists: an owner is registered already.

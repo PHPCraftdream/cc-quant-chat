@@ -12,13 +12,14 @@ import (
 var _ store.OwnerStore = (*DB)(nil)
 
 // Owner returns the registered owner key.
-func (d *DB) Owner() ([]byte, bool, error) {
+func (d *DB) Owner() ([]byte, string, bool, error) {
 	var pub []byte
-	err := d.db.QueryRow(`SELECT pubkey FROM owner WHERE id = 1`).Scan(&pub)
+	var since string
+	err := d.db.QueryRow(`SELECT pubkey, created_at FROM owner WHERE id = 1`).Scan(&pub, &since)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
-	return pub, err == nil, err
+	return pub, since, err == nil, err
 }
 
 // SetOwner registers the first owner key.
@@ -45,7 +46,7 @@ func (d *DB) ReplaceOwner(old, pub []byte) error {
 	if err := tx.QueryRow(`SELECT pubkey FROM owner WHERE id = 1`).Scan(&cur); err != nil || !bytes.Equal(cur, old) {
 		return store.ErrOwnerChanged
 	}
-	if _, err := tx.Exec(`UPDATE owner SET pubkey = ? WHERE id = 1`, pub); err != nil {
+	if _, err := tx.Exec(`UPDATE owner SET pubkey = ?, created_at = ? WHERE id = 1`, pub, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	return tx.Commit()

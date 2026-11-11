@@ -3,6 +3,7 @@ package broker
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,5 +312,63 @@ func TestOwnerAndTheMarkSurviveABrokerRestart(t *testing.T) {
 	}
 	if _, code := ownerJoin(t, b2, k, tok, "owner", o.key); code != "" {
 		t.Fatalf("the owner key after a restart: %q", code)
+	}
+}
+
+func TestRegisteringOrReplacingTheOwnerKeyIsAnnouncedToEveryPresentMember(t *testing.T) {
+	b := newTestBroker(newMemStore())
+	tok, _ := token(t)
+	a := b.connect(t)
+	a.join(tok, "alice", proto.ProtoVersion)
+	a.msgs()
+
+	k1, k2 := newKey(t), newKey(t)
+	register(t, b, k1)
+	got := noticeEvents(a)
+	if len(got) != 1 || !got[0].Wake || got[0].Text != "owner key registered: "+owner.Fingerprint(k1.Public().(ed25519.PublicKey)) {
+		t.Fatalf("after the registration: %+v", got)
+	}
+
+	c := b.connect(t)
+	msg := proto.OwnerRotateMessage(pubOf(k1), pubOf(k2))
+	if code := c.call("owner_rotate", proto.OwnerRotateArgs{Pub: pubOf(k2),
+		OldSig: owner.Encode(ed25519.Sign(k1, msg)), NewSig: owner.Encode(ed25519.Sign(k2, msg))}, nil); code != "" {
+		t.Fatalf("rotate: %q", code)
+	}
+	got = noticeEvents(a)
+	if len(got) != 1 || !strings.HasPrefix(got[0].Text, "owner key replaced: SHA256:") {
+		t.Fatalf("after the rotation: %+v", got)
+	}
+}
+
+func noticeEvents(c *client) []proto.Event {
+	var out []proto.Event
+	for {
+		select {
+		case ev := <-c.events:
+			if ev.Kind == "notice" {
+				out = append(out, ev)
+			}
+		case <-time.After(150 * time.Millisecond):
+			return out
+		}
+	}
+}
+
+func TestBrokerInfoShowsTheOwnerKeyAndTheNode(t *testing.T) {
+	b := newTestBroker(newMemStore())
+	b.mu.Lock()
+	info := b.info()
+	b.mu.Unlock()
+	if info.Owner != "" || info.Node != b.origin || len(info.Node) != 32 {
+		t.Fatalf("before an owner exists: %+v", info)
+	}
+	k := newKey(t)
+	register(t, b, k)
+	b.mu.Lock()
+	info = b.info()
+	b.mu.Unlock()
+	if info.Owner != owner.Fingerprint(k.Public().(ed25519.PublicKey)) || info.OwnerSince == "" {
+		t.Fatalf("after: %+v", info)
 	}
 }

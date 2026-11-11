@@ -50,6 +50,28 @@ func brokerOwner(c *client.Conn) (proto.OwnerInfo, error) {
 }
 
 // newPassword asks twice and refuses a short or mismatched one.
+// matchBroker refuses to go on when the owner key the broker holds is not the one in the local
+// key file: the password would be typed for a key the broker does not trust, or the broker was
+// given another key.
+func matchBroker(c *client.Conn, f owner.File) error {
+	info, err := brokerOwner(c)
+	if err != nil {
+		return err
+	}
+	if !info.Registered {
+		return errors.New("no owner is registered at the broker; run `ccqc owner init`")
+	}
+	pub, err := f.PublicKey()
+	if err != nil {
+		return err
+	}
+	if fp(pub) != info.Fingerprint {
+		return fmt.Errorf("refusing: the owner key at the broker (%s, registered %s) is not the key in your key file (%s). "+
+			"Someone else registered a key, or the database was changed. Nothing was sent; see README, \"Owner\"", info.Fingerprint, info.Since, fp(pub))
+	}
+	return nil
+}
+
 func newPassword(what string) (string, error) {
 	p1, err := owner.ReadSecret(what + " password: ")
 	if err != nil {
@@ -84,8 +106,8 @@ func ownerInit() error {
 		return err
 	}
 	if info.Registered {
-		return fmt.Errorf("the broker already has an owner key (%s). If it is not yours, someone registered before you: "+
-			"stop the broker (`ccqc broker stop`), delete the row of the `owner` table in the database (`ccqc db path`) and run init again; README, \"Owner\"", info.Fingerprint)
+		return fmt.Errorf("the broker already has an owner key (%s, registered %s). If it is not yours, someone registered before you: "+
+			"stop the broker (`ccqc broker stop`), delete the row of the `owner` table in the database (`ccqc db path`) and run init again; README, \"Owner\"", info.Fingerprint, info.Since)
 	}
 	pw, err := newPassword("New owner")
 	if err != nil {
@@ -120,7 +142,7 @@ func ownerStatus() error {
 			return err
 		case info.Registered:
 			brokerFP = info.Fingerprint
-			fmt.Println("broker:   ", brokerFP)
+			fmt.Println("broker:   ", brokerFP, "(registered "+info.Since+")")
 		default:
 			fmt.Println("broker:    no owner registered (run `ccqc owner init`)")
 		}
@@ -151,6 +173,14 @@ func ownerRotate() error {
 	if err != nil {
 		return fmt.Errorf("no key file at %s: %w", path, err)
 	}
+	c, err := client.Connect()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := matchBroker(c, f); err != nil {
+		return err
+	}
 	pw, err := owner.ReadSecret("Current owner password: ")
 	if err != nil {
 		return err
@@ -167,11 +197,6 @@ func ownerRotate() error {
 	if err != nil {
 		return err
 	}
-	c, err := client.Connect()
-	if err != nil {
-		return err
-	}
-	defer c.Close()
 	oldPub := owner.Encode(oldPriv.Public().(ed25519.PublicKey))
 	newPub := owner.Encode(newPriv.Public().(ed25519.PublicKey))
 	msg := proto.OwnerRotateMessage(oldPub, newPub)
@@ -236,6 +261,14 @@ func ownerSay(args []string) error {
 	if err != nil {
 		return fmt.Errorf("no key file at %s (run `ccqc owner init`): %w", local.OwnerKeyPath(), err)
 	}
+	c, err := client.Connect()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := matchBroker(c, f); err != nil {
+		return err
+	}
 	pw, err := owner.ReadSecret("Owner password: ")
 	if err != nil {
 		return err
@@ -244,12 +277,6 @@ func ownerSay(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	c, err := client.Connect()
-	if err != nil {
-		return err
-	}
-	defer c.Close()
 	var ch proto.Challenge
 	if err := c.Call("challenge", nil, &ch); err != nil {
 		return err

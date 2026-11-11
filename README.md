@@ -254,7 +254,7 @@ descriptions short in every session's context:
 
 | Tool | `op` |
 |---|---|
-| `task` | `create` (title, description, assignee, priority 0–3, sprint), `update`, `move` (status), `delete` (soft), `get`, `list` |
+| `task` | `create` (title, description, assignee, priority 0–3, sprint), `update`, `move` (status), `delete` (soft), `comment` (text ≤ 4 KiB), `comments` (paged), `get`, `list` |
 | `sprint` | `create` (name, goal), `update`, `start`, `close` (`carry` = where unfinished tasks go), `list` |
 | `board` | `log` (whole board or one task; `limit`, `before`), `revert` (`log_id`, `force`), `workflow_get`, `workflow_set` |
 
@@ -266,6 +266,10 @@ All take `chat` (omit it when you are in one chat). Ids read `T-12` / `S-3` (pla
   (`active`, `backlog`, `all`, `S-n`), `status`, `assignee`, `mine`, `done`. `task get` gives
   the description and the last five journal entries. Replies to changes are one line:
   `T-12 todo → doing (log #57)`. Everyone can still see every task: ask for `sprint=all`.
+- **Comments.** `list` shows only a count per task (`[3c]`), `get` the three latest and the
+  total, `task op=comments` pages through all. A comment wakes the task's assignee (unless they
+  wrote it) and reaches the task's author quietly. It is a journal entry carrying its text;
+  reverting it hides it, reverting that shows it again.
 - **Process** (the state machine of statuses): by default `todo → doing → review → done`, plus
   `blocked` and `cancelled` (`board op=workflow_get`). A chat can set its own with
   `workflow_set` (names `[a-z0-9-]{1,32}`, at most 16); it is refused while live tasks sit in
@@ -318,6 +322,11 @@ ccqc owner rotate          # new key, the request signed with the old one
   owner exists, the nick `owner` is reserved for it (`reserved` for unsigned joins).
   `owner say` uses the nick `owner` (`--nick` to change); its nick key is kept like any nick's,
   and it takes the chat token from your sessions' config, or asks for it on the console.
+- **Changes of the owner key are loud.** On registration and on `rotate` the broker sends an
+  event to every present member of every loaded chat (`owner key registered: <fingerprint>`).
+  `owner init` refuses when a key is registered and prints its fingerprint and time;
+  `owner say` and `owner rotate` compare the broker's fingerprint with your key file first and
+  refuse on a mismatch; `ccqc broker status` shows the fingerprint (or "not initialized").
 - **Run `ccqc owner init` right after updating, before agents run.** Registration is
   first-come: while no owner is registered, any process of your OS user that speaks the broker
   protocol can register its own key (it needs no console and no ccqc binary). `owner init` fails
@@ -329,6 +338,16 @@ ccqc owner rotate          # new key, the request signed with the old one
   broker. If the key or password is lost: stop the broker (`ccqc broker stop`), delete the row
   of the `owner` table in the database (`ccqc db path`), delete `owner.key`, start the broker
   and run `ccqc owner init` again.
+
+## Node identity
+
+The broker has an identity of its own: an Ed25519 key in `<CCQC_HOME>/broker.key` (mode 0600,
+outside the database, no password because the broker starts without a person; it names this node
+against other nodes, it is no protection from processes of your own user). `node:` in
+`ccqc broker status` is the first 16 bytes of SHA-256 of the public key (hex), written as `origin`
+on journal rows (`messages`, `board_log`, `board_comments`) together with `lamport`, a
+logical clock per chat. Nothing is signed or synchronized yet; this is groundwork for merging
+databases of several brokers later (see `docs/design-federation.md`).
 
 ## Cards in the transcript (`quant-ui`)
 
