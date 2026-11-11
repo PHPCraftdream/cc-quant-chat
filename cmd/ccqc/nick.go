@@ -17,6 +17,7 @@ func runNick(args []string) error {
 		return errors.New("usage: ccqc nick reset - <nick>   (the token is read from stdin: " +
 			"a token in the arguments shows up in process lists and shell history)")
 	}
+	fmt.Fprintln(os.Stderr, "ccqc: deprecated: with an owner, `ccqc invite <chat> <nick>` replaces the key of a nick (the old key stops working); this stays for chats without an owner")
 	token, name := strings.TrimSpace(args[1]), strings.TrimPrefix(args[2], "@")
 	if token == "-" {
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')

@@ -63,6 +63,8 @@ type Broker struct {
 	ownerAt   string                       // when it was registered
 	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
 	// lenientEntry: tests only. A token is enough for a new nick even with an owner (see entryByInviteOnly).
+	// It stays unexported and is never set from configuration, the environment or a flag: a broker made
+	// for real enters by invitation once it has an owner.
 	lenientEntry bool
 	active       int
 	idleAt       time.Time

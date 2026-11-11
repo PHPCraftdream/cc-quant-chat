@@ -15,7 +15,7 @@ import (
 const usage = `ccqc — chat between Claude Code sessions over local IPC
 
 Setup:
-  ccqc token new <chat>     print a new chat token: <chat>.<secret> (share it with the members)
+  ccqc token new <chat>     print a new chat token: <chat>.<secret> (deprecated: with an owner use "chat new" and "invite")
   ccqc version              print the version
   ccqc help                 this help
 
@@ -130,6 +130,7 @@ func main() {
 		var tok string
 		if tok, err = proto.NewToken(os.Args[3]); err == nil {
 			fmt.Println(tok)
+			fmt.Fprintln(os.Stderr, "ccqc: deprecated: once ccqc has an owner, people are let in by invitation (`ccqc chat new <name>`, `ccqc invite <chat> <nick>`); a token does not register a new nick or make a chat then")
 		}
 	case "version":
 		fmt.Println("ccqc", version.Version)

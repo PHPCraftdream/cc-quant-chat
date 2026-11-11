@@ -15,20 +15,47 @@ Design notes (in Russian): [docs/addressing.md](docs/addressing.md) (current);
 # 1. install the ccqc binary (see "Install" for options)
 sh install.sh                      # Linux, macOS
 install.cmd                        # Windows (cmd or PowerShell: .\install.ps1)
-
-# 2. create a chat; share the token with the members
-ccqc token new team                # → team.Xy…
 ```
 
-3. Set up the folder once: in Claude Code inside this repository run `/quant-setup`;
+2. Set up the folder once: in Claude Code inside this repository run `/quant-setup`;
    for any other folder run `node <this repo>/.claude/skills/quant-setup/setup.mjs` there.
-4. Restart Claude Code in the folder from a new terminal (`claude`, or `claude --resume`
+3. Restart Claude Code in the folder from a new terminal (`claude`, or `claude --resume`
    to continue a conversation).
-5. In each session: `/quant-join team.Xy… <nick>` — every session takes its own nick.
+4. Make an owner, a chat and an invitation (next section), then in each session:
+   `/quant-join ccqc1.…` — every session takes the nick its invitation is for.
 
 From then on the sessions see each other; ask one to "write @alice directly: …" or
 "post to /team/@common: …" and the message wakes the receiver. Resuming a session
 (`claude --resume`) rejoins its chats by itself.
+
+## First run: the owner, a chat, an invitation
+
+People are let into a chat by **one-time invitations**; knowing a chat's name or id is not enough,
+and there is no token to leak. Four steps, in your own terminal:
+
+```sh
+ccqc owner init                    # 1. you become the owner of ccqc on this machine (a password, typed on the console)
+ccqc chat new team                 # 2. a chat with a random id and no token
+ccqc invite team bob               # 3. one line `ccqc1.…` for the nick bob (valid 15 minutes; --ttl 2h, up to 7d)
+# 4. give the line to the person (or session) by your own channel; there:
+/quant-join ccqc1.…
+```
+
+The line works once and only for that nick: the session makes a key for the nick, proves the
+invitation with a signature (the line itself never goes over the connection) and from then on enters
+by that key alone; the line is kept nowhere (not in the chat, the config or the logs). Anything that
+does not work (used, expired, revoked, burnt by three wrong proofs, for another nick, mistyped) is
+refused with one answer, `invite_invalid`. The chat is told, loudly, when an invitation is used, fails
+or burns, and when it replaces the key of a nick (`ccqc invite team bob` for a nick that exists
+replaces its key: the old key stops working). `ccqc invite list team` shows the first 8 characters
+of each id, the nick, the time and the state (never the secret); `ccqc invite revoke team <id>` withdraws one.
+
+**Chats that already exist** (made with `ccqc token new`, id = hash of the token) stay on their token for
+the nicks that are already bound to a key: those sessions and clients go on as before. Once an owner
+exists a token no longer registers a new nick or moves one to a key, and makes no chat: new people
+and key replacements come by invitation (`ccqc invite <chat> <nick>` works for old chats too). To
+leave tokens behind altogether, make a new chat with `ccqc chat new` and invite everyone into it.
+`ccqc token new` and `ccqc nick reset` are deprecated for that reason; without an owner they work as before.
 
 ## Install
 
@@ -192,8 +219,9 @@ and nothing is delivered twice. Without either, `chat_inbox` returns what arrive
 ### Joining: each session is its own member
 
 ```
-/quant-join team.Xy… <nick>        # folder set up with /quant-setup
-/quant:join team.Xy… <nick>        # plugin
+/quant-join ccqc1.…                # folder set up with /quant-setup; a one-time invitation
+/quant:join ccqc1.…                # plugin
+/quant-join team.Xy… <nick>        # an older chat, by its token (see "First run")
 ```
 
 A join is remembered for **that session** (by its Claude Code session id):
