@@ -138,6 +138,10 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 			s.common[c] = true
 		}
 	}
+	if len(s.common) == 0 { // nothing shared by both: nothing to exchange, nothing to keep
+		_ = s.send(Frame{T: "bye"})
+		return nil
+	}
 	if !m.register(s) {
 		_ = s.send(Frame{T: "bye"})
 		return nil

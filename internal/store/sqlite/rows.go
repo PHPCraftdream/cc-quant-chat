@@ -108,7 +108,15 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 			imgs = append(imgs, img)
 		}
 	}
-	assigned, err := jsonText(map[string]any{"actor": in.Actor, "owner": in.Owner, "grant": in.Grant, "rows": imgs, "changes": changesOf(imgs)})
+	refs, err := boardRefs(r.tx, imgs)
+	if err != nil {
+		return err
+	}
+	am := map[string]any{"actor": in.Actor, "owner": in.Owner, "grant": in.Grant, "rows": imgs, "changes": changesOf(imgs)}
+	if len(refs) > 0 {
+		am["refs"] = refs // the global names of what the rows mention, for the nodes that number it otherwise
+	}
+	assigned, err := jsonText(am)
 	if err != nil {
 		return err
 	}
@@ -116,9 +124,12 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 	if ts == "" {
 		ts = now()
 	}
-	_, err = r.c.appendEvent(r.tx, events.Event{Lamport: r.lamport, Kind: in.Kind, Payload: in.Payload,
+	e, err := r.c.appendEvent(r.tx, events.Event{Lamport: r.lamport, Kind: in.Kind, Payload: in.Payload,
 		AuthorPub: in.AuthorPub, Sig: in.Sig, Assigned: assigned, TS: ts})
-	return err
+	if err != nil {
+		return err
+	}
+	return noteBoard(r.tx, e, imgs)
 }
 
 // applyImages writes the row images of an event. The unique index of sprints (one active sprint)
@@ -150,7 +161,7 @@ func applyImages(tx *sql.Tx, e events.Event) error {
 			return err
 		}
 	}
-	return nil
+	return noteBoard(tx, e, a.Rows)
 }
 
 func writeImage(tx *sql.Tx, img image) error {

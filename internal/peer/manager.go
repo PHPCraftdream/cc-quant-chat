@@ -172,7 +172,7 @@ func (m *Manager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for origin, cancel := range m.dialers {
-		if p, ok := want[origin]; !ok || p.Addr == "" {
+		if p, ok := want[origin]; !ok || p.Addr == "" || len(p.Chats) == 0 {
 			cancel()
 			delete(m.dialers, origin)
 		}
@@ -184,7 +184,7 @@ func (m *Manager) Refresh() error {
 		}
 	}
 	for _, p := range peers {
-		if p.Addr == "" || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
+		if p.Addr == "" || len(p.Chats) == 0 || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
 			continue
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
@@ -225,7 +225,7 @@ func (m *Manager) dial(ctx context.Context, origin string) {
 		peers, err := m.st.Peers()
 		addr := ""
 		for _, p := range peers {
-			if p.Origin == origin {
+			if p.Origin == origin && len(p.Chats) > 0 { // nothing shared with it: nothing to dial for
 				addr = p.Addr
 			}
 		}

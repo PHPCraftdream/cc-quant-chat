@@ -60,9 +60,11 @@ func applyRemote(tx *sql.Tx, e events.Event, self string) ([]store.Record, error
 		return remoteNick(tx, e, self)
 	case strings.HasPrefix(e.Kind, "room."):
 		return remoteRoom(tx, e, self)
+	case isBoardKind(e.Kind):
+		return nil, remoteBoard(tx, e, self)
 	}
-	// Pinned roles, settings and snapshots are a node's own business; the board and documents
-	// are applied by their own rules.
+	// Pinned roles, settings and snapshots are a node's own business; documents are applied by
+	// their own rules.
 	return nil, nil
 }
 
@@ -121,7 +123,7 @@ func remoteMsg(tx *sql.Tx, e events.Event, self string) ([]store.Record, error) 
 		id, "r:"+room, room, from, a.FromRole, to, str(p, "text"), replyTo, e.TS, e.Origin, e.Lamport, e.AuthorPub, e.Sig, payload); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(`INSERT INTO entity_refs (kind, id, origin, seq) VALUES ('msg', ?, ?, ?)`, id, e.Origin, e.Seq); err != nil {
+	if _, err := tx.Exec(`INSERT INTO entity_refs (kind, id, origin, seq, num) VALUES ('msg', ?, ?, ?, ?)`, id, e.Origin, e.Seq, a.ID); err != nil {
 		return nil, err
 	}
 	msg := &proto.Message{ID: id, TS: e.TS, Room: room, From: from, FromRole: a.FromRole, To: to, Text: str(p, "text"), ReplyTo: replyTo}
@@ -282,9 +284,12 @@ func upsertRoom(tx *sql.Tx, room, topic, by string, lamport int64, origin string
 // other nodes: the global names of messages and the stamps of rooms. It runs once for such a chat,
 // after the rows that predate the journal are in it.
 func derivedRefs(tx *sql.Tx) error {
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO entity_refs (kind, id, origin, seq)
-		SELECT 'msg', CAST(json_extract(assigned, '$.id') AS INTEGER), origin, seq FROM events
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO entity_refs (kind, id, origin, seq, num)
+		SELECT 'msg', CAST(json_extract(assigned, '$.id') AS INTEGER), origin, seq, CAST(json_extract(assigned, '$.id') AS INTEGER) FROM events
 		WHERE kind = 'msg' AND remote = 0 AND hidden = '' AND json_extract(assigned, '$.id') IS NOT NULL`); err != nil {
+		return err
+	}
+	if err := deriveBoardRefs(tx); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE rooms SET

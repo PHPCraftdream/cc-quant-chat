@@ -564,10 +564,15 @@ shared is not transferred, and a node that was not added cannot connect.
   answers by its name that is the same everywhere. A message of a member who signs must be signed
   by the key its node registered for the nick. Two nodes that made one room end with one: the
   earlier (clock, origin) creation stands.
+- The task board of the other node is merged in: tasks, sprints, comments and the process. A task
+  of another node is shown under this node's number; two nodes that edit one field of a task at
+  once end with one value (the later write by the chat's clock stands; ties go to the larger origin),
+  and fields written by one node alone are kept. The chat may end with two active sprints, one
+  from each node: the merge does not refuse what the history holds.
 - **Not supported yet:** direct messages between members of different nodes (they are refused:
   "the member is on another node; direct messages between nodes are not supported yet"), and
-  applying the board and the documents of the other node (the journals carry them; the
-  projections follow in the next step).
+  applying the documents of the other node (the journals carry them; the projections follow in the
+  next step).
 - `ccqc peer` needs the SQLite store (not `CCQC_STORE=memory`).
 
 ## Cards in the transcript (`quant-ui`)

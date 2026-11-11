@@ -255,7 +255,7 @@ func applyMsg(tx *sql.Tx, e events.Event) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT OR REPLACE INTO entity_refs (kind, id, origin, seq) VALUES ('msg', ?, ?, ?)`, a.ID, e.Origin, e.Seq)
+	_, err = tx.Exec(`INSERT OR REPLACE INTO entity_refs (kind, id, origin, seq, num) VALUES ('msg', ?, ?, ?, ?)`, a.ID, e.Origin, e.Seq, a.ID)
 	return err
 }
 
