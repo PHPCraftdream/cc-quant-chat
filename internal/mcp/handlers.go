@@ -79,10 +79,12 @@ func (s *Session) leave(chat string) (string, error) {
 	s.mu.Lock()
 	delete(s.chats, cc.local)
 	s.mu.Unlock()
-	if err := local.ForgetChat(local.ProjectDir(), cc.local); err != nil {
-		return "", fmt.Errorf("left /%s, but could not drop it from this folder's auto-join: %v", cc.local, err)
+	if sid := s.sessionID(); sid != "" {
+		if err := local.ForgetChat(local.ProjectDir(), sid, cc.local); err != nil {
+			return "", fmt.Errorf("left /%s, but could not forget it for this session: %v", cc.local, err)
+		}
 	}
-	return "left /" + cc.local + " (no longer joined automatically in this folder)", nil
+	return "left /" + cc.local + " (forgotten for this session)", nil
 }
 
 func (s *Session) roomOp(op, room, topic string) (string, error) {

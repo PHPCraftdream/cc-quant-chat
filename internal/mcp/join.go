@@ -13,9 +13,9 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// join enters a chat under a nick. remember: join it automatically in this folder from now on.
-// auto: called on session start; backlog goes out as events instead of the tool result.
-func (s *Session) join(token, name, alias string, remember, auto bool) (string, error) {
+// join enters a chat under a nick and remembers it for this Claude Code session, so resuming
+// the session joins again. auto: called on session start; backlog goes out as events.
+func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	token = strings.TrimSpace(token)
 	chatName, chatID, err := proto.ParseToken(token)
 	if err != nil {
@@ -75,10 +75,9 @@ func (s *Session) join(token, name, alias string, remember, auto bool) (string, 
 	s.mu.Unlock()
 	go cc.run(conn)
 
-	if remember {
-		if err := local.RememberChat(local.ProjectDir(), local.Entry{Token: token, Name: name, Alias: alias}); err != nil {
-			return "", fmt.Errorf("joined, but could not remember the chat for this folder: %v", err)
-		}
+	remembered := ""
+	if !auto {
+		remembered = s.remember(local.Entry{Token: token, Name: name, Alias: alias})
 	}
 	if auto {
 		cc.presence(fmt.Sprintf("auto-joined /%s as @%s", lname, name))
@@ -108,22 +107,56 @@ func (s *Session) join(token, name, alias string, remember, auto bool) (string, 
 			}
 		}
 	}
-	if remember {
-		b.WriteString("\nThis folder now joins this chat automatically on every session start.")
-	}
+	b.WriteString("\n" + remembered)
 	b.WriteString("\nNew chat messages will arrive by themselves.")
 	return b.String(), nil
 }
 
-// autoJoin enters the chats remembered for this folder.
-func (s *Session) autoJoin() {
-	entries, err := local.FolderChats(local.ProjectDir())
+// remember stores the chat for this session; returns a note for the tool result.
+func (s *Session) remember(e local.Entry) string {
+	sid := s.sessionID()
+	if sid == "" {
+		return "Not remembered for this session: the ccqc hooks are not active here (run /quant-setup, restart Claude Code)."
+	}
+	if err := local.RememberChat(local.ProjectDir(), sid, e); err != nil {
+		return "Could not remember the chat for this session: " + err.Error()
+	}
+	return "Remembered for this session: resuming it joins this chat again."
+}
+
+func (s *Session) sessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sid
+}
+
+// setSessionID learns the Claude Code session id from a hook. The first id starts the
+// auto-join; a later different id (after /clear) takes over the remembered chats.
+func (s *Session) setSessionID(sid string) {
+	s.mu.Lock()
+	old := s.sid
+	s.sid = sid
+	s.mu.Unlock()
+	switch {
+	case old == sid:
+	case old == "":
+		go s.autoJoin(sid)
+	default:
+		if err := local.MoveSession(local.ProjectDir(), old, sid); err != nil {
+			log.Printf("move session chats: %v", err)
+		}
+	}
+}
+
+// autoJoin enters the chats remembered for the session.
+func (s *Session) autoJoin(sid string) {
+	entries, err := local.SessionChats(local.ProjectDir(), sid)
 	if err != nil {
 		log.Printf("auto-join: %v", err)
 		return
 	}
 	for _, e := range entries {
-		if _, err := s.join(e.Token, e.Name, e.Alias, false, true); err != nil {
+		if _, err := s.join(e.Token, e.Name, e.Alias, true); err != nil {
 			s.emit("", nil, fmt.Sprintf("[/%s] auto-join as @%s failed: %v", e.Local(), e.Name, err), true)
 		}
 	}

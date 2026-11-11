@@ -1,17 +1,11 @@
 #!/usr/bin/env node
-// Sets up the current folder for ccqc chats: MCP server, rewake/hello hooks, permissions,
-// and auto-join of <token> as <nick>. Idempotent. No shell: external calls use execFileSync.
-// Usage: node setup.mjs <token> <nick> [alias]
-import { execFileSync } from "node:child_process";
+// Sets up the current folder for ccqc chats: MCP server, rewake/hello hooks, permission.
+// Chats and nicks are per Claude Code session (chat_join remembers them), not per folder,
+// so several sessions in one folder can each be someone else. Idempotent.
+// Usage: node setup.mjs
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const [token, nickArg, alias] = process.argv.slice(2);
-if (!token || !nickArg) {
-  fail("usage: setup.mjs <token> <nick> [alias]");
-}
-const nick = nickArg.replace(/^@/, "");
 
 const folder = resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -48,21 +42,11 @@ setHooks(st.hooks, "SessionStart", [hello, wait]);
 setHooks(st.hooks, "Stop", [wait]);
 writeJSON(settingsPath, st);
 
-// 3. Auto-join: the token and nick are kept in the user's ccqc config, not in this folder.
-const args = ["remember", token, nick];
-if (alias) args.push(alias);
-try {
-  execFileSync(exe, args, { env: { ...process.env, CLAUDE_PROJECT_DIR: folder }, stdio: ["ignore", "ignore", "pipe"] });
-} catch (e) {
-  fail(`ccqc remember failed: ${String(e.stderr || e.message).trim()}`);
-}
-
-const chat = alias || token.slice(0, token.lastIndexOf("."));
 console.log(`ccqc: folder ${folder} set up.
-- joins /${chat} as @${nick} automatically on every Claude Code session start here
-- incoming messages wake the session (rewake hook), no extra flags needed
 - written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks, permission mcp__ccqc)
-Restart Claude Code in this folder to activate.`);
+- restart Claude Code here; then, in each session: /quant-join <token> <nick>
+- every session keeps its own chats and nick; resuming a session rejoins them automatically
+- incoming messages wake the session (rewake hook), no extra flags needed`);
 
 // --- helpers ---
 

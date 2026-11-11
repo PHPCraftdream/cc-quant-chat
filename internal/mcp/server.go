@@ -13,16 +13,16 @@ import (
 	"sync"
 )
 
-const Version = "0.1.0"
+// Version is set at release build time: -ldflags "-X .../internal/mcp.Version=v1.2.3".
+var Version = "0.1.0-dev"
 
 // Older revisions first; 2026-07-28 is never offered (v2 client won't register channels on it).
 var supportedVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 
 type Server struct {
-	wmu      sync.Mutex
-	w        *bufio.Writer
-	s        *Session
-	autoOnce sync.Once // auto-join the folder's chats once the client is ready
+	wmu sync.Mutex
+	w   *bufio.Writer
+	s   *Session
 }
 
 type request struct {
@@ -87,9 +87,6 @@ func (srv *Server) dispatch(line []byte) {
 	}
 	// Notifications and responses to us need no reply.
 	if req.Method == "" || len(req.ID) == 0 || string(req.ID) == "null" {
-		if req.Method == "notifications/initialized" {
-			srv.autoOnce.Do(func() { go srv.s.autoJoin() })
-		}
 		return
 	}
 	go srv.handle(req)

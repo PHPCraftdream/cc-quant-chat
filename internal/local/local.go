@@ -1,5 +1,5 @@
 // Package local: per-user client state outside any repository —
-// chats a folder joins automatically, and the keys of registered nicks.
+// the chats each Claude Code session joins automatically, and the keys of registered nicks.
 // Files live in CCQC_HOME or <user config dir>/ccqc, readable by the user only.
 package local
 
@@ -12,20 +12,42 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"time"
 )
 
-// Entry: a chat a folder joins on session start.
+// Entry: a chat a session joins automatically.
 type Entry struct {
 	Token string `json:"token"`
 	Name  string `json:"name"`
 	Alias string `json:"alias,omitempty"`
 }
 
-type folderFile struct {
-	Folder string  `json:"folder"`
-	Chats  []Entry `json:"chats"`
+// Local name of an entry: alias or the chat name from the token.
+func (e Entry) Local() string {
+	if e.Alias != "" {
+		return e.Alias
+	}
+	if i := strings.LastIndexByte(e.Token, '.'); i > 0 {
+		return e.Token[:i]
+	}
+	return ""
 }
+
+// Sessions are keyed by Claude Code session id: several sessions in one folder each keep
+// their own chats and nicks; resuming a session finds them again.
+type folderFile struct {
+	Folder   string              `json:"folder"`
+	Sessions map[string]*session `json:"sessions,omitempty"`
+}
+
+type session struct {
+	Used  string  `json:"used"` // RFC 3339; the least recently used are pruned
+	Chats []Entry `json:"chats"`
+}
+
+const keepSessions = 50
 
 func home() string {
 	if d := os.Getenv("CCQC_HOME"); d != "" {
@@ -86,55 +108,34 @@ func writeJSON(path string, v any) error {
 	return os.Rename(tmp, path)
 }
 
-// Local name of an entry: alias or the chat name from the token.
-func (e Entry) Local() string {
-	if e.Alias != "" {
-		return e.Alias
-	}
-	if i := strings.LastIndexByte(e.Token, '.'); i > 0 {
-		return e.Token[:i]
-	}
-	return ""
-}
-
-func FolderChats(folder string) ([]Entry, error) {
-	var f folderFile
-	err := readJSON(folderPath(folder), &f)
-	return f.Chats, err
-}
-
-// RememberChat adds or replaces (by local chat name) a chat the folder joins automatically.
-func RememberChat(folder string, e Entry) error {
+// update loads the folder file, applies fn and saves it (or removes it when empty).
+func update(folder string, fn func(f *folderFile)) error {
 	p := folderPath(folder)
-	var f folderFile
+	f := folderFile{}
 	if err := readJSON(p, &f); err != nil {
 		return err
+	}
+	if f.Sessions == nil {
+		f.Sessions = map[string]*session{}
 	}
 	f.Folder = folder
-	out := f.Chats[:0]
-	for _, c := range f.Chats {
-		if c.Local() != e.Local() {
-			out = append(out, c)
+	fn(&f)
+	for id, s := range f.Sessions {
+		if len(s.Chats) == 0 {
+			delete(f.Sessions, id)
 		}
 	}
-	f.Chats = append(out, e)
-	return writeJSON(p, f)
-}
-
-func ForgetChat(folder, localName string) error {
-	p := folderPath(folder)
-	var f folderFile
-	if err := readJSON(p, &f); err != nil {
-		return err
-	}
-	out := f.Chats[:0]
-	for _, c := range f.Chats {
-		if c.Local() != localName {
-			out = append(out, c)
+	if len(f.Sessions) > keepSessions {
+		ids := make([]string, 0, len(f.Sessions))
+		for id := range f.Sessions {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return f.Sessions[ids[i]].Used > f.Sessions[ids[j]].Used })
+		for _, id := range ids[keepSessions:] {
+			delete(f.Sessions, id)
 		}
 	}
-	f.Chats = out
-	if len(out) == 0 {
+	if len(f.Sessions) == 0 {
 		err := os.Remove(p)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -142,6 +143,65 @@ func ForgetChat(folder, localName string) error {
 		return err
 	}
 	return writeJSON(p, f)
+}
+
+func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// SessionChats: chats the session joins automatically.
+func SessionChats(folder, sessionID string) ([]Entry, error) {
+	var f folderFile
+	if err := readJSON(folderPath(folder), &f); err != nil {
+		return nil, err
+	}
+	if s := f.Sessions[sessionID]; s != nil {
+		return s.Chats, nil
+	}
+	return nil, nil
+}
+
+// RememberChat adds or replaces (by local chat name) a chat of the session.
+func RememberChat(folder, sessionID string, e Entry) error {
+	return update(folder, func(f *folderFile) {
+		s := f.Sessions[sessionID]
+		if s == nil {
+			s = &session{}
+			f.Sessions[sessionID] = s
+		}
+		out := s.Chats[:0]
+		for _, c := range s.Chats {
+			if c.Local() != e.Local() {
+				out = append(out, c)
+			}
+		}
+		s.Chats, s.Used = append(out, e), now()
+	})
+}
+
+func ForgetChat(folder, sessionID, localName string) error {
+	return update(folder, func(f *folderFile) {
+		s := f.Sessions[sessionID]
+		if s == nil {
+			return
+		}
+		out := s.Chats[:0]
+		for _, c := range s.Chats {
+			if c.Local() != localName {
+				out = append(out, c)
+			}
+		}
+		s.Chats = out
+	})
+}
+
+// MoveSession hands a session's chats to its new id (Claude Code starts a new id on /clear).
+func MoveSession(folder, from, to string) error {
+	return update(folder, func(f *folderFile) {
+		if s := f.Sessions[from]; s != nil && from != to {
+			s.Used = now()
+			f.Sessions[to] = s
+			delete(f.Sessions, from)
+		}
+	})
 }
 
 func keysPath() string { return filepath.Join(home(), "nick-keys.json") }

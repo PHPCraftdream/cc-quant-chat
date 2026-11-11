@@ -10,11 +10,17 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/ipc"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proc"
 )
 
-// Session pipe: local endpoint for helpers of this Claude Code session.
-// The helper sends "wait"; it gets the next batch of events and exits 2 to wake Claude.
+// Session pipe: local endpoint for the hooks of this Claude Code session.
+// The first line is "<cmd> <session id>":
+//
+//	"wait"  — rewake hook: gets the next batch of events, then exits 2 to wake Claude;
+//	"hello" — SessionStart hook: gets the session's remembered chats.
+//
+// The session id tells the MCP server which chats to join automatically.
 const (
 	waitBatchDelay = 300 * time.Millisecond // collect a burst into one wake-up
 	waitBatchMax   = 50
@@ -57,9 +63,20 @@ func (s *Session) handshake(c net.Conn) {
 		c.Close()
 		return
 	}
-	switch strings.TrimSpace(mode) {
+	cmd, sid, _ := strings.Cut(strings.TrimSpace(mode), " ")
+	if sid != "" {
+		s.setSessionID(sid)
+	}
+	switch cmd {
 	case "wait":
 		s.addWaiter(c)
+	case "hello":
+		// Reply: the session's chats, one "/<chat> as @<nick>" per line.
+		entries, _ := local.SessionChats(local.ProjectDir(), sid)
+		for _, e := range entries {
+			fmt.Fprintf(c, "/%s as @%s\n", e.Local(), e.Name)
+		}
+		c.Close()
 	default:
 		c.Close()
 	}

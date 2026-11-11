@@ -25,6 +25,7 @@ type Session struct {
 	seq    int64
 	read   int64
 	quiet  []string // presence lines held until the next message
+	sid    string   // Claude Code session id, learned from the hooks
 
 	hookMu sync.Mutex // guards hook
 	hook   hookState  // `ccqc wait` rewake hook
@@ -131,7 +132,6 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 		From      string  `json:"from"`
 		IDs       []int64 `json:"ids"`
 		Radius    int     `json:"radius"`
-		Remember  bool    `json:"remember"`
 		Member    string  `json:"member"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -139,7 +139,7 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 	}
 	switch name {
 	case "chat_join":
-		return s.join(a.Token, a.Name, a.Alias, a.Remember, false)
+		return s.join(a.Token, a.Name, a.Alias, false)
 	case "chat_send":
 		return s.send(a.To, a.Text, a.ReplyTo)
 	case "chat_state":

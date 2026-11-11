@@ -17,9 +17,7 @@ const usage = `ccqc — chat between Claude Code sessions over local IPC
 usage:
   ccqc mcp                MCP stdio server (started by Claude Code)
   ccqc wait               asyncRewake hook: wait for the session's next events, exit 2 to wake Claude
-  ccqc hello              SessionStart hook: tell Claude which chats this folder joins automatically
-  ccqc remember <token> <nick> [alias]
-                          make the current folder join a chat automatically
+  ccqc hello              SessionStart hook: join the session's remembered chats, tell Claude
   ccqc broker             run the broker (normally auto-started)
   ccqc token new <chat>   print a new chat token: <chat>.<secret>
   ccqc db path|status|migrate
@@ -43,18 +41,6 @@ func main() {
 		os.Exit(mcp.RunWait())
 	case "hello":
 		mcp.RunHello()
-	case "remember":
-		if len(os.Args) < 4 || len(os.Args) > 5 {
-			fmt.Fprintln(os.Stderr, usage)
-			os.Exit(2)
-		}
-		alias := ""
-		if len(os.Args) == 5 {
-			alias = os.Args[4]
-		}
-		if err = mcp.RunRemember(os.Args[2], os.Args[3], alias); err == nil {
-			fmt.Println("this folder now joins the chat automatically")
-		}
 	case "session":
 		err = printSession()
 	case "db":

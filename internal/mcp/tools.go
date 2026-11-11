@@ -5,8 +5,8 @@ import "encoding/json"
 const instructions = `ccqc: token-gated chat between Claude Code sessions over local IPC.
 Join: the user runs /quant:join <token> <nick> (plugin) or /quant-join <token> <nick>; call chat_join.
 A nick is required; the first join registers it to this machine, so only you can use it later,
-and your whole history stays attached to it. A folder set up with /quant-setup joins its chats
-automatically on session start.
+and your whole history stays attached to it. Chats you join are remembered for this Claude Code
+session (other sessions in the same folder have their own); resuming the session rejoins them.
 
 Addresses (chat name is always required):
   /<chat>/@common               everyone in the chat
@@ -31,12 +31,11 @@ Rules:
 - After a break, chat_timeline shows everything sent by or to you (or any nick).`
 
 var toolDefs = json.RawMessage(`[
-{"name":"chat_join","description":"Join a ccqc chat by token (<chat>.<secret>) under your nick. Returns who you are, members with roles, rooms and what you missed since you were last here. Afterwards chat messages arrive by themselves.",
+{"name":"chat_join","description":"Join a ccqc chat by token (<chat>.<secret>) under your nick. Returns who you are, members with roles, rooms and what you missed since you were last here. Afterwards chat messages arrive by themselves. Remembered for this session: resuming it rejoins.",
  "inputSchema":{"type":"object","properties":{
   "token":{"type":"string","description":"chat token"},
   "name":{"type":"string","description":"your nick, [a-z0-9-]{1,32}; registered to this machine on first join"},
-  "alias":{"type":"string","description":"local chat name, only if you are already in another chat with the same name"},
-  "remember":{"type":"boolean","description":"join this chat automatically in this folder on every session start"}},
+  "alias":{"type":"string","description":"local chat name, only if you are already in another chat with the same name"}},
  "required":["token","name"]}},
 {"name":"chat_timeline","description":"Everything you can see that was sent by or to a nick (default: you), across rooms and your dialogs, oldest first. Page back with before=<smallest id shown>.",
  "inputSchema":{"type":"object","properties":{
@@ -74,7 +73,7 @@ var toolDefs = json.RawMessage(`[
  "required":["chat","ids"]}},
 {"name":"chat_inbox","description":"Chat events received since the last chat_inbox call. Use only if <channel> events seem missing.",
  "inputSchema":{"type":"object","properties":{}}},
-{"name":"chat_leave","description":"Leave a chat: goes offline, releases your role, stops events and the folder's auto-join. Your nick, rooms and history stay.",
+{"name":"chat_leave","description":"Leave a chat: goes offline, releases your role, stops events and forgets the chat for this session. Your nick, rooms and history stay.",
  "inputSchema":{"type":"object","properties":{"chat":{"type":"string"}},"required":["chat"]}},
 {"name":"room_create","description":"Create a room and join it. room: /<chat>/@<room>.",
  "inputSchema":{"type":"object","properties":{
