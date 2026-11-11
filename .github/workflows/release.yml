@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: test
+        run: go test ./...
+      - name: build binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          mkdir -p dist
+          ldflags="-s -w -X github.com/PHPCraftdream/cc-quant-chat/internal/mcp.Version=${GITHUB_REF_NAME}"
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            ext=""; [ "$os" = windows ] && ext=".exe"
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$ldflags" -o "dist/ccqc_${os}_${arch}${ext}" ./cmd/ccqc
+          done
+          cd dist && sha256sum ccqc_* > SHA256SUMS && cat SHA256SUMS
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

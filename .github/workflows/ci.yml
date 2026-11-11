@@ -26,3 +26,31 @@ jobs:
         run: go test ./...
       - name: build
         run: go build ./...
+
+      - name: installer (sh) — lint, install from source, uninstall
+        if: runner.os == 'Linux'
+        run: |
+          set -eu
+          shellcheck install.sh
+          sh install.sh --source --dir "$RUNNER_TEMP/ccqc-bin"
+          "$RUNNER_TEMP/ccqc-bin/ccqc" version
+          sh install.sh --uninstall --dir "$RUNNER_TEMP/ccqc-bin"
+          test ! -e "$RUNNER_TEMP/ccqc-bin/ccqc"
+
+      - name: installer (PowerShell) — parse, install from source
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$null, [ref]$errors)
+          if ($errors) { $errors; exit 1 }
+          .\install.ps1 -FromSource -NoPath -Dir "$env:RUNNER_TEMP\ccqc-bin"
+          & "$env:RUNNER_TEMP\ccqc-bin\ccqc.exe" version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: installer (cmd) — uninstall through the wrapper
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call install.cmd -Uninstall -NoPath -Dir "%RUNNER_TEMP%\ccqc-bin" || exit /b 1
+          if exist "%RUNNER_TEMP%\ccqc-bin\ccqc.exe" exit /b 1
