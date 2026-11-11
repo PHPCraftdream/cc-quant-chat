@@ -135,19 +135,20 @@ func (d *DB) RememberOrigin(origin string, pub []byte) error { return d.Register
 
 // ---- the journal of a chat
 
-func (d *DB) openedChat(chatID string) (*chatDB, error) {
-	c, err := d.chat(chatID, "", false)
+func (d *DB) openedChat(chatID string) (*chatDB, func(), error) {
+	c, done, err := d.acquire(chatID, "", false)
 	if err != nil {
-		return nil, err
+		return nil, done, err
 	}
 	if c == nil {
-		return nil, fmt.Errorf("no chat %.8s", chatID)
+		return nil, done, fmt.Errorf("no chat %.8s", chatID)
 	}
-	return c, nil
+	return c, done, nil
 }
 
 func (d *DB) Vector(chatID string) (map[string]int64, error) {
-	c, err := d.openedChat(chatID)
+	c, done, err := d.openedChat(chatID)
+	defer done()
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +170,8 @@ func (d *DB) Vector(chatID string) (map[string]int64, error) {
 }
 
 func (d *DB) EventsAfter(chatID, origin string, after int64, limit int) ([]events.Event, error) {
-	c, err := d.openedChat(chatID)
+	c, done, err := d.openedChat(chatID)
+	defer done()
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +207,8 @@ func (d *DB) notify(chatID string) {
 }
 
 func (d *DB) MaxLamport(chatID string) (int64, error) {
-	c, err := d.openedChat(chatID)
+	c, done, err := d.openedChat(chatID)
+	defer done()
 	if err != nil {
 		return 0, err
 	}
@@ -218,7 +221,8 @@ func (d *DB) MaxLamport(chatID string) (int64, error) {
 // projections in the same transaction (remote.go); it returns what the broker has to learn of.
 // An event that the rules of application refuse is not stored.
 func (d *DB) AcceptEvent(chatID string, e events.Event) ([]store.Record, error) {
-	c, err := d.openedChat(chatID)
+	c, done, err := d.openedChat(chatID)
+	defer done()
 	if err != nil {
 		return nil, err
 	}

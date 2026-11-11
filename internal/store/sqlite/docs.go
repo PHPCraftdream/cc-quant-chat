@@ -11,7 +11,8 @@ var _ store.Docs = (*DB)(nil)
 
 // DoDocs runs fn in one transaction on the document tree of a chat.
 func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
-	c, err := d.chat(chatID, "", true)
+	c, done, err := d.acquire(chatID, "", true)
+	defer done()
 	if err != nil {
 		return err
 	}
@@ -32,7 +33,8 @@ func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
 
 // ViewDocs runs fn on a snapshot; nothing it does is kept.
 func (d *DB) ViewDocs(chatID string, fn func(tx store.DocsTx) error) error {
-	c, err := d.chat(chatID, "", true)
+	c, done, err := d.acquire(chatID, "", true)
+	defer done()
 	if err != nil {
 		return err
 	}

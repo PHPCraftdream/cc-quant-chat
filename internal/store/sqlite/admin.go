@@ -35,7 +35,8 @@ func (d *DB) Settings() (map[string]map[string]string, error) {
 
 // ChatSettings returns the settings of one chat.
 func (d *DB) ChatSettings(chatID string) (map[string]string, error) {
-	c, err := d.chat(chatID, "", false)
+	c, done, err := d.acquire(chatID, "", false)
+	defer done()
 	if err != nil || c == nil {
 		return map[string]string{}, err
 	}
@@ -68,7 +69,8 @@ func (d *DB) SetChatSettingAttested(chatID, key, value string, a store.AdminAtte
 }
 
 func (d *DB) setChatSetting(chatID, key, value string, a *store.AdminAttest) error {
-	c, err := d.chat(chatID, "", false)
+	c, done, err := d.acquire(chatID, "", false)
+	defer done()
 	if err != nil {
 		return err
 	}

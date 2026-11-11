@@ -13,7 +13,8 @@ var _ store.Board = (*DB)(nil)
 
 // Do runs fn in one transaction on the board of a chat; an error from fn rolls it all back.
 func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
-	c, err := d.chat(chatID, "", true)
+	c, done, err := d.acquire(chatID, "", true)
+	defer done()
 	if err != nil {
 		return err
 	}
@@ -34,7 +35,8 @@ func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
 
 // View runs fn on a consistent snapshot; nothing it does is kept.
 func (d *DB) View(chatID string, fn func(tx store.BoardTx) error) error {
-	c, err := d.chat(chatID, "", true)
+	c, done, err := d.acquire(chatID, "", true)
+	defer done()
 	if err != nil {
 		return err
 	}

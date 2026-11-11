@@ -269,20 +269,43 @@ func (d *DB) chat(id, name string, create bool) (*chatDB, error) {
 	return c, nil
 }
 
-// Release closes the database of a chat the broker no longer keeps in memory.
+// acquire is chat for a caller that goes on to use the database: it is not closed (by Release)
+// until the caller has called done. A chat that does not exist comes back as nil with a done that
+// does nothing.
+func (d *DB) acquire(id, name string, create bool) (*chatDB, func(), error) {
+	for {
+		c, err := d.chat(id, name, create)
+		if err != nil || c == nil {
+			return nil, func() {}, err
+		}
+		c.life.RLock()
+		if !c.closed {
+			return c, c.life.RUnlock, nil
+		}
+		c.life.RUnlock() // released between the lookup and the lock: look again (it opens afresh)
+	}
+}
+
+// Release closes the database of a chat the broker no longer keeps in memory, once those who are
+// using it (the sessions with other nodes read without the broker's lock) are done.
 func (d *DB) Release(chatID string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if c := d.chats[chatID]; c != nil {
+	c := d.chats[chatID]
+	delete(d.chats, chatID)
+	d.mu.Unlock()
+	if c != nil {
+		c.life.Lock()
+		c.closed = true
 		_ = c.db.Close()
-		delete(d.chats, chatID)
+		c.life.Unlock()
 	}
 }
 
 // Load returns a chat's state as records in replay order: rooms, nicks, memberships, messages.
 // The chat is created on first use.
 func (d *DB) Load(chatID, name string) ([]store.Record, error) {
-	c, err := d.chat(chatID, name, true)
+	c, done, err := d.acquire(chatID, name, true)
+	defer done()
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +314,8 @@ func (d *DB) Load(chatID, name string) ([]store.Record, error) {
 
 // Append applies one record to the chat it belongs to.
 func (d *DB) Append(chatID string, r store.Record) error {
-	c, err := d.chat(chatID, "", true)
+	c, done, err := d.acquire(chatID, "", true)
+	defer done()
 	if err != nil {
 		return err
 	}

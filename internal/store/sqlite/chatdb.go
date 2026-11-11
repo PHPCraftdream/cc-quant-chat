@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
@@ -18,6 +19,10 @@ type chatDB struct {
 	id   string
 	path string
 	db   *sql.DB
+	// life: held for reading by whoever uses db, taken for writing to close it (Release), so that a
+	// chat is not closed under a reader. closed is read and set under it.
+	life   sync.RWMutex
+	closed bool
 }
 
 // openChat opens (creating if needed) and migrates the database of a chat and lists it in node.db.
@@ -240,7 +245,8 @@ func (c *chatDB) append(r store.Record) error {
 // Lamport returns the chat's logical clock: the value of the last write (0 before the first, and
 // for a chat that does not exist).
 func (d *DB) Lamport(chatID string) (int64, error) {
-	c, err := d.chat(chatID, "", false)
+	c, done, err := d.acquire(chatID, "", false)
+	defer done()
 	if err != nil || c == nil {
 		return 0, err
 	}
