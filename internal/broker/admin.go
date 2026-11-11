@@ -104,7 +104,7 @@ func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
 		return b.resetNick(r.Chat, r.Nick, at)
-	case "peer_add", "peer_remove", "peer_share", "peer_unshare":
+	case "peer_add", "peer_remove", "peer_share", "peer_unshare", "peer_trust":
 		return b.peerAdmin(op, args)
 	case "chat_new", "invite_new", "invite_revoke", "invite_list":
 		return b.inviteAdmin(op, args, at)

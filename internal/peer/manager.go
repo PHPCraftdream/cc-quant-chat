@@ -40,6 +40,9 @@ type Manager struct {
 	wg     sync.WaitGroup
 	wake   chan string
 
+	statsMu sync.Mutex
+	stats   map[string]*PeerStats
+
 	mu       sync.Mutex
 	ln       net.Listener
 	sessions map[string]*session // by the origin of the peer
@@ -53,10 +56,49 @@ func New(st store.Federation, origin string, priv ed25519.PrivateKey, logf func(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{st: st, origin: origin, priv: priv, logf: logf, ctx: ctx, cancel: cancel,
-		wake: make(chan string, 256), sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
+		wake: make(chan string, 256), stats: map[string]*PeerStats{}, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
 	m.wg.Add(1)
 	go m.pump()
 	return m
+}
+
+// PeerStats counts, since this broker started, what was taken from a node and what was not.
+type PeerStats struct {
+	Accepted int
+	Refused  map[string]int // by reason
+}
+
+func (m *Manager) noteAccepted(origin string) {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	m.statsOf(origin).Accepted++
+}
+
+func (m *Manager) noteRefused(origin, why string) {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	m.statsOf(origin).Refused[why]++
+}
+
+func (m *Manager) statsOf(origin string) *PeerStats {
+	st := m.stats[origin]
+	if st == nil {
+		st = &PeerStats{Refused: map[string]int{}}
+		m.stats[origin] = st
+	}
+	return st
+}
+
+// Stats returns a copy of the counters of a node.
+func (m *Manager) Stats(origin string) PeerStats {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	st := m.statsOf(origin)
+	out := PeerStats{Accepted: st.Accepted, Refused: map[string]int{}}
+	for k, v := range st.Refused {
+		out.Refused[k] = v
+	}
+	return out
 }
 
 // Notify says that a chat has new events (written here or taken from a peer): every session that
@@ -179,7 +221,7 @@ func (m *Manager) Refresh() error {
 	}
 	for origin, s := range m.sessions {
 		p, ok := want[origin]
-		if !ok || !sameSet(p.Chats, s.sharedByUs()) {
+		if !ok || !sameSet(p.Chats, s.sharedByUs()) || p.Trust != s.level || p.State != s.state {
 			s.close()
 		}
 	}

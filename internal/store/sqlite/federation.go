@@ -13,11 +13,28 @@ var _ store.Federation = (*DB)(nil)
 
 // ---- the nodes (node.db)
 
-// AddPeer lists a node (or changes where to reach it). It is trusted: levels come with stage 4.
+// AddPeer lists a node (or changes where to reach it). One added by hand is active and trusted;
+// its level is changed with SetPeerTrust.
 func (d *DB) AddPeer(origin, addr string) error {
 	_, err := d.node.Exec(`INSERT INTO peers (origin, addr, added_at) VALUES (?, ?, ?)
 		ON CONFLICT (origin) DO UPDATE SET addr = excluded.addr`, origin, addr, now())
 	return err
+}
+
+// SetPeerTrust changes what this node accepts from a node.
+func (d *DB) SetPeerTrust(origin, level string) (string, error) {
+	if !store.ValidTrust(level) {
+		return "", fmt.Errorf("trust is read, member or trusted, not %q", level)
+	}
+	var old string
+	if err := d.node.QueryRow(`SELECT trust FROM peers WHERE origin = ?`, origin).Scan(&old); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("the node %s is not listed", origin)
+		}
+		return "", err
+	}
+	_, err := d.node.Exec(`UPDATE peers SET trust = ? WHERE origin = ?`, level, origin)
+	return old, err
 }
 
 // RemovePeer forgets a node and what is shared with it.
@@ -37,14 +54,14 @@ func (d *DB) RemovePeer(origin string) error {
 
 // Peers lists the nodes with the chats shared with each.
 func (d *DB) Peers() ([]store.Peer, error) {
-	rows, err := d.node.Query(`SELECT origin, addr, trust, COALESCE(pubkey, x''), added_at FROM peers ORDER BY origin`)
+	rows, err := d.node.Query(`SELECT origin, addr, trust, state, pending_until, COALESCE(pubkey, x''), added_at FROM peers ORDER BY origin`)
 	if err != nil {
 		return nil, err
 	}
 	var out []store.Peer
 	for rows.Next() {
 		var p store.Peer
-		if err := rows.Scan(&p.Origin, &p.Addr, &p.Trust, &p.Pubkey, &p.AddedAt); err != nil {
+		if err := rows.Scan(&p.Origin, &p.Addr, &p.Trust, &p.State, &p.PendingUntil, &p.Pubkey, &p.AddedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}

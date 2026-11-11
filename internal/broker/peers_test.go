@@ -3,6 +3,7 @@ package broker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
@@ -103,5 +104,43 @@ func TestPeerListenIsASettingThatMakesTheBrokerAcceptNodes(t *testing.T) {
 	t.Cleanup(b.stopPeers)
 	if b.peerAt == "" || !strings.HasPrefix(b.peerAt, "127.0.0.1:") {
 		t.Fatalf("listening on %q", b.peerAt)
+	}
+}
+
+func TestTheOwnerSetsWhatIsAcceptedFromANodeAndTheChatsHearOfIt(t *testing.T) {
+	p := newTwoBrokers(t)
+	k := newKey(t)
+	register(t, p.a, k)
+	alice, adm := p.a.connect(t), p.a.connect(t)
+	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+		t.Fatalf("alice joins: %q", code)
+	}
+	if _, code := adminCall(t, adm, newKey(t), "peer_trust", proto.PeerTrust{Origin: p.b.origin, Level: "read"}); code != "admin_only" {
+		t.Fatalf("without the owner's signature: %q", code)
+	}
+	if _, code := adminCall(t, adm, k, "peer_trust", proto.PeerTrust{Origin: p.b.origin, Level: "boss"}); code != "bad_args" {
+		t.Fatalf("a level that is none: %q", code)
+	}
+	if _, code := adminCall(t, adm, k, "peer_trust", proto.PeerTrust{Origin: otherNode, Level: "read"}); code != "bad_args" {
+		t.Fatalf("a node that is not listed: %q", code)
+	}
+	if text, code := adminCall(t, adm, k, "peer_trust", proto.PeerTrust{Origin: p.b.origin, Level: "member"}); code != "" || !strings.Contains(text, "trusted → member") {
+		t.Fatalf("peer_trust: %q %q", text, code)
+	}
+	var l proto.PeerList
+	if code := alice.call("peer_list", nil, &l); code != "" || len(l.Peers) != 1 || l.Peers[0].Trust != "member" || l.Peers[0].State != "active" {
+		t.Fatalf("peer_list: %q %+v", code, l)
+	}
+	heard := ""
+	deadline := time.After(3 * time.Second)
+	for !strings.Contains(heard, "trust trusted → member") {
+		select {
+		case ev := <-alice.events:
+			if ev.Kind == "notice" {
+				heard += ev.Text + "\n"
+			}
+		case <-deadline:
+			t.Fatalf("the chat did not hear of the change: %q", heard)
+		}
 	}
 }

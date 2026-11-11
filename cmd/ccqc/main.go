@@ -45,6 +45,8 @@ Nodes (other brokers this one exchanges chats with; signed with the owner key; t
 makes this broker accept nodes; nothing leaves unless a chat is shared):
   ccqc peer add <host:port> <origin>    a node by the origin shown by its "ccqc broker status"
   ccqc peer list|remove <origin>
+  ccqc peer trust <origin> read|member|trusted   what this node accepts from it: read (nothing), member
+                            (the events of its own), trusted (also the sources it brings); the chats are told
   ccqc peer share|unshare <chat> <origin>
 
 Documents (the chat's shared page tree, as an ordinary member; token from your sessions' config):

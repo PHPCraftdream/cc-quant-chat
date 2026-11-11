@@ -9,6 +9,12 @@ type PeerAdd struct {
 	Addr   string `json:"addr"`
 }
 
+// PeerTrust: change what this node accepts from a node (read, member, trusted).
+type PeerTrust struct {
+	Origin string `json:"origin"`
+	Level  string `json:"level"`
+}
+
 type PeerRemove struct {
 	Origin string `json:"origin"`
 }
@@ -24,7 +30,11 @@ type PeerInfo struct {
 	Origin    string   `json:"origin"`
 	Addr      string   `json:"addr,omitempty"`
 	Trust     string   `json:"trust"`
-	Chats     []string `json:"chats,omitempty"` // ids of the chats shared with it
+	State     string   `json:"state,omitempty"`    // active | pending
+	Accepted  int      `json:"accepted,omitempty"` // events taken from it since the broker started
+	Refused   int      `json:"refused,omitempty"`  // events not taken, by its level
+	Reasons   string   `json:"reasons,omitempty"`  // why, as text
+	Chats     []string `json:"chats,omitempty"`    // ids of the chats shared with it
 	Connected bool     `json:"connected"`
 	Flagged   string   `json:"flagged,omitempty"` // why it is no longer listened to
 }

@@ -12,11 +12,30 @@ import (
 type Peer struct {
 	Origin  string
 	Addr    string // where to reach it; "" if only it connects to us
-	Trust   string // "trusted" for a node added by hand (levels come with stage 4)
+	Trust   string // what this node accepts from it: TrustRead, TrustMember or TrustTrusted
+	State   string // StateActive, or StatePending (an invitation used, the code not yet confirmed)
 	Pubkey  []byte // its public key, once seen
 	AddedAt string
-	Chats   []string // ids of the chats shared with it
+	// PendingUntil: when a pending node is dropped (RFC 3339), "" for an active one.
+	PendingUntil string
+	Chats        []string // ids of the chats shared with it
 }
+
+// What this node accepts from a node (docs/design-trust.md section 1).
+const (
+	TrustRead    = "read"    // nothing: it receives, its events are not taken
+	TrustMember  = "member"  // the events of its own source: messages, the board, pages
+	TrustTrusted = "trusted" // also the events of other sources that it brings
+)
+
+// ValidTrust reports whether s is a level.
+func ValidTrust(s string) bool { return s == TrustRead || s == TrustMember || s == TrustTrusted }
+
+// Peer states.
+const (
+	StateActive  = "active"
+	StatePending = "pending"
+)
 
 // Why AcceptEvent refused an event.
 var (
@@ -39,6 +58,8 @@ type Federation interface {
 	// The nodes: node.db.
 	AddPeer(origin, addr string) error
 	RemovePeer(origin string) error
+	// SetPeerTrust changes the level of a node and returns the one it had; an error if it is not listed.
+	SetPeerTrust(origin, level string) (old string, err error)
 	Peers() ([]Peer, error)
 	SharePeerChat(chatID, origin string) error
 	UnsharePeerChat(chatID, origin string) error

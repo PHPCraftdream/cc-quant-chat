@@ -9,7 +9,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const peerUsage = "usage: ccqc peer add <host:port> <origin> | list | remove <origin> | share <chat> <origin> | unshare <chat> <origin>"
+const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin>"
 
 // runPeer: the nodes this broker exchanges chats with. `list` is read-only; the rest are
 // administrator operations signed with the owner key.
@@ -35,6 +35,8 @@ func runPeer(args []string) error {
 		return nil
 	case args[0] == "add" && len(args) == 3:
 		return peerOp(c, "peer_add", proto.PeerAdd{Addr: args[1], Origin: args[2]})
+	case args[0] == "trust" && len(args) == 3:
+		return peerOp(c, "peer_trust", proto.PeerTrust{Origin: args[1], Level: args[2]})
 	case args[0] == "remove" && len(args) == 2:
 		return peerOp(c, "peer_remove", proto.PeerRemove{Origin: args[1]})
 	case (args[0] == "share" || args[0] == "unshare") && len(args) == 3:
