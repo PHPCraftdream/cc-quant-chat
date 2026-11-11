@@ -65,20 +65,27 @@ func (b *Broker) initNode() error {
 	return nil
 }
 
-// ownerKey is the owner's public key (nil if none) for the operations of a chat, which do not hold
-// the broker's lock.
+// ownerKey is the owner's public key (nil if none).
 func (b *Broker) ownerKey() ed25519.PublicKey {
 	b.ownerMu.RLock()
 	defer b.ownerMu.RUnlock()
 	return b.ownerPub
 }
 
+func (b *Broker) ownerState() (ed25519.PublicKey, string) {
+	b.ownerMu.RLock()
+	defer b.ownerMu.RUnlock()
+	return b.ownerPub, b.ownerAt
+}
+
 // announce tells every present member of every loaded chat, loudly: a change of who the owner
-// is must not pass quietly. The caller holds the broker's lock.
+// is must not pass quietly.
 func (b *Broker) announce(text string) {
-	for _, ch := range b.chats {
+	for _, ch := range b.chatList() {
 		ch.mu.Lock()
-		b.announceChat(ch, text)
+		if !ch.dead {
+			b.announceChat(ch, text)
+		}
 		ch.mu.Unlock()
 	}
 }
@@ -97,7 +104,8 @@ func (b *Broker) challenge(c *conn) (any, *proto.Error) {
 func (b *Broker) verifyOwner(c *conn, chatID, nick, sigB64 string) *proto.Error {
 	nonce, valid := c.takeNonce()
 	bad := func(why string) *proto.Error { return proto.Errf("bad_owner_sig", "%s", why) }
-	if b.ownerPub == nil {
+	ownerPub := b.ownerKey()
+	if ownerPub == nil {
 		return bad("no owner is registered on this broker")
 	}
 	if !valid {
@@ -107,7 +115,7 @@ func (b *Broker) verifyOwner(c *conn, chatID, nick, sigB64 string) *proto.Error 
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return bad("the signature is malformed")
 	}
-	if !ed25519.Verify(b.ownerPub, proto.OwnerJoinMessage(chatID, nick, nonce), sig) {
+	if !ed25519.Verify(ownerPub, proto.OwnerJoinMessage(chatID, nick, nonce), sig) {
 		return bad("the signature does not verify for this chat, nick and challenge")
 	}
 	return nil
@@ -133,6 +141,8 @@ func decodeSig(s string) []byte {
 // key; it does not prove who the caller is, which is why the human registers right after the
 // broker is set up (README).
 func (b *Broker) ownerRegister(a proto.OwnerRegisterArgs) (any, *proto.Error) {
+	b.ownerOpMu.Lock()
+	defer b.ownerOpMu.Unlock()
 	pub, e := decodeKey(a.Pub)
 	if e != nil {
 		return nil, e
@@ -140,8 +150,8 @@ func (b *Broker) ownerRegister(a proto.OwnerRegisterArgs) (any, *proto.Error) {
 	if sig := decodeSig(a.Sig); sig == nil || !ed25519.Verify(pub, proto.OwnerRegisterMessage(a.Pub), sig) {
 		return nil, proto.Errf("bad_owner_sig", "the registration is not signed with the key it registers")
 	}
-	if b.ownerPub != nil {
-		return nil, proto.Errf("owner_exists", "an owner key is already registered (%s)", owner.Fingerprint(b.ownerPub))
+	if cur := b.ownerKey(); cur != nil {
+		return nil, proto.Errf("owner_exists", "an owner key is already registered (%s)", owner.Fingerprint(cur))
 	}
 	if os, ok := b.store.(store.OwnerStore); ok {
 		if err := os.SetOwner(pub); err != nil {
@@ -156,36 +166,40 @@ func (b *Broker) ownerRegister(a proto.OwnerRegisterArgs) (any, *proto.Error) {
 	b.ownerMu.Unlock()
 	log.Printf("broker: owner key registered (%s)", owner.Fingerprint(pub))
 	b.announce("owner key registered: " + owner.Fingerprint(pub))
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: b.ownerAt}, nil
+	_, at := b.ownerState()
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: at}, nil
 }
 
 // ownerRotate replaces the key. Both keys sign the request: the old one authorizes, the new one
 // proves it is held.
 func (b *Broker) ownerRotate(a proto.OwnerRotateArgs) (any, *proto.Error) {
-	if b.ownerPub == nil {
+	b.ownerOpMu.Lock()
+	defer b.ownerOpMu.Unlock()
+	cur := b.ownerKey()
+	if cur == nil {
 		return nil, proto.Errf("no_owner", "no owner is registered yet; use owner init")
 	}
 	pub, e := decodeKey(a.Pub)
 	if e != nil {
 		return nil, e
 	}
-	msg := proto.OwnerRotateMessage(owner.Encode(b.ownerPub), a.Pub)
+	msg := proto.OwnerRotateMessage(owner.Encode(cur), a.Pub)
 	oldSig, newSig := decodeSig(a.OldSig), decodeSig(a.NewSig)
-	if oldSig == nil || !ed25519.Verify(b.ownerPub, msg, oldSig) {
+	if oldSig == nil || !ed25519.Verify(cur, msg, oldSig) {
 		return nil, proto.Errf("bad_owner_sig", "the request is not signed with the current owner key")
 	}
 	if newSig == nil || !ed25519.Verify(pub, msg, newSig) {
 		return nil, proto.Errf("bad_owner_sig", "the request is not signed with the new key")
 	}
 	if os, ok := b.store.(store.OwnerStore); ok {
-		if err := os.ReplaceOwner(b.ownerPub, pub); err != nil {
+		if err := os.ReplaceOwner(cur, pub); err != nil {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
 	}
 	b.ownerMu.Lock()
 	b.ownerPub, b.ownerAt = pub, time.Now().UTC().Format(time.RFC3339)
 	b.ownerMu.Unlock()
-	for _, ch := range b.chats { // connections verified with the old key no longer count
+	for _, ch := range b.chatList() { // connections verified with the old key no longer count
 		ch.mu.Lock()
 		for _, m := range ch.members {
 			m.owner = false
@@ -194,12 +208,14 @@ func (b *Broker) ownerRotate(a proto.OwnerRotateArgs) (any, *proto.Error) {
 	}
 	log.Printf("broker: owner key replaced (%s)", owner.Fingerprint(pub))
 	b.announce("owner key replaced: " + owner.Fingerprint(pub))
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: b.ownerAt}, nil
+	_, at := b.ownerState()
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: at}, nil
 }
 
 func (b *Broker) ownerInfo() proto.OwnerInfo {
-	if b.ownerPub == nil {
+	pub, at := b.ownerState()
+	if pub == nil {
 		return proto.OwnerInfo{}
 	}
-	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(b.ownerPub), Since: b.ownerAt}
+	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: at}
 }

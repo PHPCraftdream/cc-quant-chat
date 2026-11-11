@@ -252,7 +252,7 @@ func TestChatsLoadUnloadAndResetWhileBusy(t *testing.T) {
 	}
 	for _, task := range []func(){
 		func() { b.sweep() },
-		func() { b.mu.Lock(); _ = b.info(); b.mu.Unlock() },
+		func() { _ = b.info() },
 		func() {
 			c := b.connect(t)
 			for i, tok := range toks {
@@ -371,5 +371,66 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Fatal("a request is still waiting after the broker stopped")
+	}
+}
+
+// A chat whose write is stuck holds up only those who need that chat: a new member joining it
+// waits, but joins to other chats, new connections, status and a nick reset in another chat go
+// through, and the join into the stuck chat finishes once the store lets go.
+func TestAJoinIntoAStuckChatWaitsAndNobodyElseDoes(t *testing.T) {
+	ss := newSlowStore()
+	b := newTestBroker(ss)
+	tokA, idA := token(t)
+	tokB, _ := token(t)
+	tokC, _ := token(t)
+	alice, carol := b.connect(t), b.connect(t)
+	alice.join(tokA, "alice", proto.ProtoVersion)
+	carol.join(tokB, "carol", proto.ProtoVersion)
+	gate := ss.hold(idA)
+
+	slow := make(chan string, 1)
+	go func() { _, code := alice.send(proto.RoomCommon, "", "stuck"); slow <- code }()
+	select {
+	case <-ss.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("alice's message did not reach the store")
+	}
+	bob := b.connect(t)
+	joined := make(chan string, 1)
+	go func() { _, code := bob.join(tokA, "bob", proto.ProtoVersion); joined <- code }()
+	select {
+	case code := <-joined:
+		t.Fatalf("bob joined (%q) a chat whose write is stuck", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	within(t, 3*time.Second, "everything else", func() {
+		dave := b.connect(t) // a new connection
+		if _, code := dave.join(tokB, "dave", proto.ProtoVersion); code != "" {
+			t.Errorf("dave into chat B: %q", code)
+		}
+		erin := b.connect(t)
+		if _, code := erin.join(tokC, "erin", proto.ProtoVersion); code != "" { // a chat that is not loaded yet
+			t.Errorf("erin into chat C: %q", code)
+		}
+		var info proto.BrokerInfo
+		if code := b.connect(t).call("ping", nil, &info); code != "" {
+			t.Errorf("ping: %q", code)
+		}
+		if code := b.connect(t).call("nick_reset", proto.NickResetArgs{Token: tokB, Name: "dave"}, nil); code != "name_online" {
+			t.Errorf("nick reset in chat B: %q", code)
+		}
+	})
+
+	close(gate)
+	for _, ch := range []chan string{slow, joined} {
+		select {
+		case code := <-ch:
+			if code != "" {
+				t.Fatalf("after the store let go: %q", code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a request did not finish after the store let go")
+		}
 	}
 }

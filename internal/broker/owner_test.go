@@ -358,17 +358,13 @@ func noticeEvents(c *client) []proto.Event {
 
 func TestBrokerInfoShowsTheOwnerKeyAndTheNode(t *testing.T) {
 	b := newTestBroker(newMemStore())
-	b.mu.Lock()
 	info := b.info()
-	b.mu.Unlock()
 	if info.Owner != "" || info.Node != b.origin || len(info.Node) != 32 {
 		t.Fatalf("before an owner exists: %+v", info)
 	}
 	k := newKey(t)
 	register(t, b, k)
-	b.mu.Lock()
 	info = b.info()
-	b.mu.Unlock()
 	if info.Owner != owner.Fingerprint(k.Public().(ed25519.PublicKey)) || info.OwnerSince == "" {
 		t.Fatalf("after: %+v", info)
 	}

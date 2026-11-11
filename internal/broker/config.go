@@ -128,7 +128,7 @@ func validateSetting(k configKey, value string) (string, *proto.Error) {
 }
 
 // setConfig validates, stores and applies a setting.
-func (b *Broker) setConfig(chatID, key, value string) (string, *proto.Error) {
+func (b *Broker) setConfig(chatID, key, value string, at *store.AdminAttest) (string, *proto.Error) {
 	k, ok := findKey(key)
 	if !ok {
 		return "", proto.Errf("bad_args", "unknown setting %q; known: %s", key, configNames())
@@ -144,8 +144,8 @@ func (b *Broker) setConfig(chatID, key, value string) (string, *proto.Error) {
 	if e != nil {
 		return "", e
 	}
-	if cs, ok := b.store.(store.AttestedSettings); ok && scope != "" && b.attest != nil {
-		if err := cs.SetChatSettingAttested(scope, key, v, *b.attest); err != nil {
+	if cs, ok := b.store.(store.AttestedSettings); ok && scope != "" && at != nil {
+		if err := cs.SetChatSettingAttested(scope, key, v, *at); err != nil {
 			return "", proto.Errf("store_failed", "%v", err)
 		}
 	} else if as, ok := b.store.(store.AdminStore); ok {

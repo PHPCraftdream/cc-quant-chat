@@ -35,59 +35,65 @@ func (n *nick) check(key string) bool {
 	return subtle.ConstantTimeCompare([]byte(hashNickKey(key)), []byte(n.hash)) == 1
 }
 
-func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
-	res, perr := b.joinChat(c, a)
-	if perr != nil { // a chat loaded for a join that failed must not stay cached without members
-		if _, id, err := proto.ParseToken(a.Token); err == nil {
-			if ch := b.chats[id]; ch != nil {
-				b.unloadHeld(ch)
-			}
-		}
+// dispatchJoin serves a join: what needs no chat is checked first; then the chat is found or loaded
+// (without the broker's lock held), locked, entered, and the reply sent before the lock is let go.
+func (b *Broker) dispatchJoin(c *conn, f *proto.Frame) *proto.Error {
+	fail := func(perr *proto.Error) *proto.Error {
+		c.reply(f.ID, nil, perr)
+		return perr
 	}
-	return res, perr
+	if b.stopping.Load() {
+		return fail(proto.Errf("restarting", "the broker is restarting; repeat in a moment"))
+	}
+	var a proto.JoinArgs
+	if e := decode(f.Args, &a); e != nil {
+		return fail(e)
+	}
+	name, id, signed, e := b.joinPre(c, a)
+	if e != nil {
+		return fail(e)
+	}
+	ch, err := b.useChat(id, name)
+	if err != nil {
+		return fail(proto.Errf("store_unavailable", "chat history can't be read (%v); not joining so nothing gets overwritten. See broker.log", err))
+	}
+	res, perr := b.joinIn(ch, c, a, signed)
+	c.reply(f.ID, res, perr)
+	b.doneChat(ch)
+	if perr != nil { // a chat loaded for a join that failed must not stay cached without members
+		b.unloadIfEmpty(ch)
+	}
+	return perr
 }
 
-func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
+// joinPre: the checks of a join that need no chat.
+func (b *Broker) joinPre(c *conn, a proto.JoinArgs) (name, id string, signed bool, e *proto.Error) {
 	if c.m != nil {
-		return nil, proto.Errf("already_joined", "this connection already joined a chat")
+		return "", "", false, proto.Errf("already_joined", "this connection already joined a chat")
 	}
 	name, id, err := proto.ParseToken(a.Token)
 	if err != nil {
-		return nil, proto.Errf("bad_token", "%v", err)
+		return "", "", false, proto.Errf("bad_token", "%v", err)
 	}
 	if !proto.ValidName(a.Name) {
-		return nil, proto.Errf("bad_name", "nick must match [a-z0-9-]{1,32}: %q", a.Name)
+		return "", "", false, proto.Errf("bad_name", "nick must match [a-z0-9-]{1,32}: %q", a.Name)
 	}
 	// The owner proves itself by signing the challenge; nothing else a client sends counts. Once
 	// there is an owner, its nick is reserved for it.
-	signed := false
 	if a.OwnerSig != "" {
 		if e := b.verifyOwner(c, id, a.Name, a.OwnerSig); e != nil {
-			return nil, e
+			return "", "", false, e
 		}
 		signed = true
-	} else if a.Name == proto.OwnerNick && b.ownerPub != nil {
-		return nil, proto.Errf("reserved", "the nick @%s is reserved for the owner of this machine", proto.OwnerNick)
+	} else if a.Name == proto.OwnerNick && b.ownerKey() != nil {
+		return "", "", false, proto.Errf("reserved", "the nick @%s is reserved for the owner of this machine", proto.OwnerNick)
 	}
-	ch := b.chats[id]
-	if ch == nil {
-		loaded, err := b.loadChat(id, name)
-		if err != nil {
-			return nil, proto.Errf("store_unavailable", "chat history can't be read (%v); not joining so nothing gets overwritten. See broker.log", err)
-		}
-		ch = loaded
-		b.chats[id] = ch
-	}
-	// The chat's lock is taken under the broker's and stays until the reply is out (dispatch), so
-	// no event of this chat can reach the new member ahead of the reply to its join.
-	ch.mu.Lock()
-	keep := false
-	defer func() {
-		if !keep {
-			ch.mu.Unlock()
-		}
-	}()
+	return name, id, signed, nil
+}
 
+// joinIn enters the chat; the caller holds the chat's lock.
+func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, *proto.Error) {
+	id := ch.id
 	var issued string
 	var pub ed25519.PublicKey
 	nk := ch.nicks[a.Name]
@@ -150,7 +156,6 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		b.holdRole(ch, m, nk.pinned)
 	}
 	c.ch, c.m = ch, m
-	keep, c.hold = true, ch
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
 }
 
@@ -192,18 +197,14 @@ func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
 	if err != nil {
 		return nil, proto.Errf("bad_token", "%v", err)
 	}
-	ch := b.chats[id]
-	if ch == nil {
-		loaded, err := b.loadChat(id, name)
-		if err != nil {
-			return nil, proto.Errf("store_unavailable", "chat history can't be read (%v)", err)
-		}
-		ch = loaded
-		b.chats[id] = ch
-		defer b.unloadHeld(ch)
+	ch, err := b.useChat(id, name)
+	if err != nil {
+		return nil, errNoStore(err)
 	}
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
+	defer func() {
+		b.doneChat(ch)
+		b.unloadIfEmpty(ch)
+	}()
 	nk := ch.nicks[a.Name]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", a.Name)

@@ -46,6 +46,7 @@ type Broker struct {
 	hitsMu    sync.Mutex
 	setMu     sync.RWMutex
 	ownerMu   sync.RWMutex
+	ownerOpMu sync.Mutex // one change of the owner at a time
 	store     store.Backend
 	storeDesc string
 	warning   string // set when history can't be saved; shown to every joiner
@@ -55,7 +56,6 @@ type Broker struct {
 	settings  map[string]map[string]string // changed with `ccqc config set`: scope ("" or chat id) → key → value
 	ownerPub  ed25519.PublicKey            // the registered owner key, nil if none
 	ownerAt   string                       // when it was registered
-	attest    *store.AdminAttest           // the signed administrator operation being run, if any
 	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
 	active    int
 	idleAt    time.Time
@@ -69,8 +69,9 @@ type Broker struct {
 }
 
 type chat struct {
-	mu       sync.Mutex // everything below; taken after the broker's mu, never before it
-	dead     bool       // unloaded: out of the map of chats, its store released
+	mu       sync.Mutex   // everything below
+	refs     atomic.Int32 // operations that hold the chat (found it, or wait for its lock): it is not unloaded under them
+	dead     bool         // unloaded: out of the map of chats, its store released
 	id, name string
 	nextID   int64
 	nicks    map[string]*nick   // registered nicks (durable)
@@ -215,12 +216,15 @@ func (b *Broker) shutdown(reason string) {
 	}
 }
 
-// info: what `ccqc broker status` shows.
+// info: what `ccqc broker status` shows. A chat in the middle of a slow write is not waited for.
 func (b *Broker) info() proto.BrokerInfo {
+	b.mu.Lock()
+	chats := len(b.chats)
+	b.mu.Unlock()
 	clients := 0
 	byProto := map[string]int{}
-	for _, ch := range b.chats {
-		if !ch.mu.TryLock() { // a chat in the middle of a slow write: the status does not wait for it
+	for _, ch := range b.chatList() {
+		if !ch.mu.TryLock() {
 			continue
 		}
 		for _, m := range ch.members {
@@ -232,13 +236,14 @@ func (b *Broker) info() proto.BrokerInfo {
 		ch.mu.Unlock()
 	}
 	ownerFP := ""
-	if b.ownerPub != nil {
-		ownerFP = owner.Fingerprint(b.ownerPub)
+	ownerPub, ownerAt := b.ownerState()
+	if ownerPub != nil {
+		ownerFP = owner.Fingerprint(ownerPub)
 	}
 	return proto.BrokerInfo{
-		Owner: ownerFP, OwnerSince: b.ownerAt,
+		Owner: ownerFP, OwnerSince: ownerAt,
 		Version: version.Version, Proto: proto.ProtoVersion, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
-		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning, ByProto: byProto, Node: b.origin,
+		Chats: chats, Clients: clients, Store: b.storeDesc, Warning: b.warning, ByProto: byProto, Node: b.origin,
 	}
 }
 
@@ -289,20 +294,22 @@ func (b *Broker) janitor() {
 // chats nobody is in are let go, old counters dropped. It reports whether the broker has been idle
 // long enough to stop.
 func (b *Broker) sweep() (stop bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	now := time.Now()
-	for _, ch := range b.chats {
-		ch.mu.Lock()
+	for _, ch := range b.chatList() {
+		if !ch.mu.TryLock() { // busy: looked at again in the next round
+			continue
+		}
 		for _, m := range ch.members {
 			if m.conn == nil && !m.offline.IsZero() && now.Sub(m.offline) > b.graceFor() {
 				b.removeMember(ch, m, m.name+" went offline")
 			}
 		}
-		b.unloadLocked(ch)
 		ch.mu.Unlock()
+		b.unloadIfEmpty(ch)
 	}
 	b.pruneHits(now)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.active == 0 && now.Sub(b.idleAt) > b.idleFor()
 }
 
@@ -318,39 +325,6 @@ func newChat(id, name string) *chat {
 		where:   map[int64]string{},
 		sent:    map[string]int64{},
 	}
-}
-
-// loadChat creates the in-memory chat and replays its stored records.
-// A chat whose history can't be read is not served: working from a partial state would hand
-// out nick keys that already exist and reuse message ids.
-func (b *Broker) loadChat(id, name string) (*chat, error) {
-	ch := newChat(id, name)
-	ch.store = b.store
-	recs, err := b.store.Load(id, name)
-	if err != nil {
-		log.Printf("broker: chat %s#%s: load: %v", name, id[:8], err)
-		return nil, err
-	}
-	for _, r := range recs {
-		ch.replay(r)
-	}
-	// The settings of a chat are kept with the chat.
-	if cs, ok := b.store.(store.ChatSettingsStore); ok {
-		m, err := cs.ChatSettings(id)
-		if err != nil {
-			log.Printf("broker: chat %s#%s: settings: %v", name, id[:8], err)
-			return nil, err
-		}
-		if len(m) > 0 {
-			b.setMu.Lock()
-			if b.settings == nil {
-				b.settings = map[string]map[string]string{}
-			}
-			b.settings[id] = m
-			b.setMu.Unlock()
-		}
-	}
-	return ch, nil
 }
 
 func (ch *chat) replay(r store.Record) {

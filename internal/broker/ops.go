@@ -3,7 +3,6 @@ package broker
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -20,18 +19,20 @@ var changes = map[string]bool{
 }
 
 // chatOps are the requests of a member that touch only its chat: they run under the chat's lock,
-// so chats do not wait for each other. Everything else (joining, the owner, administrator
-// operations, settings, status) runs under the broker's lock, which only protects what is shared:
-// the map of chats, the connections, the owner and the stop. The order of taking them is always the
-// broker's lock first, then a chat's, never the other way round.
+// so chats do not wait for each other. The broker's lock protects only what is shared: the map of
+// chats, the connections and the counters of the idle stop; it is held for a moment, never while
+// waiting for a chat. If both are held, the broker's was taken first (and a chat's lock is then only
+// tried, never waited for).
 var chatOps = map[string]bool{
 	"leave": true, "ack": true, "state": true, "clock": true, "doc": true, "board": true, "status": true,
 	"send": true, "history": true, "timeline": true, "search": true, "context": true,
 	"room_create": true, "room_join": true, "room_leave": true, "role_claim": true, "role_release": true,
 }
 
-// dispatch runs one request and sends its reply, under the right lock. The reply is sent before the
-// lock is let go, so it comes ahead of every event the request caused (and of anything later).
+// dispatch runs one request and sends its reply, under the right lock. A request of a member in
+// its chat runs under the chat's lock; the reply is sent before the lock is let go, so it comes
+// ahead of every event the request caused (and of anything later). A join does the same on the chat
+// it enters. The rest takes locks only for the moment it needs a shared value.
 func (b *Broker) dispatch(c *conn, f *proto.Frame) *proto.Error {
 	if chatOps[f.Op] && c.m != nil {
 		ch := c.ch
@@ -44,14 +45,11 @@ func (b *Broker) dispatch(c *conn, f *proto.Frame) *proto.Error {
 		}
 		return perr
 	}
-	b.mu.Lock()
+	if f.Op == "join" {
+		return b.dispatchJoin(c, f)
+	}
 	data, perr := b.handleGlobal(c, f)
 	c.reply(f.ID, data, perr)
-	if c.hold != nil { // a join keeps its chat locked until the reply is out
-		c.hold.mu.Unlock()
-		c.hold = nil
-	}
-	b.mu.Unlock()
 	return perr
 }
 
@@ -69,12 +67,6 @@ func (b *Broker) handleGlobal(c *conn, f *proto.Frame) (any, *proto.Error) {
 			b.shutdown("requested")
 		}()
 		return nil, nil
-	case "join":
-		var a proto.JoinArgs
-		if e := decode(f.Args, &a); e != nil {
-			return nil, e
-		}
-		return b.join(c, a)
 	case "challenge":
 		return b.challenge(c)
 	case "owner_info":
@@ -108,7 +100,7 @@ func (b *Broker) handleGlobal(c *conn, f *proto.Frame) (any, *proto.Error) {
 		if e := decode(f.Args, &a); e != nil {
 			return nil, e
 		}
-		if b.ownerPub != nil { // with an owner, this is an administrator operation
+		if b.ownerKey() != nil { // with an owner, this is an administrator operation
 			b.logAdmin("nick_reset", []byte(`{"via":"token"}`), "refused: needs the owner's signature")
 			return nil, proto.Errf("admin_only", "%s", adminRefusal)
 		}
@@ -429,36 +421,4 @@ func (b *Broker) removeMember(ch *chat, m *member, text string) {
 	b.release(ch, m)
 	delete(ch.members, m.name)
 	b.presence(ch, nil, m.name, text)
-}
-
-// unloadIfEmpty lets go of a chat nobody is present in; for a caller that holds no lock. The
-// store backend keeps what it persists.
-func (b *Broker) unloadIfEmpty(ch *chat) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.unloadHeld(ch)
-}
-
-// unloadHeld is unloadIfEmpty for a caller that holds the broker's lock.
-func (b *Broker) unloadHeld(ch *chat) {
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
-	b.unloadLocked(ch)
-}
-
-// unloadLocked: the caller holds the broker's lock and the chat's. A chat that is gone from the
-// map is dead: nobody can reach it any more, so no operation can race with the release.
-func (b *Broker) unloadLocked(ch *chat) {
-	if ch.dead || len(ch.members) > 0 || b.chats[ch.id] != ch {
-		return
-	}
-	if _, memoryOnly := ch.store.(store.Memory); memoryOnly { // memory-only: unloading would lose history
-		return
-	}
-	ch.dead = true
-	delete(b.chats, ch.id)
-	if r, ok := ch.store.(store.Releaser); ok { // its database is closed until the chat is used again
-		r.Release(ch.id)
-	}
-	log.Printf("broker: chat %s#%s unloaded (nobody present)", ch.name, ch.id[:8])
 }

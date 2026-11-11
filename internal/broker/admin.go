@@ -38,7 +38,8 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 		b.logAdmin(a.Op, canon, "refused: "+why)
 		return nil, proto.Errf(code, "%s", msg)
 	}
-	if b.ownerPub == nil {
+	ownerPub := b.ownerKey()
+	if ownerPub == nil {
 		return refuse("no_owner", "no owner is registered yet: the owner runs `ccqc owner init` first", "no owner")
 	}
 	nonce, at := c.nonce, c.nonceAt
@@ -49,12 +50,11 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 		return refuse("admin_only", adminRefusal, "no valid signature")
 	case nonce == "" || time.Since(at) > challengeTTL:
 		return refuse("admin_only", adminRefusal, "no valid challenge")
-	case !ed25519.Verify(b.ownerPub, proto.AdminMessage(a.Op, canon, nonce), sig):
+	case !ed25519.Verify(ownerPub, proto.AdminMessage(a.Op, canon, nonce), sig):
 		return refuse("admin_only", adminRefusal, "the signature does not verify")
 	}
-	b.attest = &store.AdminAttest{Op: a.Op, Args: string(canon), Nonce: nonce, Sig: a.Sig, Pub: owner.Encode(b.ownerPub)}
-	res, e := b.runAdmin(a.Op, a.Args)
-	b.attest = nil
+	attest := &store.AdminAttest{Op: a.Op, Args: string(canon), Nonce: nonce, Sig: a.Sig, Pub: owner.Encode(ownerPub)}
+	res, e := b.runAdmin(a.Op, a.Args, attest)
 	if e != nil {
 		b.logAdmin(a.Op, canon, "failed: "+e.Code)
 		return nil, e
@@ -63,37 +63,37 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 	return res, nil
 }
 
-func (b *Broker) runAdmin(op string, args json.RawMessage) (any, *proto.Error) {
+// runAdmin runs a verified administrator operation. A chat it needs is taken (loaded if necessary)
+// without the broker's lock held, like any other use of a chat.
+func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest) (any, *proto.Error) {
 	switch op {
 	case "role_give", "role_take":
 		var r proto.AdminRole
 		if err := json.Unmarshal(args, &r); err != nil {
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
-		ch, e := b.chatByID(r.Chat)
+		ch, e := b.adminChat(r.Chat)
 		if e != nil {
 			return nil, e
 		}
-		ch.mu.Lock()
-		defer ch.mu.Unlock()
+		defer b.leaveChat(ch)
 		if op == "role_give" {
-			return b.pinRole(ch, r.Nick, r.Role)
+			return b.pinRole(ch, r.Nick, r.Role, at)
 		}
-		return b.unpinRole(ch, r.Nick)
+		return b.unpinRole(ch, r.Nick, at)
 	case "config_set":
 		var c proto.AdminConfig
 		if err := json.Unmarshal(args, &c); err != nil {
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
-		if c.Chat != "" { // the chat is locked while its setting is stored: it is not released under the write
-			ch, e := b.chatByID(c.Chat)
+		if c.Chat != "" { // the chat is held while its setting is stored: it is not released under the write
+			ch, e := b.adminChat(c.Chat)
 			if e != nil {
 				return nil, e
 			}
-			ch.mu.Lock()
-			defer ch.mu.Unlock()
+			defer b.leaveChat(ch)
 		}
-		v, e := b.setConfig(c.Chat, c.Key, c.Value)
+		v, e := b.setConfig(c.Chat, c.Key, c.Value, at)
 		if e != nil {
 			return nil, e
 		}
@@ -103,28 +103,31 @@ func (b *Broker) runAdmin(op string, args json.RawMessage) (any, *proto.Error) {
 		if err := json.Unmarshal(args, &r); err != nil {
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
-		return b.resetNick(r.Chat, r.Nick)
+		return b.resetNick(r.Chat, r.Nick, at)
 	}
 	return nil, proto.Errf("unknown_op", "no administrator operation %q", op)
 }
 
-// chatByID returns the loaded chat with that id, loading it from the store if needed.
-func (b *Broker) chatByID(id string) (*chat, *proto.Error) {
+// adminChat takes the chat with that id (64 hex characters), loading it if needed; it comes back
+// locked and held. Give it back with leaveChat.
+func (b *Broker) adminChat(id string) (*chat, *proto.Error) {
 	if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
 		return nil, proto.Errf("bad_args", "chat is the 64-hex id of a chat")
 	}
-	if ch := b.chats[id]; ch != nil {
-		return ch, nil
-	}
-	ch, err := b.loadChat(id, "")
+	ch, err := b.useChat(id, "")
 	if err != nil {
-		return nil, proto.Errf("store_unavailable", "chat history can't be read (%v)", err)
+		return nil, errNoStore(err)
 	}
-	b.chats[id] = ch
 	return ch, nil
 }
 
-// announceChat tells the present members of one chat, loudly.
+// leaveChat gives a chat back and lets it go if nobody is in it.
+func (b *Broker) leaveChat(ch *chat) {
+	b.doneChat(ch)
+	b.unloadIfEmpty(ch)
+}
+
+// announceChat tells the present members of one chat, loudly. The caller holds the chat's lock.
 func (b *Broker) announceChat(ch *chat, text string) {
 	for name, m := range ch.members {
 		if m.conn != nil {
@@ -144,7 +147,7 @@ func (ch *chat) pinnedHolder(role, except string) string {
 }
 
 // pinRole gives a nick a role it can neither change nor release.
-func (b *Broker) pinRole(ch *chat, nickName, role string) (any, *proto.Error) {
+func (b *Broker) pinRole(ch *chat, nickName, role string, at *store.AdminAttest) (any, *proto.Error) {
 	nk := ch.nicks[nickName]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", nickName)
@@ -159,7 +162,7 @@ func (b *Broker) pinRole(ch *chat, nickName, role string) (any, *proto.Error) {
 			}
 		}
 	}
-	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: role, Admin: b.attest}); e != nil {
+	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: role, Admin: at}); e != nil {
 		return nil, e
 	}
 	nk.pinned = role
@@ -171,7 +174,7 @@ func (b *Broker) pinRole(ch *chat, nickName, role string) (any, *proto.Error) {
 	return proto.BoardReply{Text: fmt.Sprintf("role %s is pinned to @%s", role, nickName)}, nil
 }
 
-func (b *Broker) unpinRole(ch *chat, nickName string) (any, *proto.Error) {
+func (b *Broker) unpinRole(ch *chat, nickName string, at *store.AdminAttest) (any, *proto.Error) {
 	nk := ch.nicks[nickName]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", nickName)
@@ -180,7 +183,7 @@ func (b *Broker) unpinRole(ch *chat, nickName string) (any, *proto.Error) {
 		return nil, proto.Errf("no_pinned_role", "@%s has no pinned role", nickName)
 	}
 	old := nk.pinned
-	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: "", Admin: b.attest}); e != nil {
+	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: "", Admin: at}); e != nil {
 		return nil, e
 	}
 	nk.pinned = ""
@@ -213,13 +216,12 @@ func (ch *chat) displayRole(m *member) string {
 
 // resetNick frees an offline nick, as the owner's administrator operation (nickReset is the older
 // token-based one, which only works while no owner exists).
-func (b *Broker) resetNick(chatID, nickName string) (any, *proto.Error) {
-	ch, e := b.chatByID(chatID)
+func (b *Broker) resetNick(chatID, nickName string, at *store.AdminAttest) (any, *proto.Error) {
+	ch, e := b.adminChat(chatID)
 	if e != nil {
 		return nil, e
 	}
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
+	defer b.leaveChat(ch)
 	nk := ch.nicks[nickName]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", nickName)
@@ -227,7 +229,7 @@ func (b *Broker) resetNick(chatID, nickName string) (any, *proto.Error) {
 	if ch.members[nickName] != nil {
 		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", nickName)
 	}
-	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: "", Admin: b.attest}); e != nil {
+	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: "", Admin: at}); e != nil {
 		return nil, e
 	}
 	nk.hash = ""

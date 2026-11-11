@@ -21,7 +21,6 @@ type conn struct {
 	once sync.Once
 	ch   *chat
 	m    *member
-	hold *chat // a chat a join keeps locked until its reply is sent (see dispatch)
 	// A pending owner challenge (see Broker.challenge); only touched under Broker.mu.
 	nonce   string
 	nonceAt time.Time

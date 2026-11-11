@@ -180,9 +180,7 @@ func TestOldClientsAreToldToRestart(t *testing.T) {
 	if code != "" || w.Warning != "" || w.Proto != proto.ProtoVersion {
 		t.Fatalf("current client: code %q, warning %q, proto %d; want none and the broker's level", code, w.Warning, w.Proto)
 	}
-	b.mu.Lock()
 	info := b.info()
-	b.mu.Unlock()
 	if info.ByProto["0"] != 1 || info.ByProto[strconv.Itoa(proto.ProtoVersion)] != 1 {
 		t.Fatalf("by proto = %v", info.ByProto)
 	}
