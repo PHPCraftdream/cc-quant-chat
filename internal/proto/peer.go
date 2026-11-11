@@ -36,11 +36,42 @@ type PeerInfo struct {
 	Reasons   string   `json:"reasons,omitempty"`  // why, as text
 	Chats     []string `json:"chats,omitempty"`    // ids of the chats shared with it
 	Connected bool     `json:"connected"`
-	Flagged   string   `json:"flagged,omitempty"` // why it is no longer listened to
+	Flagged   string   `json:"flagged,omitempty"`   // why it is no longer listened to
+	Until     string   `json:"until,omitempty"`     // pending: when it is dropped unless confirmed (RFC 3339)
+	Confirmed bool     `json:"confirmed,omitempty"` // pending: this node's owner has confirmed
 }
 
 type PeerList struct {
 	Node   string     `json:"node"`
 	Listen string     `json:"listen,omitempty"` // where this broker accepts nodes, if it does
 	Peers  []PeerInfo `json:"peers"`
+}
+
+// Inviting a node (peer_invite, peer_invite_revoke, peer_join, peer_code, peer_confirm).
+
+// PeerInvite: an invitation for a node. Addr is where the node is reached (default: setting
+// peer.advertise); Trust what this node accepts from the one that uses it; Chats the chats (ids)
+// offered for exchange once the owners have confirmed.
+type PeerInvite struct {
+	TTLSeconds int64    `json:"ttl,omitempty"`
+	Trust      string   `json:"trust,omitempty"`
+	Addr       string   `json:"addr,omitempty"`
+	Chats      []string `json:"chats,omitempty"`
+}
+
+// PeerInviteID: an invitation of a node by its id (or the first characters).
+type PeerInviteID struct {
+	ID string `json:"id"`
+}
+
+// PeerJoin: use an invitation of another node; Trust is what this node accepts from it.
+type PeerJoin struct {
+	Invitation string `json:"invitation"`
+	Trust      string `json:"trust,omitempty"`
+}
+
+// PeerCode: the code of a pending node (peer_code), or the code the owner entered (peer_confirm).
+type PeerCode struct {
+	Origin string `json:"origin"`
+	Code   string `json:"code,omitempty"`
 }

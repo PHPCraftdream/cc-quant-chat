@@ -34,11 +34,19 @@ type Manager struct {
 	// Accept stores one checked event and applies it; the default is the store's AcceptEvent. The
 	// broker sets its own, which does it under the lock of the chat and tells the chat's members.
 	Accept func(chatID string, e events.Event) error
+	// OnPair is told of what happens to the nodes that are being paired (invitations, codes); OnActive
+	// when a pending node becomes active, before its sessions start: the broker makes the chats it
+	// offered. Both run on the goroutine that found out and must not wait for a session.
+	OnPair   func(PairEvent)
+	OnActive func(origin string)
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	wake   chan string
+
+	smu       sync.Mutex
+	strangers []time.Time // when connections of unknown keys were served, the last minute
 
 	statsMu sync.Mutex
 	stats   map[string]*PeerStats
@@ -59,6 +67,8 @@ func New(st store.Federation, origin string, priv ed25519.PrivateKey, logf func(
 		wake: make(chan string, 256), stats: map[string]*PeerStats{}, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
 	m.wg.Add(1)
 	go m.pump()
+	m.wg.Add(1)
+	go m.janitor()
 	return m
 }
 
@@ -143,7 +153,7 @@ func (m *Manager) sessionsOf(chat string) []*session {
 // Listen accepts connections from peers on addr. It returns the address it listens on.
 func (m *Manager) Listen(addr string) (net.Addr, error) {
 	cfg, err := tlsConfig(m.priv, true, func(origin string, _ ed25519.PublicKey) error {
-		return m.knownPeer(origin)
+		return m.notFlagged(origin) // a stranger may show an invitation, nothing else
 	})
 	if err != nil {
 		return nil, err
@@ -180,7 +190,17 @@ func (m *Manager) Listen(addr string) (net.Addr, error) {
 	return ln.Addr(), nil
 }
 
-// knownPeer: only a node the owner added, and one that has not been flagged, may connect.
+// notFlagged: a node that was caught writing two events with one (origin, seq) is not talked to at all.
+func (m *Manager) notFlagged(origin string) error {
+	if reason, flagged, err := m.st.Flagged(origin); err != nil {
+		return err
+	} else if flagged {
+		return fmt.Errorf("node %s is flagged (%s)", origin, reason)
+	}
+	return nil
+}
+
+// knownPeer: only a node the owner added, and one that has not been flagged, may exchange chats.
 func (m *Manager) knownPeer(origin string) error {
 	peers, err := m.st.Peers()
 	if err != nil {
@@ -214,19 +234,19 @@ func (m *Manager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for origin, cancel := range m.dialers {
-		if p, ok := want[origin]; !ok || p.Addr == "" || len(p.Chats) == 0 {
+		if p, ok := want[origin]; !ok || !dialable(p) {
 			cancel()
 			delete(m.dialers, origin)
 		}
 	}
 	for origin, s := range m.sessions {
 		p, ok := want[origin]
-		if !ok || !sameSet(p.Chats, s.sharedByUs()) || p.Trust != s.level || p.State != s.state {
+		if !ok || (p.State == store.StateActive && !sameSet(p.Chats, s.sharedByUs())) || p.Trust != s.level || p.State != s.state {
 			s.close()
 		}
 	}
 	for _, p := range peers {
-		if p.Addr == "" || len(p.Chats) == 0 || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
+		if !dialable(p) || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
 			continue
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
@@ -267,7 +287,7 @@ func (m *Manager) dial(ctx context.Context, origin string) {
 		peers, err := m.st.Peers()
 		addr := ""
 		for _, p := range peers {
-			if p.Origin == origin && len(p.Chats) > 0 { // nothing shared with it: nothing to dial for
+			if p.Origin == origin && dialable(p) { // nothing shared with it, and not pending: nothing to dial for
 				addr = p.Addr
 			}
 		}
@@ -368,6 +388,10 @@ func (m *Manager) serve(conn *tls.Conn, handshaken func()) {
 		conn.Close()
 		return
 	}
+	if m.knownPeer(originOf(pub)) != nil { // not listed: it may show an invitation, nothing else
+		m.stranger(conn, pub)
+		return
+	}
 	// The peer dialed: it is the initiator.
 	if err := m.run(conn, originOf(pub), m.ctx); err != nil && m.ctx.Err() == nil {
 		m.logf("peer: %v", err)
@@ -440,3 +464,24 @@ func (m *Manager) Close() {
 }
 
 var errClosed = errors.New("the session is closed")
+
+// dialable: a node with an address is dialed when something is shared with it, or when it is pending
+// (the code is confirmed over that connection).
+func dialable(p store.Peer) bool {
+	return p.Addr != "" && (len(p.Chats) > 0 || p.State == store.StatePending)
+}
+
+// janitor removes pending nodes whose time is out.
+func (m *Manager) janitor() {
+	defer m.wg.Done()
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-t.C:
+			m.expire()
+		}
+	}
+}

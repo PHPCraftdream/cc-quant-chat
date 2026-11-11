@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
 const (
@@ -21,6 +22,9 @@ const (
 //	events  Chat, Events, Pubs: events in the order of the clock, with the keys of their origins
 //	ping    nothing to say; the connection is alive
 //	bye     the sender is closing
+//	invite  ID, Sig: a node that is not listed uses an invitation; the only frame it may send
+//	invite_ok / invite_invalid  the answer to it (Origin, Offer)
+//	confirm the owner of the sender has confirmed the code of a pending node
 type Frame struct {
 	T      string            `json:"t"`
 	Origin string            `json:"origin,omitempty"`
@@ -29,6 +33,12 @@ type Frame struct {
 	Vec    map[string]int64  `json:"vec,omitempty"`
 	Events []events.Event    `json:"events,omitempty"`
 	Pubs   map[string]string `json:"pubs,omitempty"` // origin -> base64 public key
+
+	// Pairing (docs/design-trust.md section 2).
+	Confirmed bool            `json:"confirmed,omitempty"` // hello: the owner of the sender has confirmed the code
+	ID        string          `json:"id,omitempty"`        // invite: the invitation
+	Sig       string          `json:"sig,omitempty"`       // invite: the proof, base64
+	Offer     []store.ChatRef `json:"offer,omitempty"`     // invite_ok: the chats offered for exchange
 }
 
 // exportable is what another node is given of an event. Most events go whole; those that are this

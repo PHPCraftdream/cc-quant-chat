@@ -28,6 +28,7 @@ func (b *Broker) startPeers(priv ed25519.PrivateKey) error {
 	}
 	m := peer.New(fed, b.origin, priv, log.Printf)
 	m.Accept = b.acceptRemote
+	m.OnPair, m.OnActive = b.onPair, b.onActive
 	fed.OnEvents(m.Notify)
 	b.peerMgr = m
 	if addr, _ := b.setting("", "peer.listen"); addr != "" {
@@ -165,7 +166,10 @@ func (b *Broker) peerList() (any, *proto.Error) {
 	for _, p := range peers {
 		reason, _, _ := fed.Flagged(p.Origin)
 		info := proto.PeerInfo{Origin: p.Origin, Addr: p.Addr, Trust: p.Trust, Chats: p.Chats,
-			Connected: slices.Contains(connected, p.Origin), Flagged: reason, State: p.State}
+			Connected: slices.Contains(connected, p.Origin), Flagged: reason, State: p.State, Confirmed: p.Confirmed}
+		if p.State == store.StatePending {
+			info.Until = p.PendingUntil
+		}
 		st := b.peerMgr.Stats(p.Origin)
 		info.Accepted = st.Accepted
 		var why []string

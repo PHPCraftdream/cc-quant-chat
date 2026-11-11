@@ -105,10 +105,11 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 	s := &session{m: m, conn: conn, peer: peer, initiator: initiator, enc: json.NewEncoder(conn),
 		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, waits: map[string]int{}, done: make(chan struct{})}
 	var chats []string
+	confirmed := false
 	s.level, s.state = store.TrustTrusted, store.StateActive
 	for _, p := range peers {
 		if p.Origin == peer {
-			chats, s.level, s.state = p.Chats, p.Trust, p.State
+			chats, s.level, s.state, confirmed = p.Chats, p.Trust, p.State, p.Confirmed || p.State == store.StateActive
 		}
 	}
 	if s.state != store.StateActive {
@@ -128,7 +129,7 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 64<<10), maxFrame)
-	if err := s.send(Frame{T: "hello", Origin: m.origin, Chats: chats}); err != nil {
+	if err := s.send(Frame{T: "hello", Origin: m.origin, Chats: chats, Confirmed: confirmed}); err != nil {
 		return err
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(helloTimeout))
@@ -145,7 +146,10 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 			s.common[c] = true
 		}
 	}
-	if len(s.common) == 0 { // nothing shared by both: nothing to exchange, nothing to keep
+	if hello.Confirmed && s.state == store.StatePending && m.remoteConfirmed(peer) {
+		return nil // active now: the session comes again with the chats
+	}
+	if s.state == store.StateActive && len(s.common) == 0 { // nothing shared by both: nothing to exchange, nothing to keep
 		_ = s.send(Frame{T: "bye"})
 		return nil
 	}
@@ -184,6 +188,10 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 			}
 			if err := s.receive(f); err != nil {
 				return err
+			}
+		case "confirm":
+			if s.state == store.StatePending && m.remoteConfirmed(peer) {
+				return nil
 			}
 		case "bye":
 			return nil

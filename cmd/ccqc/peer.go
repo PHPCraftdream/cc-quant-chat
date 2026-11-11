@@ -4,12 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin>"
+const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin> | invite | join | code | confirm (ccqc peer invite --help style: " + peerPairUsage + ")"
 
 // runPeer: the nodes this broker exchanges chats with. `list` is read-only; the rest are
 // administrator operations signed with the owner key.
@@ -22,6 +23,9 @@ func runPeer(args []string) error {
 		return err
 	}
 	defer c.Close()
+	if ok, err := peerPair(c, args); ok {
+		return err
+	}
 	switch {
 	case args[0] == "list" && len(args) == 1:
 		var l proto.PeerList
@@ -83,4 +87,18 @@ func printPeers(l proto.PeerList) {
 		}
 		fmt.Printf("%s  %s  %s  %s  shared chats: %d\n", p.Origin, addr, p.Trust, state, len(p.Chats))
 	}
+}
+
+// pendingWhat says what a pending node waits for (the code itself is not shown here: ccqc peer code).
+func pendingWhat(p proto.PeerInfo) string {
+	what := "waits for the code: ccqc peer code " + p.Origin
+	if p.Confirmed {
+		what = "confirmed here, waits for the other owner"
+	}
+	if p.Until != "" {
+		if t, err := time.Parse(time.RFC3339, p.Until); err == nil {
+			what += "; dropped at " + t.Local().Format("15:04")
+		}
+	}
+	return what
 }

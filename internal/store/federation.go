@@ -18,7 +18,9 @@ type Peer struct {
 	AddedAt string
 	// PendingUntil: when a pending node is dropped (RFC 3339), "" for an active one.
 	PendingUntil string
-	Chats        []string // ids of the chats shared with it
+	// Confirmed: this node's owner has entered the right code (kept once the node is active).
+	Confirmed bool
+	Chats     []string // ids of the chats shared with it
 }
 
 // What this node accepts from a node (docs/design-trust.md section 1).

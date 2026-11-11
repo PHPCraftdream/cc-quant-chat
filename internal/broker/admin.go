@@ -35,7 +35,7 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 		return nil, proto.Errf("bad_args", "args is not a JSON value")
 	}
 	refuse := func(code, msg, why string) (any, *proto.Error) {
-		b.logAdmin(a.Op, canon, "refused: "+why)
+		b.logAdmin(a.Op, redactAdminArgs(a.Op, canon), "refused: "+why)
 		return nil, proto.Errf(code, "%s", msg)
 	}
 	ownerPub := b.ownerKey()
@@ -56,10 +56,10 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 	attest := &store.AdminAttest{Op: a.Op, Args: string(canon), Nonce: nonce, Sig: a.Sig, Pub: owner.Encode(ownerPub)}
 	res, e := b.runAdmin(a.Op, a.Args, attest)
 	if e != nil {
-		b.logAdmin(a.Op, canon, "failed: "+e.Code)
+		b.logAdmin(a.Op, redactAdminArgs(a.Op, canon), "failed: "+e.Code)
 		return nil, e
 	}
-	b.logAdmin(a.Op, canon, "ok")
+	b.logAdmin(a.Op, redactAdminArgs(a.Op, canon), "ok")
 	return res, nil
 }
 
@@ -106,6 +106,8 @@ func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest
 		return b.resetNick(r.Chat, r.Nick, at)
 	case "peer_add", "peer_remove", "peer_share", "peer_unshare", "peer_trust":
 		return b.peerAdmin(op, args)
+	case "peer_invite", "peer_invite_revoke", "peer_join", "peer_code", "peer_confirm":
+		return b.pairAdmin(op, args, at)
 	case "chat_new", "invite_new", "invite_revoke", "invite_list":
 		return b.inviteAdmin(op, args, at)
 	}

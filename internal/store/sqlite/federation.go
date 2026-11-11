@@ -54,17 +54,19 @@ func (d *DB) RemovePeer(origin string) error {
 
 // Peers lists the nodes with the chats shared with each.
 func (d *DB) Peers() ([]store.Peer, error) {
-	rows, err := d.node.Query(`SELECT origin, addr, trust, state, pending_until, COALESCE(pubkey, x''), added_at FROM peers ORDER BY origin`)
+	rows, err := d.node.Query(`SELECT origin, addr, trust, state, pending_until, COALESCE(pubkey, x''), added_at, confirmed_local FROM peers ORDER BY origin`)
 	if err != nil {
 		return nil, err
 	}
 	var out []store.Peer
 	for rows.Next() {
 		var p store.Peer
-		if err := rows.Scan(&p.Origin, &p.Addr, &p.Trust, &p.State, &p.PendingUntil, &p.Pubkey, &p.AddedAt); err != nil {
+		var confirmed int
+		if err := rows.Scan(&p.Origin, &p.Addr, &p.Trust, &p.State, &p.PendingUntil, &p.Pubkey, &p.AddedAt, &confirmed); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		p.Confirmed = confirmed == 1
 		out = append(out, p)
 	}
 	err = rows.Err()
