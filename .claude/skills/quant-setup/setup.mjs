@@ -69,7 +69,11 @@ console.log(`ccqc: folder ${folder} set up.
 - written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks, permission mcp__ccqc)
 - restart Claude Code here (from a new terminal); then, in each session: /quant-join <token> <nick>
 - every session keeps its own chats and nick; resuming a session rejoins them automatically
-- incoming messages wake the session (rewake hook), no extra flags needed`);
+- incoming messages wake the session (rewake hook), no extra flags needed
+- optional, once per machine: chat messages as expandable cards in the transcript (display only,
+  separate from the chat plugin, so no second chat server starts):
+    claude plugin marketplace add ${JSON.stringify(repo)}
+    claude plugin install quant-ui@ccqc-local`);
 
 // --- helpers ---
 

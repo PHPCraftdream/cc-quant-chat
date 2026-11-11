@@ -58,3 +58,21 @@ jobs:
         run: |
           call install.cmd -Uninstall -NoPath -Dir "%RUNNER_TEMP%\ccqc-bin" || exit /b 1
           if exist "%RUNNER_TEMP%\ccqc-bin\ccqc.exe" exit /b 1
+
+  # The chat-card mod (plugin-ui): validated and tested by Claude Code itself, pinned to the
+  # version whose API declarations the mod was written against (the API is early access).
+  mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.322
+      - name: validate the mod and the marketplace
+        run: |
+          claude plugin validate plugin-ui
+          claude plugin validate .
+      - name: mod tests
+        run: claude plugin test plugin-ui

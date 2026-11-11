@@ -224,7 +224,49 @@ carries a ready `reply` address.
 Search, context and timeline cover only what the member can see: their rooms and their
 own direct dialogs. Message ids are per chat.
 
-## How it works
+## Cards in the transcript (`quant-ui`)
+
+By default a wake-up shows in Claude Code as a bare "Stop hook feedback" row. The optional
+`quant-ui` plugin (folder `plugin-ui/`, a Claude Code *mod*, early-access API) draws chat
+traffic as cards instead:
+
+- **incoming**: one card per wake-up, `ccqc ← N`, a row per message (address, `#id`, time,
+  sender(role) → addressee). Collapsed it shows the first line of each text, truncated to
+  the width; a click on a row opens its full text, another click closes it; `[expand all]` /
+  `[collapse all]` act on the whole card. Direct messages, messages addressed to you and
+  other room messages get different marks and colors; presence lines are dim;
+- **outgoing**: `chat_send` becomes `ccqc → <address>` with the text and `#id`, red on error;
+- **reading**: `chat_history`, `chat_timeline`, `chat_search`, `chat_context`, `chat_inbox`
+  and the unread part of `chat_join` draw the same message rows (`chat_context` marks the
+  messages it was asked about). The `chat_join` card shows the chat and nick, never the
+  token.
+
+It works under either way of connecting the chat (tools `mcp__ccqc__*` from `/quant-setup`,
+or `mcp__plugin_quant_chat__*` from the plugin) because it is a separate plugin of its own:
+it starts no chat server, so the folder set up by `/quant-setup` (where the `quant` plugin
+is not enabled, to avoid two chat servers) can use it too.
+
+Install once per machine (`/quant-setup` prints the same two lines):
+
+```sh
+claude plugin marketplace add <path to this repository>      # or: PHPCraftdream/cc-quant-chat
+claude plugin install quant-ui@ccqc-local
+```
+
+Display only: the tools' inputs and outputs, what the model reads and the permissions are
+untouched. Control characters and escape sequences in a message (another agent writes
+it) are shown as visible symbols, never sent to your terminal, and chat tokens are masked
+wherever they appear. `ctrl+o` shows the engine's own rows. A wake-up whose text does not
+hold exactly the events its header counts (a message imitating an event header) is shown as
+cleaned plain text instead of as messages.
+
+How the incoming card finds its text: the "Stop hook feedback" row is a user-role transcript
+row (`UserMessage`); the mod reads the batch from its text, or, when the row carries none, from
+the row the session appended with that text (`session.append`, matched by the row's id).
+The parsing lives in `plugin-ui/hooks/format.ts` and depends on the exact text ccqc prints:
+`internal/mcp` has a test (`TestWireFormat`) that pins the output to
+`plugin-ui/hooks/fixtures.ts`, which the mod's own tests parse. Change the format on one side
+and the other test fails until both agree.
 
 - **Transport:** a named pipe `\\.\pipe\ccqc-<user>` restricted to the current user on
   Windows, a `0600` unix socket on Linux/macOS (guarded by a lock file, so two brokers
@@ -274,7 +316,9 @@ gofmt -l . && go vet ./... && go test ./... && go run ./tools/linelimit
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Ubuntu (plus `go test -race`
-on Ubuntu) and the installers.
+on Ubuntu) and the installers. A separate job validates the `quant-ui` mod and runs its tests
+(`claude plugin validate plugin-ui`, `claude plugin test plugin-ui`) with the Claude Code
+version its API types were written for; locally `claude plugin validate plugin-ui` is enough.
 `tools/linelimit` fails on any source file longer than 500 lines. On Windows a rebuild of
 `plugin/bin/ccqc.exe` fails while a session in this folder (or a broker) runs it: run
 `ccqc broker stop` and close those sessions first, or use `install.cmd`, which handles a

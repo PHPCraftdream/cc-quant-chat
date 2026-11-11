@@ -229,7 +229,7 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 		if m.ReplyTo > 0 {
 			meta["reply_to"] = strconv.FormatInt(m.ReplyTo, 10)
 		}
-		cc.s.emit(m.Text, meta, fmtMsg(cc.local, m)+"   (reply: "+reply+")", false, ackRef{cc, m.ID})
+		cc.s.emit(m.Text, meta, eventLine(cc.local, m, ev.ToMe), false, ackRef{cc, m.ID})
 	case "presence":
 		cc.presence(ev.Text)
 	}
@@ -254,5 +254,5 @@ func (cc *chatConn) flushPresence() {
 	}
 	cc.s.emit(strings.Join(lines, "\n"),
 		map[string]string{"kind": "presence", "chat": cc.local},
-		"[/"+cc.local+" presence] "+strings.Join(lines, "; "), true, ackRef{})
+		presenceLine(cc.local, lines), true, ackRef{})
 }

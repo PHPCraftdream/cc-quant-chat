@@ -34,6 +34,56 @@ func fmtMsg(local string, m *proto.Message) string {
 	return fmt.Sprintf("[/%s/@%s #%d %s%s] %s%s: %s", local, m.Room, m.ID, m.TS, re, from, to, m.Text)
 }
 
+// eventLine is one message event as the wake-up batch and chat_inbox list it.
+// The plugin-ui cards parse this text (plugin-ui/hooks/format.ts); see TestWireFormat.
+func eventLine(local string, m *proto.Message, toMe bool) string {
+	return fmtMsg(local, m) + "   (reply: " + replyAddr(local, m, toMe) + ")"
+}
+
+// presenceLine is a batch of presence changes as the wake-up batch lists it.
+func presenceLine(local string, lines []string) string {
+	return "[/" + local + " presence] " + strings.Join(lines, "; ")
+}
+
+// fmtHits is chat_search's listing of one chat: a heading and the hits, indented.
+func fmtHits(local string, total int, msgs []proto.Message) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "/%s: %d hit(s), showing %d, newest first\n", local, total, len(msgs))
+	for i := range msgs {
+		b.WriteString("  " + fmtMsg(local, &msgs[i]) + "\n")
+	}
+	return b.String()
+}
+
+// fmtContext is chat_context's answer: blocks of messages (the asked-for ones marked) and the
+// ids that could not be shown.
+func fmtContext(local string, r proto.ContextResult) string {
+	var b strings.Builder
+	for _, blk := range r.Blocks {
+		hit := map[int64]bool{}
+		for _, h := range blk.Hits {
+			hit[h] = true
+		}
+		first, last := blk.Messages[0].ID, blk.Messages[len(blk.Messages)-1].ID
+		fmt.Fprintf(&b, "── /%s/@%s  #%d…#%d\n", local, blk.Thread, first, last)
+		for i := range blk.Messages {
+			mark := "   "
+			if hit[blk.Messages[i].ID] {
+				mark = " » "
+			}
+			b.WriteString(mark + fmtMsg(local, &blk.Messages[i]) + "\n")
+		}
+	}
+	if len(r.Missing) > 0 {
+		miss := make([]string, len(r.Missing))
+		for i, id := range r.Missing {
+			miss[i] = fmt.Sprintf("#%d", id)
+		}
+		fmt.Fprintf(&b, "not found or not visible to you: %s\n", strings.Join(miss, ", "))
+	}
+	return b.String()
+}
+
 func renderState(local string, st *proto.State) string {
 	var b strings.Builder
 	role := st.MyRole

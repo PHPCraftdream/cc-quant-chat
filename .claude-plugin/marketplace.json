@@ -7,6 +7,11 @@
       "name": "quant",
       "source": "./plugin",
       "description": "Token-gated chat between Claude Code sessions over local IPC"
+    },
+    {
+      "name": "quant-ui",
+      "source": "./plugin-ui",
+      "description": "Cards for ccqc chat messages in the transcript (display only; works with either way of connecting the chat)"
     }
   ]
 }

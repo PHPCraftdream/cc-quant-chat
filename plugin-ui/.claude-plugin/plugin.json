@@ -1,0 +1,10 @@
+{
+  "name": "quant-ui",
+  "displayName": "ccqc chat cards",
+  "version": "0.1.0",
+  "description": "Cards for ccqc chat messages in the Claude Code transcript: incoming batches, sent messages and history, expandable with a click. Display only.",
+  "author": { "name": "ccqc" },
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/PHPCraftdream/cc-quant-chat",
+  "types": "./types/index.d.ts"
+}

@@ -3,7 +3,6 @@ package mcp
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
@@ -119,10 +118,7 @@ func (s *Session) search(query, chat, in, from string, limit int) (string, error
 			continue
 		}
 		found += r.Total
-		fmt.Fprintf(&b, "/%s: %d hit(s), showing %d, newest first\n", cc.local, r.Total, len(r.Messages))
-		for i := range r.Messages {
-			b.WriteString("  " + fmtMsg(cc.local, &r.Messages[i]) + "\n")
-		}
+		b.WriteString(fmtHits(cc.local, r.Total, r.Messages))
 	}
 	if found == 0 && b.Len() == 0 {
 		return "no matches", nil
@@ -141,30 +137,7 @@ func (s *Session) context(chat string, ids []int64, radius int) (string, error) 
 	if err := cc.call("context", proto.ContextArgs{IDs: ids, Radius: radius}, &r); err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	for _, blk := range r.Blocks {
-		hit := set(nil)
-		for _, h := range blk.Hits {
-			hit[strconv.FormatInt(h, 10)] = true
-		}
-		first, last := blk.Messages[0].ID, blk.Messages[len(blk.Messages)-1].ID
-		fmt.Fprintf(&b, "── /%s/@%s  #%d…#%d\n", cc.local, blk.Thread, first, last)
-		for i := range blk.Messages {
-			mark := "   "
-			if hit[strconv.FormatInt(blk.Messages[i].ID, 10)] {
-				mark = " » "
-			}
-			b.WriteString(mark + fmtMsg(cc.local, &blk.Messages[i]) + "\n")
-		}
-	}
-	if len(r.Missing) > 0 {
-		miss := make([]string, len(r.Missing))
-		for i, id := range r.Missing {
-			miss[i] = "#" + strconv.FormatInt(id, 10)
-		}
-		fmt.Fprintf(&b, "not found or not visible to you: %s\n", strings.Join(miss, ", "))
-	}
-	return b.String(), nil
+	return fmtContext(cc.local, r), nil
 }
 
 // pageSize mirrors the broker's default page size, to tell whether older messages may exist.
