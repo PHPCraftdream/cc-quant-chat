@@ -10,7 +10,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin> | invite | join | code | confirm (ccqc peer invite --help style: " + peerPairUsage + ")"
+const peerUsage = "usage: ccqc peer add <addr> <origin> | list | remove <origin> | quarantine <origin> [reason] | release <origin> | trust <origin> read|member|trusted | share <chat> <origin> | unshare <chat> <origin> | invite | join | code | confirm (ccqc peer invite --help style: " + peerPairUsage + ")"
 
 // runPeer: the nodes this broker exchanges chats with. `list` is read-only; the rest are
 // administrator operations signed with the owner key.
@@ -41,6 +41,10 @@ func runPeer(args []string) error {
 		return peerOp(c, "peer_add", proto.PeerAdd{Addr: args[1], Origin: args[2]})
 	case args[0] == "trust" && len(args) == 3:
 		return peerOp(c, "peer_trust", proto.PeerTrust{Origin: args[1], Level: args[2]})
+	case args[0] == "quarantine" && len(args) >= 2:
+		return peerOp(c, "peer_quarantine", proto.PeerQuarantine{Origin: args[1], Reason: strings.Join(args[2:], " ")})
+	case args[0] == "release" && len(args) == 2:
+		return peerOp(c, "peer_release", proto.PeerQuarantine{Origin: args[1]})
 	case args[0] == "remove" && len(args) == 2:
 		return peerOp(c, "peer_remove", proto.PeerRemove{Origin: args[1]})
 	case (args[0] == "share" || args[0] == "unshare") && len(args) == 3:
@@ -68,6 +72,12 @@ func printPeers(l proto.PeerList) {
 		fmt.Printf("accepting nodes on %s\n", l.Listen)
 	} else {
 		fmt.Println("not accepting nodes (set peer.listen to host:port to do so)")
+	}
+	if len(l.Quarantined) > 0 {
+		fmt.Println("in quarantine (new events are not taken; lift: ccqc peer release <origin>):")
+		for _, q := range l.Quarantined {
+			fmt.Println("  " + q)
+		}
 	}
 	if len(l.Peers) == 0 {
 		fmt.Println("no nodes added")

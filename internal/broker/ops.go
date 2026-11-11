@@ -38,6 +38,7 @@ func (b *Broker) dispatch(c *conn, f *proto.Frame) *proto.Error {
 		ch := c.ch
 		ch.mu.Lock()
 		data, perr := b.handleChat(c, f)
+		data = b.markQuarantined(data)
 		c.reply(f.ID, data, perr)
 		ch.mu.Unlock()
 		if f.Op == "leave" && perr == nil {

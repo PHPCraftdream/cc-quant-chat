@@ -58,7 +58,7 @@ func (b *Broker) dispatchJoin(c *conn, f *proto.Frame) *proto.Error {
 		return fail(proto.Errf("store_unavailable", "chat history can't be read (%v); not joining so nothing gets overwritten. See broker.log", err))
 	}
 	res, perr := b.joinIn(ch, c, a, signed)
-	c.reply(f.ID, res, perr)
+	c.reply(f.ID, b.markQuarantined(res), perr)
 	b.doneChat(ch)
 	if perr != nil { // a chat loaded for a join that failed must not stay cached without members
 		b.unloadIfEmpty(ch)

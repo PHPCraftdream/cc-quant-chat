@@ -142,6 +142,8 @@ func (m *Manager) accept(chat string, e events.Event, pubs map[string]string) er
 			return ferr
 		}
 		m.logf("peer: %s wrote two different events %s#%d in chat %.8s: its events are no longer accepted", e.Origin, e.Origin, e.Seq, chat)
+		m.loadQuarantine() // a fork is a quarantine, lifted by the owner only
+		m.alert(e.Origin, "fork", fmt.Sprintf("node %s wrote two different events %s#%d: it is in quarantine (fork), its new events are not taken; the owner lifts it with ccqc peer release", e.Origin, e.Origin, e.Seq))
 		m.dropOrigin(e.Origin)
 	}
 	return err

@@ -28,7 +28,7 @@ func (b *Broker) startPeers(priv ed25519.PrivateKey) error {
 	}
 	m := peer.New(fed, b.origin, priv, log.Printf)
 	m.Accept = b.acceptRemote
-	m.OnPair, m.OnActive, m.OnAlert = b.onPair, b.onActive, b.onAlert
+	m.OnPair, m.OnActive, m.OnAlert, m.OnQuarantine = b.onPair, b.onActive, b.onAlert, b.onQuarantine
 	fed.OnEvents(m.Notify)
 	b.peerMgr = m
 	if addr, _ := b.setting("", "peer.listen"); addr != "" {
@@ -41,6 +41,7 @@ func (b *Broker) startPeers(priv ed25519.PrivateKey) error {
 		b.peerAt = bound.String()
 		log.Printf("broker: accepting nodes on %s", bound)
 	}
+	b.applyPeerLimits()
 	return m.Refresh()
 }
 
@@ -134,15 +135,25 @@ func (b *Broker) peerAdmin(op string, args json.RawMessage) (any, *proto.Error) 
 
 // announcePeerChats tells, loudly, the chats shared with a node what the owner did about it.
 func (b *Broker) announcePeerChats(fed store.Federation, origin, text string) {
+	b.announcePeerChatsOf(fed, text, origin)
+}
+
+// announcePeerChatsOf tells the chats shared with any of the nodes, each once.
+func (b *Broker) announcePeerChatsOf(fed store.Federation, text string, origins ...string) {
 	peers, err := fed.Peers()
 	if err != nil {
 		return
 	}
+	done := map[string]bool{}
 	for _, p := range peers {
-		if p.Origin != origin {
+		if !slices.Contains(origins, p.Origin) {
 			continue
 		}
 		for _, id := range p.Chats {
+			if done[id] {
+				continue
+			}
+			done[id] = true
 			if ch, e := b.adminChat(id); e == nil {
 				b.announceChat(ch, text)
 				b.leaveChat(ch)
@@ -162,6 +173,7 @@ func (b *Broker) peerList() (any, *proto.Error) {
 	if err != nil {
 		return nil, proto.Errf("store_failed", "%v", err)
 	}
+	out.Quarantined = b.quarantineLines()
 	connected := b.peerMgr.Sessions()
 	for _, p := range peers {
 		reason, _, _ := fed.Flagged(p.Origin)
@@ -172,6 +184,10 @@ func (b *Broker) peerList() (any, *proto.Error) {
 		}
 		st := b.peerMgr.Stats(p.Origin)
 		info.Accepted = st.Accepted
+		info.Bytes = b.peerMgr.DayStats(p.Origin).Bytes
+		if q, ok := b.peerMgr.InQuarantine(p.Origin); ok {
+			info.Quarantine = q.Reason + " (since " + q.Since + ", by " + q.By + ")"
+		}
 		if src, ok := b.store.(store.Sources); ok {
 			if via, err := src.SourcesVia(p.Origin); err == nil {
 				info.Sources = len(via)

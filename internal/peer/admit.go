@@ -30,6 +30,9 @@ func (s *session) neighbors() map[string]store.Peer {
 // it and refused beyond the limit. (What a member may write is limited by what applying does:
 // settings, pinned roles, invitations and snapshots of a node are not applied.)
 func (s *session) admit(e events.Event, neigh map[string]store.Peer) string {
+	if _, ok := s.m.InQuarantine(e.Origin); ok {
+		return s.hold(e.Origin, "source in quarantine")
+	}
 	switch s.level {
 	case store.TrustRead:
 		return "read"
@@ -55,13 +58,13 @@ func (s *session) admit(e events.Event, neigh map[string]store.Peer) string {
 	if !ok {
 		return ""
 	}
-	allowed, fresh, err := src.NoteSource(e.Origin, s.peer, s.m.maxSources)
+	allowed, fresh, err := src.NoteSource(e.Origin, s.peer, s.m.limits().Sources)
 	switch {
 	case err != nil:
 		s.m.logf("peer: sources of %s: %v", s.peer, err)
 		return s.hold(e.Origin, "sources unavailable")
 	case !allowed:
-		s.m.alert(s.peer, "too many sources", fmt.Sprintf("node %s brought more than %d sources that are not neighbors here: the events of %s and of further new ones are not taken through it", s.peer, s.m.maxSources, e.Origin))
+		s.m.alert(s.peer, "too many sources", fmt.Sprintf("node %s brought more than %d sources that are not neighbors here: the events of %s and of further new ones are not taken through it", s.peer, s.m.limits().Sources, e.Origin))
 		return s.hold(e.Origin, "too many sources via it")
 	case fresh:
 		s.m.logf("peer: %s brought a new source %s", s.peer, e.Origin)

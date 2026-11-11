@@ -313,6 +313,9 @@ type Message struct {
 	// Owner: set by the broker, never by a client, on messages of a connection that proved it
 	// holds the owner key; stored with the message.
 	Owner bool `json:"owner,omitempty"`
+	// Quarantined: set by the broker on output when the message comes from a node in quarantine (taken
+	// before it was put there).
+	Quarantined bool `json:"quarantined,omitempty"`
 }
 
 // BoardArgs is the one request of the task board; Op says what to do. Pointer fields are
@@ -404,8 +407,9 @@ type MemberInfo struct {
 	Role          string `json:"role,omitempty"`
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
-	Unsigned      bool   `json:"unsigned,omitempty"` // present without a signing key (older client)
-	Owner         bool   `json:"owner,omitempty"`    // an owner-verified connection
+	Unsigned      bool   `json:"unsigned,omitempty"`    // present without a signing key (older client)
+	Owner         bool   `json:"owner,omitempty"`       // an owner-verified connection
+	Quarantined   bool   `json:"quarantined,omitempty"` // a member of a node in quarantine
 	RolePinned    bool   `json:"role_pinned,omitempty"`
 	// Status of a present member (not stored; see StatusArgs). Activity is "busy", "free" or ""
 	// when the member's client does not report it.

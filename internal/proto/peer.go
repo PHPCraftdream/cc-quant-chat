@@ -27,25 +27,28 @@ type PeerShare struct {
 
 // PeerInfo is one node in the reply to peer_list.
 type PeerInfo struct {
-	Origin    string   `json:"origin"`
-	Addr      string   `json:"addr,omitempty"`
-	Trust     string   `json:"trust"`
-	State     string   `json:"state,omitempty"`    // active | pending
-	Accepted  int      `json:"accepted,omitempty"` // events taken from it since the broker started
-	Refused   int      `json:"refused,omitempty"`  // events not taken, by its level
-	Reasons   string   `json:"reasons,omitempty"`  // why, as text
-	Chats     []string `json:"chats,omitempty"`    // ids of the chats shared with it
-	Connected bool     `json:"connected"`
-	Flagged   string   `json:"flagged,omitempty"`   // why it is no longer listened to
-	Until     string   `json:"until,omitempty"`     // pending: when it is dropped unless confirmed (RFC 3339)
-	Confirmed bool     `json:"confirmed,omitempty"` // pending: this node's owner has confirmed
-	Sources   int      `json:"sources,omitempty"`   // sources (not neighbors here) that it has brought
+	Origin     string   `json:"origin"`
+	Addr       string   `json:"addr,omitempty"`
+	Trust      string   `json:"trust"`
+	State      string   `json:"state,omitempty"`    // active | pending
+	Accepted   int      `json:"accepted,omitempty"` // events taken from it since the broker started
+	Refused    int      `json:"refused,omitempty"`  // events not taken, by its level
+	Reasons    string   `json:"reasons,omitempty"`  // why, as text
+	Chats      []string `json:"chats,omitempty"`    // ids of the chats shared with it
+	Connected  bool     `json:"connected"`
+	Flagged    string   `json:"flagged,omitempty"`    // why it is no longer listened to
+	Until      string   `json:"until,omitempty"`      // pending: when it is dropped unless confirmed (RFC 3339)
+	Confirmed  bool     `json:"confirmed,omitempty"`  // pending: this node's owner has confirmed
+	Sources    int      `json:"sources,omitempty"`    // sources (not neighbors here) that it has brought
+	Quarantine string   `json:"quarantine,omitempty"` // in quarantine: why, since when, by whom
+	Bytes      int64    `json:"bytes,omitempty"`      // taken from it today
 }
 
 type PeerList struct {
-	Node   string     `json:"node"`
-	Listen string     `json:"listen,omitempty"` // where this broker accepts nodes, if it does
-	Peers  []PeerInfo `json:"peers"`
+	Node        string     `json:"node"`
+	Listen      string     `json:"listen,omitempty"` // where this broker accepts nodes, if it does
+	Peers       []PeerInfo `json:"peers"`
+	Quarantined []string   `json:"quarantined,omitempty"` // every source in quarantine, neighbors or not: origin, why, since, by
 }
 
 // Inviting a node (peer_invite, peer_invite_revoke, peer_join, peer_code, peer_confirm).
@@ -75,4 +78,10 @@ type PeerJoin struct {
 type PeerCode struct {
 	Origin string `json:"origin"`
 	Code   string `json:"code,omitempty"`
+}
+
+// PeerQuarantine: put a node (source) in quarantine with a reason, or release it.
+type PeerQuarantine struct {
+	Origin string `json:"origin"`
+	Reason string `json:"reason,omitempty"`
 }

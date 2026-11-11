@@ -108,6 +108,9 @@ func (b *Broker) loadSettings() error {
 // validate checks a value for a key and returns it normalized.
 func validateSetting(k configKey, value string) (string, *proto.Error) {
 	value = strings.TrimSpace(value)
+	if lk, ok := findPeerLimitKey(k.name); ok {
+		return validatePeerLimit(lk, value)
+	}
 	switch k.name {
 	case "broker.idle", "broker.grace":
 		d, err := time.ParseDuration(value)
@@ -164,7 +167,6 @@ func (b *Broker) setConfig(chatID, key, value string, at *store.AdminAttest) (st
 		}
 	}
 	b.setMu.Lock()
-	defer b.setMu.Unlock()
 	if b.settings == nil {
 		b.settings = map[string]map[string]string{}
 	}
@@ -172,6 +174,10 @@ func (b *Broker) setConfig(chatID, key, value string, at *store.AdminAttest) (st
 		b.settings[scope] = map[string]string{}
 	}
 	b.settings[scope][key] = v
+	b.setMu.Unlock()
+	if _, ok := findPeerLimitKey(key); ok {
+		b.applyPeerLimits()
+	}
 	return v, nil
 }
 
@@ -196,6 +202,10 @@ func (b *Broker) configList(chatID string) proto.ConfigList {
 			it.Default, it.Value, it.Source = "", v, b.source(scope, k.name, false)
 		case "board.manager_role":
 			it.Default, it.Value, it.Source = "", b.managerRole(scope), b.source(scope, k.name, false)
+		default:
+			if lk, ok := findPeerLimitKey(k.name); ok {
+				it.Default, it.Value, it.Source = strconv.FormatInt(lk.def, 10), strconv.FormatInt(b.peerLimitValue(lk), 10), b.source(scope, k.name, false)
+			}
 		}
 		out.Items = append(out.Items, it)
 	}

@@ -63,7 +63,9 @@ func TestASourceThatIsANeighborHereAtLevelReadIsNotTakenThroughATrustedNode(t *t
 func TestATrustedNodeBringsAtMostALimitOfSourcesAndTheOwnerIsToldOnceAndTheRefusedAreNotAskedForAgain(t *testing.T) {
 	a, b := newTnode(t, "alice"), newTnode(t, "bob")
 	srcs := []*tnode{newTnode(t, "carol"), newTnode(t, "dave"), newTnode(t, "erin")}
-	a.m.maxSources = 2
+	l := DefaultLimits
+	l.Sources = 2
+	a.m.SetLimits(l)
 	var alerts atomic.Int32
 	a.m.OnAlert = func(origin, text string) {
 		if origin != b.origin || !strings.Contains(text, "more than 2 sources") {

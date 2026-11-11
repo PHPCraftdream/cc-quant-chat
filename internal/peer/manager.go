@@ -39,8 +39,10 @@ type Manager struct {
 	// offered. Both run on the goroutine that found out and must not wait for a session.
 	OnPair func(PairEvent)
 	// OnAlert: something about a node the owner should hear (once per node and reason, until a restart).
-	OnAlert  func(origin, text string)
-	OnActive func(origin string)
+	OnAlert func(origin, text string)
+	// OnQuarantine: a source was put in quarantine, or (released) taken out of it.
+	OnQuarantine func(info store.QuarantineInfo, released bool)
+	OnActive     func(origin string)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -54,7 +56,10 @@ type Manager struct {
 	stats   map[string]*PeerStats
 	alerted map[string]bool
 
-	maxSources int // sources that are not neighbors one trusted neighbor may bring
+	limMu sync.Mutex
+	lim   Limits
+	sl    sourceLimits
+	q     quarantined
 
 	mu       sync.Mutex
 	ln       net.Listener
@@ -69,51 +74,13 @@ func New(st store.Federation, origin string, priv ed25519.PrivateKey, logf func(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{st: st, origin: origin, priv: priv, logf: logf, ctx: ctx, cancel: cancel,
-		wake: make(chan string, 256), stats: map[string]*PeerStats{}, alerted: map[string]bool{}, maxSources: maxSourcesVia, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
+		wake: make(chan string, 256), stats: map[string]*PeerStats{}, alerted: map[string]bool{}, lim: DefaultLimits, sl: sourceLimits{src: map[string]*srcState{}}, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
 	m.wg.Add(1)
+	m.loadQuarantine()
 	go m.pump()
 	m.wg.Add(1)
 	go m.janitor()
 	return m
-}
-
-// PeerStats counts, since this broker started, what was taken from a node and what was not.
-type PeerStats struct {
-	Accepted int
-	Refused  map[string]int // by reason
-}
-
-func (m *Manager) noteAccepted(origin string) {
-	m.statsMu.Lock()
-	defer m.statsMu.Unlock()
-	m.statsOf(origin).Accepted++
-}
-
-func (m *Manager) noteRefused(origin, why string) {
-	m.statsMu.Lock()
-	defer m.statsMu.Unlock()
-	m.statsOf(origin).Refused[why]++
-}
-
-func (m *Manager) statsOf(origin string) *PeerStats {
-	st := m.stats[origin]
-	if st == nil {
-		st = &PeerStats{Refused: map[string]int{}}
-		m.stats[origin] = st
-	}
-	return st
-}
-
-// Stats returns a copy of the counters of a node.
-func (m *Manager) Stats(origin string) PeerStats {
-	m.statsMu.Lock()
-	defer m.statsMu.Unlock()
-	st := m.statsOf(origin)
-	out := PeerStats{Accepted: st.Accepted, Refused: map[string]int{}}
-	for k, v := range st.Refused {
-		out.Refused[k] = v
-	}
-	return out
 }
 
 // Notify says that a chat has new events (written here or taken from a peer): every session that
@@ -197,6 +164,9 @@ func (m *Manager) Listen(addr string) (net.Addr, error) {
 
 // notFlagged: a node that was caught writing two events with one (origin, seq) is not talked to at all.
 func (m *Manager) notFlagged(origin string) error {
+	if q, ok := m.InQuarantine(origin); ok {
+		return fmt.Errorf("node %s is in quarantine (%s)", origin, q.Reason)
+	}
 	if reason, flagged, err := m.st.Flagged(origin); err != nil {
 		return err
 	} else if flagged {
@@ -239,19 +209,19 @@ func (m *Manager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for origin, cancel := range m.dialers {
-		if p, ok := want[origin]; !ok || !dialable(p) {
+		if p, ok := want[origin]; !ok || !dialable(p) || m.quarantinedNode(origin) {
 			cancel()
 			delete(m.dialers, origin)
 		}
 	}
 	for origin, s := range m.sessions {
 		p, ok := want[origin]
-		if !ok || (p.State == store.StateActive && !sameSet(p.Chats, s.sharedByUs())) || p.Trust != s.level || p.State != s.state {
+		if !ok || (p.State == store.StateActive && !sameSet(p.Chats, s.sharedByUs())) || p.Trust != s.level || p.State != s.state || m.quarantinedNode(origin) {
 			s.close()
 		}
 	}
 	for _, p := range peers {
-		if !dialable(p) || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
+		if !dialable(p) || m.quarantinedNode(p.Origin) || m.dialers[p.Origin] != nil || m.ctx.Err() != nil {
 			continue
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
@@ -466,6 +436,7 @@ func (m *Manager) Close() {
 		s.close()
 	}
 	m.wg.Wait()
+	m.flushLimits()
 }
 
 var errClosed = errors.New("the session is closed")
@@ -487,6 +458,7 @@ func (m *Manager) janitor() {
 			return
 		case <-t.C:
 			m.expire()
+			m.flushLimits()
 		}
 	}
 }

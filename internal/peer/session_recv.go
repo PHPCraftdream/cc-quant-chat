@@ -32,6 +32,7 @@ func (s *session) receive(f Frame) error {
 	blocked := map[string]bool{}
 	refusedOwn, keptOwn := false, false
 	neigh := s.neighbors()
+	clock, _ := s.m.st.MaxLamport(chat) // the highest clock value held here: what a source's clock is measured against
 	for _, e := range f.Events {
 		s.mu.Lock()
 		if s.remote[chat] == nil {
@@ -47,12 +48,24 @@ func (s *session) receive(f Frame) error {
 			s.m.noteRefused(s.peer, why)
 			continue
 		}
+		now := time.Now()
+		if why, q := s.m.overLimit(e, clock, now); why != "" { // over a limit: refused, the session goes on
+			blocked[e.Origin] = true
+			s.m.noteRefused(s.peer, "over a limit")
+			s.refuse(chat, e, errors.New(why))
+			if q != "" {
+				s.m.autoQuarantine(e.Origin, s.peer, q)
+			}
+			continue
+		}
 		err := s.m.accept(chat, e, f.Pubs)
 		var fork *store.ForkError
 		switch {
 		case err == nil:
 			accepted = append(accepted, e)
 			s.m.noteAccepted(s.peer)
+			s.m.took(e, clock, now)
+			clock = max(clock, e.Lamport)
 			s.forgive(chat, e)
 			keptOwn = keptOwn || e.Origin == s.peer
 		case errors.Is(err, store.ErrDuplicate):
