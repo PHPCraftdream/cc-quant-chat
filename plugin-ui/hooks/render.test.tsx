@@ -29,24 +29,38 @@ const tool = (name: string, input: unknown, extra: Record<string, unknown> = {})
   }) as const
 
 test('a batch draws as a card; a click opens a message, another closes it', async $ => {
+  const seen: string[] = []
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...row(batch), surface })
+    const text = async (re: RegExp) => (await ui.find({ type: 'Text', text: re }))?.text ?? 'MISSING'
 
-    expect((await ui.find({ type: 'Text', text: /ccqc ← 4/ }))?.text).toContain('ccqc ← 4')
-    expect((await ui.find({ type: 'Text', text: /hello all/ }))?.text).toContain('hello all')
+    seen.push(`${surface} title ${await text(/ccqc ← 4/)}`)
+    seen.push(`${surface} first ${await text(/hello all/)}`)
     // Collapsed: the first line of a longer text and what is left out.
-    expect((await ui.find({ type: 'Text', text: /\(\+1 line\)/ }))?.text).toBe('multi  (+1 line)')
+    seen.push(`${surface} collapsed ${await text(/\(\+1 line\)/)}`)
 
     await ui.press({ key: 'in:h:team/api#6.1' })
-    expect((await ui.find({ type: 'Text', text: /^multi\nline$/ }))?.text).toBe('multi\nline')
+    seen.push(`${surface} opened ${JSON.stringify(await text(/^multi\nline$/))}`)
 
     await ui.press({ key: 'in:h:team/api#6.1' })
-    expect((await ui.find({ type: 'Text', text: /\(\+1 line\)/ }))?.text).toBe('multi  (+1 line)')
+    seen.push(`${surface} closed ${await text(/\(\+1 line\)/)}`)
 
     await ui.press({ key: 'in:all' }) // expand all
-    expect((await ui.find({ type: 'Text', text: /^multi\nline$/ }))?.text).toBe('multi\nline')
+    seen.push(`${surface} all ${JSON.stringify(await text(/^multi\nline$/))}`)
     await ui.unmount()
   }
+  const want: string[] = []
+  for (const surface of SURFACES) {
+    want.push(
+      `${surface} title ccqc ← 4`,
+      `${surface} first hello all`,
+      `${surface} collapsed multi  (+1 line)`,
+      `${surface} opened "multi\\nline"`,
+      `${surface} closed multi  (+1 line)`,
+      `${surface} all "multi\\nline"`,
+    )
+  }
+  expect(seen.join('\n')).toBe(want.join('\n'))
 })
 
 test('what the engine draws for other rows, and for ctrl+o, stays', async ($, on) => {
