@@ -32,7 +32,9 @@ test('a batch draws as a card; a click opens a message, another closes it', asyn
   const seen: string[] = []
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...row(batch), surface })
-    const text = async (re: RegExp) => (await ui.find({ type: 'Text', text: re }))?.text ?? 'MISSING'
+    const text = async (re: RegExp) =>
+      (await ui.find({ type: 'Text', text: re }))?.text ??
+      'MISSING of ' + JSON.stringify((await ui.findAll({ type: 'Text' })).map(t => t.text))
 
     seen.push(`${surface} title ${await text(/ccqc ← 4/)}`)
     seen.push(`${surface} first ${await text(/hello all/)}`)
