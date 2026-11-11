@@ -326,6 +326,37 @@ type BoardArgs struct {
 	Workflow       json.RawMessage `json:"workflow,omitempty"`
 }
 
+// DocArgs is the one request of the document tree; Op says what to do:
+// tree outline get put append move delete search history revert. Pointer fields are "absent".
+type DocArgs struct {
+	Op      string  `json:"op"`
+	Path    string  `json:"path,omitempty"`
+	To      string  `json:"to,omitempty"`     // move
+	Prefix  string  `json:"prefix,omitempty"` // tree, search
+	Depth   int     `json:"depth,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Body    string  `json:"body,omitempty"`
+	Text    string  `json:"text,omitempty"` // append
+	Base    *int64  `json:"base,omitempty"` // the version the writer read
+	Note    string  `json:"note,omitempty"`
+	Section string  `json:"section,omitempty"`
+	Version int64   `json:"version,omitempty"` // get, revert
+	Query   string  `json:"query,omitempty"`
+	Limit   int     `json:"limit,omitempty"`
+	Before  int64   `json:"before,omitempty"`
+	All     bool    `json:"all,omitempty"`  // tree: also return every page path
+	Full    bool    `json:"full,omitempty"` // get: the whole page whatever its size (people, not models)
+}
+
+// DocReply: Text is for people and models; Body is a page alone (get); Paths every live page of a
+// tree request with all=true.
+type DocReply struct {
+	Text    string   `json:"text"`
+	Body    string   `json:"body,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+	Version int64    `json:"version,omitempty"`
+}
+
 // BoardReply: the board's answer is text, short by design.
 type BoardReply struct {
 	Text string `json:"text"`

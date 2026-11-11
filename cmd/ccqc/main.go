@@ -35,6 +35,12 @@ Administrator operations (signed with the owner key; the owner password is typed
                             settings applied without a restart: broker.idle, broker.grace,
                             limits.messages_per_minute, board.manager_role (per chat)
 
+Documents (the chat's shared page tree, as an ordinary member; token from your sessions' config):
+  ccqc doc tree <chat> [prefix]         paths, titles and sizes
+  ccqc doc get <chat> <path>            the page to stdout
+  ccqc doc put <chat> <path> <file|->   create or replace a page
+  ccqc doc export <chat> <dir>          the whole tree as .md files
+
 Nicks:
   ccqc nick reset - <nick>  free an offline nick whose key was lost on this machine (the token is
                             read from stdin; avoid putting it in the arguments); the next join binds
@@ -91,6 +97,8 @@ func main() {
 		err = runOwner(os.Args[2:])
 	case "role":
 		err = runRole(os.Args[2:])
+	case "doc":
+		err = runDoc(os.Args[2:])
 	case "config":
 		err = runConfig(os.Args[2:])
 	case "token":

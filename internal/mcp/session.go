@@ -174,6 +174,8 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 		return s.statusSet(a.Chat, a.Text)
 	case "task", "sprint", "board":
 		return s.boardTool(name, raw)
+	case "doc":
+		return s.docTool(raw)
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }

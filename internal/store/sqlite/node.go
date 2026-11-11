@@ -16,7 +16,7 @@ func (d *DB) RegisterOrigin(origin string, pub []byte) error {
 			origin, pub, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
-		for _, table := range []string{"messages", "board_log", "board_comments"} {
+		for _, table := range []string{"messages", "board_log", "board_comments", "doc_versions"} {
 			if _, err := tx.Exec(`UPDATE `+table+` SET origin = ? WHERE origin = ''`, origin); err != nil {
 				return err
 			}
