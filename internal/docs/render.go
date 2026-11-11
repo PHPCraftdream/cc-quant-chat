@@ -116,6 +116,13 @@ func Get(tx store.DocsTx, path, sect string, version int64, full bool) (string, 
 			return "", "", 0, proto.Errf("no_such_page", "there is no page %s", path)
 		}
 		title, body, who, ts, v = d.Title, d.Body, d.Author, d.TS, d.Version
+		if heads, err := tx.Heads(path); err == nil && len(heads) > 1 {
+			var vs []string
+			for _, h := range heads {
+				vs = append(vs, fmt.Sprintf("v%d", h))
+			}
+			title += fmt.Sprintf(" (CONFLICT: %s were written over the same version; the later is shown; read the others with version=N and write the page again to settle it)", strings.Join(vs, ", "))
+		}
 	}
 	head := fmt.Sprintf("%s  %s  (v%d by @%s %s, %s)\n", path, title, v, who, shortTS(ts), fmtSize(len(body)))
 	if sect != "" {

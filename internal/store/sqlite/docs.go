@@ -186,6 +186,23 @@ func (t *docsTx) AllVersions() ([]store.DocVersion, error) {
 	return out, rows.Err()
 }
 
+func (t *docsTx) Heads(path string) ([]int64, error) {
+	rows, err := t.tx.Query(`SELECT version FROM doc_heads WHERE path = ? ORDER BY version`, path)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func (t *docsTx) NextLamport() (int64, error) {
 	if _, err := t.tx.Exec(`UPDATE chat SET lamport = lamport + 1 WHERE id = 1`); err != nil {
 		return 0, err

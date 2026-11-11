@@ -569,10 +569,12 @@ shared is not transferred, and a node that was not added cannot connect.
   once end with one value (the later write by the chat's clock stands; ties go to the larger origin),
   and fields written by one node alone are kept. The chat may end with two active sprints, one
   from each node: the merge does not refuse what the history holds.
+- The documents of the other node are merged in. A version names the version it was written over;
+  two writes over one version are a **conflict**: both versions are kept (read them with
+  `version=N`), the page shows the later one and `doc get` says `CONFLICT`; the next write to the
+  page settles it on every node.
 - **Not supported yet:** direct messages between members of different nodes (they are refused:
-  "the member is on another node; direct messages between nodes are not supported yet"), and
-  applying the documents of the other node (the journals carry them; the projections follow in the
-  next step).
+  "the member is on another node; direct messages between nodes are not supported yet").
 - `ccqc peer` needs the SQLite store (not `CCQC_STORE=memory`).
 
 ## Cards in the transcript (`quant-ui`)

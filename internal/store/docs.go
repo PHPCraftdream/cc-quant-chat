@@ -62,6 +62,10 @@ type DocsTx interface {
 	// NextLamport advances and returns the chat's logical clock.
 	NextLamport() (int64, error)
 
+	// Heads: the versions of a page that nothing has been written over, oldest first. More than one
+	// means two nodes wrote over the same version: a conflict that the next write resolves.
+	Heads(path string) ([]int64, error)
+
 	// RecordEvent adds the event of this change to the chat's journal (nothing if the
 	// transaction wrote nothing). An error rolls the transaction back, rows and all.
 	RecordEvent(in EventIn) error

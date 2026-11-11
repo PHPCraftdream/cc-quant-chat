@@ -11,6 +11,9 @@
 -- as T-abcd-<num>).
 -- board_stamps: the (lamport, origin) of the event that last set a field of a task, a sprint, a
 -- comment or the workflow: of two concurrent writes of one field the larger stamp wins on every node.
+-- doc_vrefs: the global name of a page version, (origin, seq) of the event that made it. doc_heads: the
+-- versions of a page that nothing has been written over; more than one is a conflict (two writes
+-- over one version): both stay, the page shows the later, the next write resolves it.
 -- Two nodes may both start a sprint, so the index that allowed one active sprint is dropped: a
 -- merge does not reject what the history already holds.
 ALTER TABLE events ADD COLUMN remote INTEGER NOT NULL DEFAULT 0;
@@ -39,3 +42,19 @@ CREATE TABLE board_stamps (
 ) WITHOUT ROWID;
 
 DROP INDEX board_one_active_sprint;
+
+CREATE TABLE doc_vrefs (
+    path    TEXT    NOT NULL,
+    version INTEGER NOT NULL,
+    origin  TEXT    NOT NULL,
+    seq     INTEGER NOT NULL,
+    PRIMARY KEY (path, version)
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX doc_vrefs_by_event ON doc_vrefs (path, origin, seq);
+
+CREATE TABLE doc_heads (
+    path    TEXT    NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY (path, version)
+) WITHOUT ROWID;

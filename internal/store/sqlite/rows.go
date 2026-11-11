@@ -116,6 +116,13 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 	if len(refs) > 0 {
 		am["refs"] = refs // the global names of what the rows mention, for the nodes that number it otherwise
 	}
+	dp, err := docParents(r.tx, imgs)
+	if err != nil {
+		return err
+	}
+	if len(dp) > 0 {
+		am["dparents"] = dp // the versions a page's new version is written over
+	}
 	assigned, err := jsonText(am)
 	if err != nil {
 		return err
@@ -129,7 +136,10 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 	if err != nil {
 		return err
 	}
-	return noteBoard(r.tx, e, imgs)
+	if err := noteBoard(r.tx, e, imgs); err != nil {
+		return err
+	}
+	return noteDocs(r.tx, e, imgs, dp)
 }
 
 // applyImages writes the row images of an event. The unique index of sprints (one active sprint)
@@ -139,7 +149,8 @@ func applyImages(tx *sql.Tx, e events.Event) error {
 		return nil
 	}
 	var a struct {
-		Rows []image `json:"rows"`
+		Rows     []image               `json:"rows"`
+		DParents map[string][]eventRef `json:"dparents"`
 	}
 	dec := json.NewDecoder(bytes.NewReader([]byte(e.Assigned)))
 	dec.UseNumber()
@@ -161,7 +172,10 @@ func applyImages(tx *sql.Tx, e events.Event) error {
 			return err
 		}
 	}
-	return noteBoard(tx, e, a.Rows)
+	if err := noteBoard(tx, e, a.Rows); err != nil {
+		return err
+	}
+	return noteDocs(tx, e, a.Rows, a.DParents)
 }
 
 func writeImage(tx *sql.Tx, img image) error {

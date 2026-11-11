@@ -62,9 +62,10 @@ func applyRemote(tx *sql.Tx, e events.Event, self string) ([]store.Record, error
 		return remoteRoom(tx, e, self)
 	case isBoardKind(e.Kind):
 		return nil, remoteBoard(tx, e, self)
+	case isDocKind(e.Kind):
+		return nil, remoteDoc(tx, e, self)
 	}
-	// Pinned roles, settings and snapshots are a node's own business; documents are applied by
-	// their own rules.
+	// Pinned roles, settings and snapshots are a node's own business.
 	return nil, nil
 }
 
@@ -290,6 +291,9 @@ func derivedRefs(tx *sql.Tx) error {
 		return err
 	}
 	if err := deriveBoardRefs(tx); err != nil {
+		return err
+	}
+	if err := deriveDocRefs(tx); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE rooms SET
