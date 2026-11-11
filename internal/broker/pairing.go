@@ -252,3 +252,14 @@ func (b *Broker) onActive(origin string) {
 		}
 	}
 }
+
+// onAlert says loudly what the exchange layer found about a node that the owner should hear: to the
+// log, the admin log and the chats shared with it.
+func (b *Broker) onAlert(origin, text string) {
+	log.Printf("broker: %s", text)
+	args, _ := json.Marshal(map[string]string{"origin": origin})
+	b.logAdmin("peer.alert", args, text)
+	if fed, ok := b.store.(store.Federation); ok {
+		b.announcePeerChats(fed, origin, text)
+	}
+}

@@ -39,6 +39,7 @@ type PeerInfo struct {
 	Flagged   string   `json:"flagged,omitempty"`   // why it is no longer listened to
 	Until     string   `json:"until,omitempty"`     // pending: when it is dropped unless confirmed (RFC 3339)
 	Confirmed bool     `json:"confirmed,omitempty"` // pending: this node's owner has confirmed
+	Sources   int      `json:"sources,omitempty"`   // sources (not neighbors here) that it has brought
 }
 
 type PeerList struct {

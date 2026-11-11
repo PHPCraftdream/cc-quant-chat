@@ -28,7 +28,7 @@ func (b *Broker) startPeers(priv ed25519.PrivateKey) error {
 	}
 	m := peer.New(fed, b.origin, priv, log.Printf)
 	m.Accept = b.acceptRemote
-	m.OnPair, m.OnActive = b.onPair, b.onActive
+	m.OnPair, m.OnActive, m.OnAlert = b.onPair, b.onActive, b.onAlert
 	fed.OnEvents(m.Notify)
 	b.peerMgr = m
 	if addr, _ := b.setting("", "peer.listen"); addr != "" {
@@ -172,6 +172,11 @@ func (b *Broker) peerList() (any, *proto.Error) {
 		}
 		st := b.peerMgr.Stats(p.Origin)
 		info.Accepted = st.Accepted
+		if src, ok := b.store.(store.Sources); ok {
+			if via, err := src.SourcesVia(p.Origin); err == nil {
+				info.Sources = len(via)
+			}
+		}
 		var why []string
 		for r, n := range st.Refused {
 			info.Refused += n

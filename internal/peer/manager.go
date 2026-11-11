@@ -37,7 +37,9 @@ type Manager struct {
 	// OnPair is told of what happens to the nodes that are being paired (invitations, codes); OnActive
 	// when a pending node becomes active, before its sessions start: the broker makes the chats it
 	// offered. Both run on the goroutine that found out and must not wait for a session.
-	OnPair   func(PairEvent)
+	OnPair func(PairEvent)
+	// OnAlert: something about a node the owner should hear (once per node and reason, until a restart).
+	OnAlert  func(origin, text string)
 	OnActive func(origin string)
 
 	ctx    context.Context
@@ -50,6 +52,9 @@ type Manager struct {
 
 	statsMu sync.Mutex
 	stats   map[string]*PeerStats
+	alerted map[string]bool
+
+	maxSources int // sources that are not neighbors one trusted neighbor may bring
 
 	mu       sync.Mutex
 	ln       net.Listener
@@ -64,7 +69,7 @@ func New(st store.Federation, origin string, priv ed25519.PrivateKey, logf func(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{st: st, origin: origin, priv: priv, logf: logf, ctx: ctx, cancel: cancel,
-		wake: make(chan string, 256), stats: map[string]*PeerStats{}, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
+		wake: make(chan string, 256), stats: map[string]*PeerStats{}, alerted: map[string]bool{}, maxSources: maxSourcesVia, sessions: map[string]*session{}, dialers: map[string]context.CancelFunc{}}
 	m.wg.Add(1)
 	go m.pump()
 	m.wg.Add(1)

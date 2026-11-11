@@ -44,7 +44,7 @@ func (d *DB) RemovePeer(origin string) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	for _, q := range []string{`DELETE FROM peer_chats WHERE origin = ?`, `DELETE FROM peers WHERE origin = ?`} {
+	for _, q := range []string{`DELETE FROM peer_chats WHERE origin = ?`, `DELETE FROM origin_sources WHERE via = ?`, `DELETE FROM peers WHERE origin = ?`} {
 		if _, err := tx.Exec(q, origin); err != nil {
 			return err
 		}

@@ -48,6 +48,8 @@ type session struct {
 	remote map[string]map[string]int64      // chat -> origin -> highest seq the peer is known to hold
 	rej    map[string]map[string]*rejection // chat -> origin -> the event that is refused for now
 	waits  map[string]int                   // chat/origin/seq -> times the event was put off for what it names
+	held   map[string]bool                  // origins whose events are not taken through this peer: its vector says it holds them
+	srcOK  map[string]bool                  // sources already counted against this peer
 	strike int                              // frames in a row in which an event of the peer itself was refused
 	once   sync.Once
 	done   chan struct{}
@@ -103,7 +105,7 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		return err
 	}
 	s := &session{m: m, conn: conn, peer: peer, initiator: initiator, enc: json.NewEncoder(conn),
-		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, waits: map[string]int{}, done: make(chan struct{})}
+		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, waits: map[string]int{}, held: map[string]bool{}, srcOK: map[string]bool{}, done: make(chan struct{})}
 	var chats []string
 	confirmed := false
 	s.level, s.state = store.TrustTrusted, store.StateActive
@@ -206,21 +208,6 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		return err
 	}
 	return errors.New("the connection ended")
-}
-
-// admit says why an event is not taken from this peer at its level ("" if it is): none from a read
-// node, and from a member only those of its own source. (What a member may write is limited by what
-// applying does: settings, pinned roles, invitations and snapshots of a node are not applied.)
-func (s *session) admit(e events.Event) string {
-	switch s.level {
-	case store.TrustRead:
-		return "read"
-	case store.TrustMember:
-		if e.Origin != s.peer {
-			return "foreign source via a member"
-		}
-	}
-	return ""
 }
 
 func (s *session) keepalive() {

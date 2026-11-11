@@ -31,6 +31,7 @@ func (s *session) receive(f Frame) error {
 	var accepted []events.Event
 	blocked := map[string]bool{}
 	refusedOwn, keptOwn := false, false
+	neigh := s.neighbors()
 	for _, e := range f.Events {
 		s.mu.Lock()
 		if s.remote[chat] == nil {
@@ -41,7 +42,7 @@ func (s *session) receive(f Frame) error {
 		if blocked[e.Origin] {
 			continue
 		}
-		if why := s.admit(e); why != "" { // this node does not take it from this peer: not stored, not asked for again
+		if why := s.admit(e, neigh); why != "" { // this node does not take it from this peer: not stored, not asked for again
 			blocked[e.Origin] = true
 			s.m.noteRefused(s.peer, why)
 			continue
@@ -179,6 +180,7 @@ func (s *session) sendVector(chat string) error {
 	case store.TrustMember:
 		vec = map[string]int64{"*": math.MaxInt64, s.peer: vec[s.peer]}
 	}
+	s.holdVector(vec)
 	now := time.Now()
 	s.mu.Lock()
 	for origin, r := range s.rej[chat] {
