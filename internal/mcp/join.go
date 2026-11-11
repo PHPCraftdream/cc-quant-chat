@@ -97,6 +97,7 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 			cc.onEvent(ev)
 		}
 		go cc.run(conn)
+		go cc.pushStatus(cc.fullStatus())
 		return "", nil
 	}
 	if n := len(w.Backlog); n > 0 && w.Backlog[n-1].Msg != nil { // shown in the result below
@@ -104,6 +105,7 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 		defer ackRef{cc, w.Backlog[n-1].Msg.ID}.confirm()
 	}
 	go cc.run(conn)
+	go cc.pushStatus(cc.fullStatus())
 
 	var b strings.Builder
 	b.WriteString(keyNote)

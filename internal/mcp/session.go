@@ -26,6 +26,7 @@ type Session struct {
 	seq    int64
 	read   int64
 	quiet  []string   // presence lines held until the next message
+	busy   bool       // a turn is running (UserPromptSubmit hook .. rewake hook of the Stop)
 	sid    string     // Claude Code session id, learned from the hooks
 	auto   *autoState // auto-join of the current sid
 
@@ -169,6 +170,8 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 		return s.roleClaim(a.Chat, a.Role, a.Exclusive)
 	case "role_release":
 		return s.roleRelease(a.Chat)
+	case "status_set":
+		return s.statusSet(a.Chat, a.Text)
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }

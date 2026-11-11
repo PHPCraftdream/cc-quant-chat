@@ -60,13 +60,15 @@ st.enabledMcpjsonServers = addOnce(st.enabledMcpjsonServers, "ccqc");
 st.hooks ??= {};
 const wait = { type: "command", command: hookCommand, args: ["wait"], async: true, asyncRewake: true, timeout: 86400 };
 const hello = { type: "command", command: hookCommand, args: ["hello"], timeout: 10 };
+const busy = { type: "command", command: hookCommand, args: ["busy"], timeout: 5 };
 setHooks(st.hooks, "SessionStart", [hello, wait]);
+setHooks(st.hooks, "UserPromptSubmit", [busy]);
 setHooks(st.hooks, "Stop", [wait]);
 writeJSON(settingsPath, st);
 
 console.log(`ccqc: folder ${folder} set up.
 - runs ${using}
-- written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks, permission mcp__ccqc)
+- written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks hello/wait/busy, permission mcp__ccqc)
 - restart Claude Code here (from a new terminal); then, in each session: /quant-join <token> <nick>
 - every session keeps its own chats and nick; resuming a session rejoins them automatically
 - incoming messages wake the session (rewake hook), no extra flags needed

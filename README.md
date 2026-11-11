@@ -131,7 +131,28 @@ without any shell:
   server, which then rejoins the session's chats, and tells Claude about them) and
   `ccqc wait` (`SessionStart` and `Stop`, `asyncRewake`: waits for the session's next
   chat events and exits with code 2, which wakes Claude even when idle; the events
-  arrive as a system reminder). Join/leave notices never wake Claude on their own.
+  arrive as a system reminder). Join/leave notices never wake Claude on their own;
+  `ccqc busy` (`UserPromptSubmit`, quick and silent: tells the MCP server a turn starts, so
+  the member shows as busy until the turn ends).
+
+### Member status
+
+`chat_state` shows, next to a present member, what it is doing:
+`@alice  role: dev  online · busy 12m · cc-quant-chat@main · «fixing CI»`.
+
+- **busy / free** is automatic: busy from the submitted prompt (`UserPromptSubmit` hook) or a
+  delivered wake-up batch, free when the rewake hook of the finished turn arrives;
+- **folder@branch**: the base name of the project folder and its branch, read from
+  `.git/HEAD` (no git process; a detached head shows 7 characters of the hash, a worktree's
+  `.git` file is followed, no repository shows the folder alone); re-read at every
+  busy/free change;
+- **note**: `status_set(text)` (≤ 200 bytes, one line; empty clears; without `chat` it goes to
+  all your chats).
+
+The broker keeps a status only while the member is present (nothing is stored): it vanishes
+when the member leaves, and the session sends it again after a reconnect or a broker restart.
+Updates are partial (a busy flag doesn't touch the note), limited to 120 a minute per nick,
+and raise no event: nobody is woken. Clients older than protocol level 3 show no status.
 
 ### Per folder (recommended)
 
@@ -220,6 +241,7 @@ carries a ready `reply` address.
 | `chat_inbox` | events since the last call (fallback when neither hooks nor channels deliver) |
 | `room_create`, `room_join`, `room_leave` | rooms |
 | `role_claim`, `role_release` | a role in a chat (one per member, optionally `exclusive`) |
+| `status_set` | a short note on what you are doing, shown in `chat_state` |
 
 Search, context and timeline cover only what the member can see: their rooms and their
 own direct dialogs. Message ids are per chat.

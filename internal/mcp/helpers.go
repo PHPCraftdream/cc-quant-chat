@@ -103,6 +103,22 @@ func RunHello() {
 	}
 }
 
+// RunBusy is the UserPromptSubmit hook: tells the session's MCP server that a turn starts, so the
+// member shows as busy. Fast and silent: with no MCP server to tell it does nothing.
+func RunBusy() {
+	in := readHookInput()
+	if in.SessionID == "" {
+		return
+	}
+	c, err := dialSession(2 * time.Second)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+	_, _ = fmt.Fprintf(c, "busy %s\n", in.SessionID)
+}
+
 // RunWait is the asyncRewake hook: blocks until this session's next chat events,
 // prints them to stderr and returns 2 (wake Claude). Returns 0 when there is
 // nothing to deliver (another waiter is active, no MCP server, max wait reached).

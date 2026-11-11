@@ -80,6 +80,7 @@ type member struct {
 	offline time.Time
 	acks    bool // the client confirms delivery with "ack" (proto 2+)
 	proto   int  // protocol level the client announced in join
+	status  memberStatus
 }
 
 type role struct {

@@ -39,6 +39,7 @@ Database (SQLite, WAL; CCQC_DB, default <user config dir>/ccqc/ccqc.db):
 Used by Claude Code (configured by /quant-setup or the plugin):
   ccqc mcp                  MCP stdio server: the chat tools
   ccqc hello                SessionStart hook: hands the session id over, tells Claude its chats
+  ccqc busy                 UserPromptSubmit hook: marks the member busy while a turn runs
   ccqc wait                 asyncRewake hook: waits for the session's next chat events
   ccqc session              troubleshooting: process chain and session key of the hooks
 
@@ -62,6 +63,8 @@ func main() {
 		os.Exit(mcp.RunWait())
 	case "hello":
 		mcp.RunHello()
+	case "busy":
+		mcp.RunBusy()
 	case "session":
 		err = printSession()
 	case "db":

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -182,7 +183,7 @@ func TestOldClientsAreToldToRestart(t *testing.T) {
 	b.mu.Lock()
 	info := b.info()
 	b.mu.Unlock()
-	if info.ByProto["0"] != 1 || info.ByProto["2"] != 1 {
+	if info.ByProto["0"] != 1 || info.ByProto[strconv.Itoa(proto.ProtoVersion)] != 1 {
 		t.Fatalf("by proto = %v", info.ByProto)
 	}
 }

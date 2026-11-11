@@ -97,7 +97,7 @@ type JoinArgs struct {
 }
 
 // ProtoVersion is the protocol level this build speaks.
-const ProtoVersion = 2
+const ProtoVersion = 3
 
 // NickResetArgs: free a registered nick whose key is lost, so the next join binds a new key.
 type NickResetArgs struct {
@@ -199,6 +199,29 @@ type MemberInfo struct {
 	Role          string `json:"role,omitempty"`
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
+	// Status of a present member (not stored; see StatusArgs). Activity is "busy", "free" or ""
+	// when the member's client does not report it.
+	Activity  string `json:"activity,omitempty"`
+	BusySince string `json:"busy_since,omitempty"` // RFC 3339, while busy
+	Folder    string `json:"folder,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	Note      string `json:"note,omitempty"` // free text set by status_set
+}
+
+// Limits of a member's status.
+const (
+	MaxStatusText = 200
+	MaxFolder     = 64
+	MaxBranch     = 100
+)
+
+// StatusArgs: a partial update of the sender's status; absent fields are left as they are.
+// Text "" clears the note.
+type StatusArgs struct {
+	Text   *string `json:"text,omitempty"`
+	Busy   *bool   `json:"busy,omitempty"`
+	Folder *string `json:"folder,omitempty"`
+	Branch *string `json:"branch,omitempty"`
 }
 
 type RoomInfo struct {

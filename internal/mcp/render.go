@@ -3,6 +3,7 @@ package mcp
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
@@ -103,6 +104,8 @@ func renderState(local string, st *proto.State) string {
 		status := "online"
 		if !m.Online {
 			status = "offline"
+		} else if line := statusLine(m, time.Now()); line != "" {
+			status += " · " + line
 		}
 		you := ""
 		if m.Name == st.Me {

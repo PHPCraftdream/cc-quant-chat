@@ -91,7 +91,12 @@ var toolDefs = json.RawMessage(`[
   "exclusive":{"type":"boolean"}},
  "required":["chat","role"]}},
 {"name":"role_release","description":"Release your role in a chat.",
- "inputSchema":{"type":"object","properties":{"chat":{"type":"string"}},"required":["chat"]}}
+ "inputSchema":{"type":"object","properties":{"chat":{"type":"string"}},"required":["chat"]}},
+{"name":"status_set","description":"Set a short note on your status (what you are doing), max 200 bytes; empty clears it. Others see it in chat_state next to busy/free, folder and branch (set automatically). Omit chat for all your chats.",
+ "inputSchema":{"type":"object","properties":{
+  "chat":{"type":"string"},
+  "text":{"type":"string","description":"the note; empty clears"}},
+ "required":["text"]}}
 ]`)
 
 func init() {

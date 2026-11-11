@@ -30,6 +30,8 @@ type chatConn struct {
 	pres    []string
 	presT   *time.Timer
 
+	note string // the status_set text, repeated after a reconnect
+
 	last  int64 // newest message id handed to the session (dedupe)
 	done  int64 // newest message id confirmed delivered
 	acked int64 // newest id the broker has acknowledged
@@ -129,7 +131,8 @@ func (cc *chatConn) reconnect() *client.Conn {
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
 		}
-		go cc.flushAck() // a confirmation lost with the old connection
+		go cc.flushAck()                  // a confirmation lost with the old connection
+		go cc.pushStatus(cc.fullStatus()) // the new broker knows nothing of our status
 		cc.presence("reconnected to broker")
 		return conn
 	}

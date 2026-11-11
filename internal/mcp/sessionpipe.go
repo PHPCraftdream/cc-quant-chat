@@ -79,8 +79,14 @@ func (s *Session) handshake(c net.Conn) {
 		source = f[2]
 	}
 	switch cmd {
+	case "busy":
+		// UserPromptSubmit hook: a turn starts.
+		s.setSessionID(sid, "", false)
+		s.setBusy(true)
+		c.Close()
 	case "wait":
 		s.setSessionID(sid, "", false)
+		s.setBusy(false) // the turn is over (Stop) or the session just started: free, even if another waiter holds the line
 		s.addWaiter(c)
 	case "hello":
 		if sid == "" {
@@ -165,6 +171,7 @@ func (s *Session) flushWaiter() {
 	if len(batch) <= waitBatchMax {
 		confirmAll(batch)
 	}
+	s.setBusy(true) // the batch wakes Claude: a turn begins
 }
 
 func renderBatch(items []pendItem) string {
