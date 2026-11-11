@@ -8,6 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,5 +218,80 @@ func TestAForkFlagsTheNodeEndsItsSessionAndKeepsItOut(t *testing.T) {
 	third := r.event(chatX, 2, first.ID(), 2, "msg", msgPayload)
 	if err := v.m.accept(chatX, third, nil); err == nil {
 		t.Fatal("an event of a flagged node was accepted")
+	}
+}
+
+func TestARefusedEventIsNotAskedForInALoopAndOthersGoOn(t *testing.T) {
+	r, third := newRogue(t), newRogue(t)
+	v := victim(t, r)
+
+	var mu, emu sync.Mutex // mu: the count; emu: the encoder
+	vectors := 0
+	bad := r.event(chatX, 1, "", 1+lamportJump+1, "msg", msgPayload) // a clock far ahead: refused for good
+	go func() {                                                      // an honest peer: it sends again what the vector says is lacking
+		for r.sc.Scan() {
+			var f Frame
+			if json.Unmarshal(r.sc.Bytes(), &f) != nil || f.T != "vector" {
+				continue
+			}
+			mu.Lock()
+			vectors++
+			mu.Unlock()
+			if f.Vec[r.origin] < bad.Seq {
+				emu.Lock()
+				_ = r.enc.Encode(Frame{T: "events", Chat: chatX, Events: []events.Event{bad}})
+				emu.Unlock()
+			}
+		}
+	}()
+	emu.Lock()
+	r.send(chatX, nil, bad)
+	emu.Unlock()
+	eventually(t, wait, "the refusal in the log", func() bool { return v.logged("was not kept") })
+
+	// Another origin in the same chat goes on, through the same peer.
+	e := third.event(chatX, 1, "", 1, "msg", msgPayload)
+	emu.Lock()
+	r.send(chatX, map[string]string{third.origin: base64.StdEncoding.EncodeToString(third.pub)}, e)
+	emu.Unlock()
+	eventually(t, wait, "the event of another origin", func() bool { return v.holds(chatX, e) })
+
+	time.Sleep(1500 * time.Millisecond)
+	mu.Lock()
+	got := vectors
+	mu.Unlock()
+	if got > 5 { // the first one after hello, one per frame answered; a loop would be hundreds
+		t.Fatalf("%d vectors in a moment: the refused event is being asked for again and again", got)
+	}
+	if n := v.logCount("was not kept"); n != 1 {
+		t.Fatalf("the refusal was logged %d times, want once", n)
+	}
+	if len(v.m.Sessions()) != 1 {
+		t.Fatal("the session of a peer that was refused once was closed")
+	}
+}
+
+func TestUnfinishedHandshakesAreCapped(t *testing.T) {
+	a := newTnode(t, "alice")
+	a.listen()
+	var conns []net.Conn
+	for i := 0; i < maxHandshakes+8; i++ {
+		c, err := net.Dial("tcp", a.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+		t.Cleanup(func() { c.Close() })
+	}
+	time.Sleep(300 * time.Millisecond)
+	closed := 0
+	for _, c := range conns {
+		_ = c.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		if _, err := c.Read(make([]byte, 1)); err != nil && !os.IsTimeout(err) {
+			closed++
+		}
+	}
+	if closed < 8 {
+		t.Fatalf("%d of %d silent connections were dropped, want at least 8", closed, len(conns))
 	}
 }

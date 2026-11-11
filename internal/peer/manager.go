@@ -14,6 +14,11 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
+const (
+	maxHandshakes = 32 // connections at once that have not finished the TLS handshake; the rest are dropped
+	maxSessions   = 64 // sessions at once
+)
+
 // Manager keeps this node's connections to its peers: it listens (if asked to), dials the peers that
 // have an address, and runs a session on every connection. Everything it knows about peers and
 // shares is in the store (node.db); Refresh reads it again after the owner changed it.
@@ -109,15 +114,22 @@ func (m *Manager) Listen(addr string) (net.Addr, error) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		handshaking := make(chan struct{}, maxHandshakes)
 		for {
 			nc, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			select {
+			case handshaking <- struct{}{}:
+			default: // too many unfinished handshakes: this one is not even started
+				nc.Close()
+				continue
+			}
 			m.wg.Add(1)
 			go func() {
 				defer m.wg.Done()
-				m.serve(tls.Server(nc, cfg), "")
+				m.serve(tls.Server(nc, cfg), func() { <-handshaking })
 			}()
 		}
 	}()
@@ -226,7 +238,18 @@ func (m *Manager) dial(ctx context.Context, origin string) {
 			continue
 		case err == nil && addr != "":
 			started := time.Now()
-			if err := m.dialOnce(ctx, origin, addr); err != nil && ctx.Err() == nil {
+			err := m.dialOnce(ctx, origin, addr)
+			if errors.Is(err, errRefused) && ctx.Err() == nil { // a peer whose events are refused: not again soon
+				m.logf("peer: %s at %s: %v", origin, addr, err)
+				pause = min(max(2*pause, time.Minute), 10*time.Minute)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(pause):
+				}
+				continue
+			}
+			if err != nil && ctx.Err() == nil {
 				if msg := err.Error(); msg != lastErr {
 					m.logf("peer: %s at %s: %v", origin, addr, err)
 					lastErr = msg
@@ -286,10 +309,11 @@ func (m *Manager) dialOnce(ctx context.Context, origin, addr string) error {
 }
 
 // serve runs a session on an accepted connection.
-func (m *Manager) serve(conn *tls.Conn, _ string) {
+func (m *Manager) serve(conn *tls.Conn, handshaken func()) {
 	hctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	err := conn.HandshakeContext(hctx)
 	cancel()
+	handshaken()
 	if err != nil {
 		conn.Close()
 		m.logf("peer: a connection was refused: %v", err)
@@ -311,6 +335,9 @@ func (m *Manager) serve(conn *tls.Conn, _ string) {
 func (m *Manager) register(s *session) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.sessions) >= maxSessions && m.sessions[s.peer] == nil {
+		return false
+	}
 	if old := m.sessions[s.peer]; old != nil && old != s {
 		if s.initiator > old.initiator {
 			return false

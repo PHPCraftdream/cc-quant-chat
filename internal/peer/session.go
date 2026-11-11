@@ -41,9 +41,11 @@ type session struct {
 	pushMu sync.Mutex // one push at a time: two would send the same events twice
 
 	mu     sync.Mutex
-	mine   map[string]bool             // chats this node shares with the peer
-	common map[string]bool             // chats both share: the ones exchanged
-	remote map[string]map[string]int64 // chat -> origin -> highest seq the peer is known to hold
+	mine   map[string]bool                  // chats this node shares with the peer
+	common map[string]bool                  // chats both share: the ones exchanged
+	remote map[string]map[string]int64      // chat -> origin -> highest seq the peer is known to hold
+	rej    map[string]map[string]*rejection // chat -> origin -> the event that is refused for now
+	strike int                              // frames in a row in which an event of the peer itself was refused
 	once   sync.Once
 	done   chan struct{}
 }
@@ -98,7 +100,7 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		return err
 	}
 	s := &session{m: m, conn: conn, peer: peer, initiator: initiator, enc: json.NewEncoder(conn),
-		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, done: make(chan struct{})}
+		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, done: make(chan struct{})}
 	var chats []string
 	for _, p := range peers {
 		if p.Origin == peer {
@@ -143,11 +145,7 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 	defer m.unregister(s)
 	m.logf("peer: connected to %s, %d chat(s) in common", peer, len(s.common))
 	for c := range s.common {
-		vec, err := m.st.Vector(c)
-		if err != nil {
-			return err
-		}
-		if err := s.send(Frame{T: "vector", Chat: c, Vec: vec}); err != nil {
+		if err := s.sendVector(c); err != nil {
 			return err
 		}
 	}
@@ -337,6 +335,7 @@ func (s *session) receive(f Frame) error {
 	chat := f.Chat
 	var accepted []events.Event
 	blocked := map[string]bool{}
+	refusedOwn, keptOwn := false, false
 	for _, e := range f.Events {
 		s.mu.Lock()
 		if s.remote[chat] == nil {
@@ -352,6 +351,8 @@ func (s *session) receive(f Frame) error {
 		switch {
 		case err == nil:
 			accepted = append(accepted, e)
+			s.forgive(chat, e)
+			keptOwn = keptOwn || e.Origin == s.peer
 		case errors.Is(err, store.ErrDuplicate):
 		case errors.As(err, &fork):
 			blocked[e.Origin] = true
@@ -362,7 +363,8 @@ func (s *session) receive(f Frame) error {
 			blocked[e.Origin] = true // we lack events before this one: our vector, sent below, makes the peer resend
 		default:
 			blocked[e.Origin] = true
-			s.m.logf("peer: %s: event %s#%d of chat %.8s was not kept: %v", s.peer, e.Origin, e.Seq, chat, err)
+			s.refuse(chat, e, err)
+			refusedOwn = refusedOwn || e.Origin == s.peer
 		}
 	}
 	if len(accepted) > 0 {
@@ -371,9 +373,91 @@ func (s *session) receive(f Frame) error {
 		}
 		s.m.Notify(chat) // the other peers of this chat get them too
 	}
+	switch {
+	case keptOwn:
+		s.strike = 0
+	case refusedOwn:
+		s.strike++
+		if s.strike >= maxStrikes {
+			return fmt.Errorf("%s: its events were refused %d times in a row: %w", s.peer, s.strike, errRefused)
+		}
+	}
+	return s.sendVector(chat)
+}
+
+// A refused event does not come back at once. The peer would send it again as soon as our vector says
+// we lack it, and we would refuse it again: a loop at the speed of the network. So the session
+// remembers it, tells the peer in its vector that it holds that origin to the end (nothing of it, nor
+// of what follows, is sent), tells the log once, and asks again after a pause that doubles; the
+// peer that is refused maxStrikes times in a row is let go.
+type rejection struct {
+	id    string
+	until time.Time
+	pause time.Duration
+}
+
+const (
+	maxStrikes  = 3
+	firstPause  = 5 * time.Second
+	longestWait = 5 * time.Minute
+)
+
+var errRefused = errors.New("refused")
+
+func (s *session) refuse(chat string, e events.Event, why error) {
+	s.mu.Lock()
+	byOrigin := s.rej[chat]
+	if byOrigin == nil {
+		byOrigin = map[string]*rejection{}
+		s.rej[chat] = byOrigin
+	}
+	r, again := byOrigin[e.Origin], false
+	if r != nil && r.id == e.ID() {
+		again = true
+		r.pause = min(2*r.pause, longestWait)
+	} else {
+		r = &rejection{id: e.ID(), pause: firstPause}
+		byOrigin[e.Origin] = r
+	}
+	r.until = time.Now().Add(r.pause)
+	pause := r.pause
+	s.mu.Unlock()
+	if !again {
+		s.m.logf("peer: %s: event %s#%d of chat %.8s was not kept: %v (asked for again in %v)", s.peer, e.Origin, e.Seq, chat, why, pause)
+	}
+	time.AfterFunc(pause+50*time.Millisecond, func() {
+		select {
+		case <-s.done:
+		default:
+			_ = s.sendVector(chat)
+		}
+	})
+}
+
+// forgive drops what was held against an origin once an event of it has been kept.
+func (s *session) forgive(chat string, e events.Event) {
+	s.mu.Lock()
+	delete(s.rej[chat], e.Origin)
+	s.mu.Unlock()
+}
+
+// sendVector says what this node holds of a chat; of the origins whose event is refused for now it
+// says "all", so that the peer sends nothing of them until the pause is over.
+func (s *session) sendVector(chat string) error {
 	vec, err := s.m.st.Vector(chat)
 	if err != nil {
 		return err
 	}
+	if vec == nil {
+		vec = map[string]int64{}
+	}
+	now := time.Now()
+	s.mu.Lock()
+	for origin, r := range s.rej[chat] {
+		if now.Before(r.until) {
+			vec[origin] = math.MaxInt64
+		}
+	}
+	s.mu.Unlock()
 	return s.send(Frame{T: "vector", Chat: chat, Vec: vec})
 }
