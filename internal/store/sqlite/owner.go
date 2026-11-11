@@ -15,7 +15,7 @@ var _ store.OwnerStore = (*DB)(nil)
 func (d *DB) Owner() ([]byte, string, bool, error) {
 	var pub []byte
 	var since string
-	err := d.db.QueryRow(`SELECT pubkey, created_at FROM owner WHERE id = 1`).Scan(&pub, &since)
+	err := d.node.QueryRow(`SELECT pubkey, created_at FROM owner WHERE id = 1`).Scan(&pub, &since)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", false, nil
 	}
@@ -24,7 +24,7 @@ func (d *DB) Owner() ([]byte, string, bool, error) {
 
 // SetOwner registers the first owner key.
 func (d *DB) SetOwner(pub []byte) error {
-	res, err := d.db.Exec(`INSERT OR IGNORE INTO owner (id, pubkey, created_at) VALUES (1, ?, ?)`,
+	res, err := d.node.Exec(`INSERT OR IGNORE INTO owner (id, pubkey, created_at) VALUES (1, ?, ?)`,
 		pub, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return err
@@ -37,7 +37,7 @@ func (d *DB) SetOwner(pub []byte) error {
 
 // ReplaceOwner swaps the key only if the stored one is old.
 func (d *DB) ReplaceOwner(old, pub []byte) error {
-	tx, err := d.db.Begin()
+	tx, err := d.node.Begin()
 	if err != nil {
 		return err
 	}

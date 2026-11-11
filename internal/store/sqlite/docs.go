@@ -11,12 +11,16 @@ var _ store.Docs = (*DB)(nil)
 
 // DoDocs runs fn in one transaction on the document tree of a chat.
 func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
-	tx, err := d.db.Begin()
+	c, err := d.chat(chatID, "", true)
+	if err != nil {
+		return err
+	}
+	tx, err := c.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if err := fn(&docsTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}}); err != nil {
+	if err := fn(&docsTx{tx: tx, rec: recorder{c: c, tx: tx}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -24,18 +28,21 @@ func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
 
 // ViewDocs runs fn on a snapshot; nothing it does is kept.
 func (d *DB) ViewDocs(chatID string, fn func(tx store.DocsTx) error) error {
-	tx, err := d.db.Begin()
+	c, err := d.chat(chatID, "", true)
+	if err != nil {
+		return err
+	}
+	tx, err := c.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // reads only
-	return fn(&docsTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}})
+	return fn(&docsTx{tx: tx, rec: recorder{c: c, tx: tx}})
 }
 
 type docsTx struct {
-	tx   *sql.Tx
-	chat string
-	rec  recorder
+	tx  *sql.Tx
+	rec recorder
 }
 
 func (t *docsTx) RecordEvent(in store.EventIn) error { return t.rec.RecordEvent(in) }
@@ -51,7 +58,7 @@ func scanDoc(row interface{ Scan(...any) error }) (store.Doc, error) {
 }
 
 func (t *docsTx) GetDoc(path string) (store.Doc, bool, error) {
-	d, err := scanDoc(t.tx.QueryRow(`SELECT `+docCols+` FROM docs WHERE chat_id = ? AND path = ?`, t.chat, path))
+	d, err := scanDoc(t.tx.QueryRow(`SELECT `+docCols+` FROM docs WHERE path = ?`, path))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Doc{}, false, nil
 	}
@@ -60,8 +67,8 @@ func (t *docsTx) GetDoc(path string) (store.Doc, bool, error) {
 
 func (t *docsTx) PutDoc(d store.Doc) error {
 	t.rec.touch("docs", d.Path)
-	_, err := t.tx.Exec(`INSERT OR REPLACE INTO docs (chat_id, `+docCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.chat, d.Path, d.Title, d.Body, d.Version, d.Author, boolInt(d.AuthorOwner), d.TS, boolInt(d.Deleted))
+	_, err := t.tx.Exec(`INSERT OR REPLACE INTO docs (`+docCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.Path, d.Title, d.Body, d.Version, d.Author, boolInt(d.AuthorOwner), d.TS, boolInt(d.Deleted))
 	return err
 }
 
@@ -75,8 +82,7 @@ func under(prefix string) (string, []any) {
 
 func (t *docsTx) ListDocs(prefix string) ([]store.DocMeta, error) {
 	cond, args := under(prefix)
-	rows, err := t.tx.Query(`SELECT path, title, length(CAST(body AS BLOB)), version, author, ts FROM docs WHERE chat_id = ? AND deleted = 0`+cond+` ORDER BY path`,
-		append([]any{t.chat}, args...)...)
+	rows, err := t.tx.Query(`SELECT path, title, length(CAST(body AS BLOB)), version, author, ts FROM docs WHERE deleted = 0`+cond+` ORDER BY path`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,8 +100,7 @@ func (t *docsTx) ListDocs(prefix string) ([]store.DocMeta, error) {
 
 func (t *docsTx) ListDocBodies(prefix string) ([]store.Doc, error) {
 	cond, args := under(prefix)
-	rows, err := t.tx.Query(`SELECT `+docCols+` FROM docs WHERE chat_id = ? AND deleted = 0`+cond+` ORDER BY path`,
-		append([]any{t.chat}, args...)...)
+	rows, err := t.tx.Query(`SELECT `+docCols+` FROM docs WHERE deleted = 0`+cond+` ORDER BY path`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,14 +128,14 @@ func scanVersion(row interface{ Scan(...any) error }) (store.DocVersion, error) 
 
 func (t *docsTx) AddVersion(v store.DocVersion) error {
 	t.rec.touch("doc_versions", v.Path, v.Version)
-	_, err := t.tx.Exec(`INSERT INTO doc_versions (chat_id, `+versionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.chat, v.Path, v.Version, v.TS, v.Author, boolInt(v.AuthorOwner), v.Title, v.Body, v.Note, boolInt(v.Deleted), v.Origin, v.Lamport,
+	_, err := t.tx.Exec(`INSERT INTO doc_versions (`+versionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.Path, v.Version, v.TS, v.Author, boolInt(v.AuthorOwner), v.Title, v.Body, v.Note, boolInt(v.Deleted), v.Origin, v.Lamport,
 		v.AuthorPub, v.Sig, v.Payload)
 	return err
 }
 
 func (t *docsTx) GetVersion(path string, version int64) (store.DocVersion, bool, error) {
-	v, err := scanVersion(t.tx.QueryRow(`SELECT `+versionCols+` FROM doc_versions WHERE chat_id = ? AND path = ? AND version = ?`, t.chat, path, version))
+	v, err := scanVersion(t.tx.QueryRow(`SELECT `+versionCols+` FROM doc_versions WHERE path = ? AND version = ?`, path, version))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.DocVersion{}, false, nil
 	}
@@ -138,8 +143,8 @@ func (t *docsTx) GetVersion(path string, version int64) (store.DocVersion, bool,
 }
 
 func (t *docsTx) ListVersions(path string, before int64, limit int) ([]store.DocVersion, error) {
-	q := `SELECT ` + versionCols + ` FROM doc_versions WHERE chat_id = ? AND path = ?`
-	args := []any{t.chat, path}
+	q := `SELECT ` + versionCols + ` FROM doc_versions WHERE path = ?`
+	args := []any{path}
 	if before > 0 {
 		q += ` AND version < ?`
 		args = append(args, before)
@@ -161,7 +166,7 @@ func (t *docsTx) ListVersions(path string, before int64, limit int) ([]store.Doc
 }
 
 func (t *docsTx) AllVersions() ([]store.DocVersion, error) {
-	rows, err := t.tx.Query(`SELECT `+versionCols+` FROM doc_versions WHERE chat_id = ? ORDER BY path, version`, t.chat)
+	rows, err := t.tx.Query(`SELECT ` + versionCols + ` FROM doc_versions ORDER BY path, version`)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +183,11 @@ func (t *docsTx) AllVersions() ([]store.DocVersion, error) {
 }
 
 func (t *docsTx) NextLamport() (int64, error) {
-	if _, err := t.tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, t.chat); err != nil {
+	if _, err := t.tx.Exec(`UPDATE chat SET lamport = lamport + 1 WHERE id = 1`); err != nil {
 		return 0, err
 	}
 	var n int64
-	err := t.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, t.chat).Scan(&n)
+	err := t.tx.QueryRow(`SELECT lamport FROM chat WHERE id = 1`).Scan(&n)
 	if t.rec.lamport == 0 {
 		t.rec.lamport = n // the event carries the clock of the change's first write
 	}

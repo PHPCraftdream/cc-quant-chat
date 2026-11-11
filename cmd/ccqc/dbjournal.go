@@ -14,8 +14,9 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
-// ccqc db verify | rebuild [--chat <id or its start>]: the journal of events and the
-// projections built from it. Both work on the database file with the broker stopped.
+// ccqc db verify | rebuild [--chat <name or id>]: the journal of events and the projections built
+// from it, per chat. Without --chat every chat of the node is done. Both work on the chat files
+// with the broker stopped.
 
 func parseChatFlag(args []string) (string, error) {
 	switch {
@@ -24,7 +25,7 @@ func parseChatFlag(args []string) (string, error) {
 	case len(args) == 2 && args[0] == "--chat" && args[1] != "":
 		return args[1], nil
 	}
-	return "", errors.New("usage: ccqc db verify|rebuild [--chat <id>]")
+	return "", errors.New(dbUsage)
 }
 
 // stopped refuses to go on while a broker answers: it keeps chats in memory that a rebuild
@@ -37,56 +38,62 @@ func stopped() error {
 	return nil
 }
 
-func openJournal(chat string) (*sqlite.DB, string, error) {
-	db, err := sqlite.Open(sqlite.DefaultPath())
-	if err != nil {
-		return nil, "", err
-	}
+// chatsOf: the ids of the chats to work on: the one named, or all.
+func chatsOf(db *sqlite.DB, chat string) ([]string, error) {
 	if chat != "" {
-		if chat, err = db.ResolveChat(chat); err != nil {
-			db.Close()
-			return nil, "", err
-		}
+		id, err := db.ResolveChat(chat)
+		return []string{id}, err
 	}
-	return db, chat, nil
+	return db.ChatIDs()
 }
 
-func runDBVerify(args []string) error {
-	chat, err := parseChatFlag(args)
+func openJournal(chat string) (*sqlite.DB, []string, error) {
+	db, err := sqlite.Open(sqlite.DefaultPath())
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	ids, err := chatsOf(db, chat)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	return db, ids, nil
+}
+
+func runDBVerify(chat string) error {
 	if err := stopped(); err != nil {
 		return err
 	}
-	db, chat, err := openJournal(chat)
+	db, ids, err := openJournal(chat)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	rep, err := db.Verify(chat)
-	if err != nil {
-		return err
+	events, signed, problems := 0, 0, 0
+	for _, id := range ids {
+		rep, err := db.Verify(id)
+		if err != nil {
+			fmt.Printf("chat %.8s: %v\n", id, err)
+			problems++
+			continue
+		}
+		for _, i := range rep.Issues {
+			fmt.Println(i)
+		}
+		events, signed, problems = events+rep.Events, signed+rep.Signed, problems+len(rep.Issues)
 	}
-	for _, i := range rep.Issues {
-		fmt.Println(i)
-	}
-	fmt.Printf("checked %d event(s) in %d chat(s); %d carry a verified author's signature; %d problem(s)\n", rep.Events, rep.Chats, rep.Signed, len(rep.Issues))
-	if len(rep.Issues) > 0 {
+	fmt.Printf("checked %d event(s) in %d chat(s); %d carry a verified author's signature; %d problem(s)\n", events, len(ids), signed, problems)
+	if problems > 0 {
 		return fmt.Errorf("the journal does not verify")
 	}
 	return nil
 }
 
-func runDBRebuild(args []string) error {
-	chat, err := parseChatFlag(args)
-	if err != nil {
-		return err
-	}
+func runDBRebuild(chat string) error {
 	if err := stopped(); err != nil {
 		return err
 	}
-	db, chat, err := openJournal(chat)
+	db, ids, err := openJournal(chat)
 	if err != nil {
 		return err
 	}
@@ -94,25 +101,34 @@ func runDBRebuild(args []string) error {
 	if err := confirmOwner(db); err != nil {
 		return err
 	}
-	rep, err := db.Rebuild(chat, false)
-	if err != nil {
-		return err
+	failed := 0
+	for _, id := range ids {
+		rep, err := db.Rebuild(id, false)
+		if err != nil {
+			fmt.Printf("chat %.8s: %v\n", id, err)
+			failed++
+			continue
+		}
+		fmt.Printf("chat %.8s: rebuilt from %d event(s)", id, rep.Events)
+		if rep.Total() == 0 {
+			fmt.Println("; the projections already match the journal, nothing was changed")
+			continue
+		}
+		fmt.Println()
+		var tables []string
+		for t := range rep.Diffs {
+			tables = append(tables, t)
+		}
+		sort.Strings(tables)
+		for _, t := range tables {
+			fmt.Printf("  %-16s %d differing row(s)\n", t, rep.Diffs[t])
+		}
+		if rep.Replaced {
+			fmt.Println("  the projections were replaced by the rebuilt ones")
+		}
 	}
-	fmt.Printf("rebuilt %d chat(s) from %d event(s)\n", rep.Chats, rep.Events)
-	if rep.Total() == 0 {
-		fmt.Println("the projections already match the journal; nothing was changed")
-		return nil
-	}
-	var tables []string
-	for t := range rep.Diffs {
-		tables = append(tables, t)
-	}
-	sort.Strings(tables)
-	for _, t := range tables {
-		fmt.Printf("  %-16s %d differing row(s)\n", t, rep.Diffs[t])
-	}
-	if rep.Replaced {
-		fmt.Println("the projections were replaced by the rebuilt ones")
+	if failed > 0 {
+		return fmt.Errorf("%d chat(s) could not be rebuilt", failed)
 	}
 	return nil
 }

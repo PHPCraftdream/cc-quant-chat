@@ -16,37 +16,42 @@ func TestMessagesCarryTheNodeAndAChatClock(t *testing.T) {
 		m := proto.Message{ID: id, TS: "t", Room: proto.RoomCommon, From: "a", Text: "x"}
 		mustAppend(t, db, store.Record{T: "msg", Key: "r:common", Msg: &m, Origin: origin})
 	}
-	add(1, "") // written before the node had an identity
+	add(1, "node-one")
 	add(2, "node-one")
-	add(3, "node-one")
 
+	c, err := db.chat(chatID, "", false)
+	if err != nil || c == nil {
+		t.Fatal(c, err)
+	}
 	row := func(id int64) (origin string, lamport int64) {
-		if err := db.db.QueryRow(`SELECT origin, lamport FROM messages WHERE chat_id = ? AND id = ?`, chatID, id).Scan(&origin, &lamport); err != nil {
+		if err := c.db.QueryRow(`SELECT origin, lamport FROM messages WHERE id = ?`, id).Scan(&origin, &lamport); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	if o, l := row(2); o != "node-one" || l != 2 {
-		t.Fatalf("message 2: origin %q lamport %d", o, l)
+	if o, l := row(1); o != "node-one" || l != 1 {
+		t.Fatalf("message 1: origin %q lamport %d", o, l)
 	}
-	if _, l := row(3); l != 3 {
+	if _, l := row(2); l != 2 {
 		t.Fatalf("the chat's clock must advance with every write, got %d", l)
 	}
+}
 
-	// Registering the node gives its name to the rows that had none, once, and keeps the key.
+func TestOriginIsRecordedOnceWithItsKey(t *testing.T) {
+	db, _ := openTemp(t)
 	pub := []byte("0123456789abcdef0123456789abcdef")
-	if err := db.RegisterOrigin("node-one", pub); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RegisterOrigin("node-one", pub); err != nil {
-		t.Fatalf("registering again: %v", err)
-	}
-	if o, _ := row(1); o != "node-one" {
-		t.Fatalf("the old row's origin = %q, want the node", o)
+	for i := 0; i < 2; i++ {
+		if err := db.RegisterOrigin("node-one", pub); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var n int
-	if err := db.db.QueryRow(`SELECT count(*) FROM origins`).Scan(&n); err != nil || n != 1 {
+	if err := db.node.QueryRow(`SELECT count(*) FROM origins`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("origins rows: %d, err %v", n, err)
+	}
+	keys, err := db.originKeys()
+	if err != nil || string(keys["node-one"]) != string(pub) {
+		t.Fatalf("keys %v, %v", keys, err)
 	}
 }
 

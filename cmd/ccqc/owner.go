@@ -107,7 +107,7 @@ func ownerInit() error {
 	}
 	if info.Registered {
 		return fmt.Errorf("the broker already has an owner key (%s, registered %s). If it is not yours, someone registered before you: "+
-			"stop the broker (`ccqc broker stop`), delete the row of the `owner` table in the database (`ccqc db path`) and run init again; README, \"Owner\"", info.Fingerprint, info.Since)
+			"stop the broker (`ccqc broker stop`), delete the row of the `owner` table in node.db (the directory is `ccqc db path`) and run init again; README, \"Owner\"", info.Fingerprint, info.Since)
 	}
 	pw, err := newPassword("New owner")
 	if err != nil {

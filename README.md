@@ -112,10 +112,10 @@ the conversation:
   it; the broker tells such a session so at join, and `ccqc broker status` shows how many
   connected clients run each protocol level (`proto 0` = old). Restart those sessions, or
   update while the chats are quiet.
-- **No way back without a copy of the database.** The new broker applies the schema
-  migrations (0002, 0003 so far); an older binary then refuses to open the database ("migrated
-  by a newer version"). Copy `ccqc.db` (`ccqc db path`) before updating if you may want to
-  go back.
+- **No way back without a copy of the data.** The new broker lays the single database
+  `ccqc.db` out into chat files (see "Where the data lives"); the old file is kept as
+  `ccqc.db.migrated`, an older binary does not know the new layout. Copy the data directory
+  (`ccqc db path`) before updating if you may want to go back.
 - **Windows:** the installer works around the locked `ccqc.exe`. A build placed in
   `plugin/bin/` by hand (`go build -o plugin/bin/ ./cmd/ccqc`) fails while a session of this
   folder or the broker runs that file: run `ccqc broker stop`, close those sessions, build,
@@ -390,7 +390,7 @@ ccqc owner rotate          # new key, the request signed with the old one
 - **Limit:** this protects against forgery through the chat and the protocol. It does not
   protect against a process of your OS user that edits the database file or replaces the
   broker. If the key or password is lost: stop the broker (`ccqc broker stop`), delete the row
-  of the `owner` table in the database (`ccqc db path`), delete `owner.key`, start the broker
+  of the `owner` table in `node.db` (in the directory `ccqc db path` prints), delete `owner.key`, start the broker
   and run `ccqc owner init` again.
 
 ## Node identity
@@ -442,43 +442,82 @@ secret and join with it as before (their events are stored unsigned again). A ni
 first registered with a key has no secret, and an older broker sees it as free: the first join
 under that name would take it over. Roll back only with the chats' members away, or not at all.
 
+## Where the data lives
+
+The data of a broker is a directory (`ccqc db path`):
+
+```
+node.db                  the node: owner key, origin (identity), administrator log,
+                         broker-wide settings, the index of chats
+chats/<chat id>.db       one chat, whole: its journal of events and everything built from it
+ccqc.db.migrated         the single database of earlier versions, kept as a reserve
+```
+
+A chat is a file: copy it, hand it to another node, delete it or repair it on its own; a damaged
+file spoils only that chat, and a file made by a newer ccqc is refused for that chat only (the
+rest work). A chat database is opened when the chat is first used and closed when the broker
+unloads it. Files are `0600`, directories `0700`. The index in `node.db` is a convenience: a file
+in `chats/` that it does not list is picked up at start, its name read from the file itself.
+
+`CCQC_DB` names a file, default `<user config dir>/ccqc/ccqc.db` (`%APPDATA%\ccqc\ccqc.db` on
+Windows). The directory of that file is the data directory. If the file exists it is the single
+database of earlier versions, and it is laid out into `node.db` and `chats/` once, at the first
+start of the broker with this version; if it does not exist there is nothing to lay out.
+
+**Laying out** (the log says how long it took): the broker first brings the old file to its last
+schema (it is only changed if it is older than 0009), copies the owner, origins, the
+administrator log and the broker-wide settings into `node.db`, and then each chat into a
+temporary file `chats/<id>.db.tmp`, makes the journal of the chat inside it (below), and renames
+it into place; the mark that the chat is done goes into `node.db` after that. When all chats are
+done the old file is renamed to `ccqc.db.migrated`. An interruption at any step is safe: a
+leftover temporary file is removed, finished chats are not touched, a file that is in place but
+not marked is recognized as complete. Running it again does nothing. Until it is done no chat is
+opened, so that a new empty file cannot hide old rows.
+
+Schemas: three embedded sets of migrations in `internal/store/sqlite` (`migrations_node`,
+`migrations_chat`, and `migrations_legacy`, which only brings an old single database to its last
+schema for the layout), applied by `internal/migrate`: each in its own transaction, recorded with
+a checksum in `schema_migrations`; editing an applied migration or opening a file migrated by a
+newer binary is an error; forward-only. `ccqc db status [--chat X]` shows the state of `node.db`
+and of each chat file; `ccqc db migrate [--chat X]` applies pending migrations (the broker does it
+when it opens a chat). `--chat` takes a chat's name, its id or the start of the id (8+
+characters); without it every chat is done.
+
 ## The journal of events (`events`)
 
 Every change of a chat is an event: a message, a nick joining (`nick.register`, `nick.key`,
 `nick.reset`, `nick.pin`), a room (`room.create`, `room.join`, `room.leave`), a chat setting
 (`config.set`), a board operation (`task.create`, `sprint.close`, ...) and a document operation
 (`doc.put`, ...). An event holds what the author sent and signed (`payload`), what the broker
-added (`assigned`: issued ids and images of the rows it wrote), the chat's clock (`lamport`) and
-a place in the broker's chain for that chat: `seq`, `prev` (the ID of the previous event) and
-`node_sig`, a signature with the node key `broker.key` over origin, seq, prev and a hash of the
-rest. An event is written in the same transaction as the change it describes: if either fails,
-neither is kept.
+added (`assigned`: issued ids, images of the rows it wrote, for the board the fields that
+changed before and after), the chat's clock (`lamport`) and a place in the broker's chain for that
+chat: `seq`, `prev` (the ID of the previous event) and `node_sig`, a signature with the node key
+`broker.key` over origin, seq, prev and a hash of the rest. The events of administrator operations
+(a pinned role, a chat setting, a freed nick) keep the owner's signature of the operation. An
+event is written in the same transaction as the change it describes: if either fails, neither is
+kept.
 
-`messages`, the board tables, `docs`/`doc_versions`, `nicks`, `rooms`, `room_members` and chat
+`messages`, the board tables, `docs`/`doc_versions`, `nicks`, `rooms`, `room_members` and the chat
 settings are **projections** of the journal; reads still go to them. The read cursors (`seen`),
 `admin_log` and broker-wide settings are not events.
 
-- `ccqc db verify [--chat ID]` checks the chains (no gaps, each `prev` right), the node's and the
+- `ccqc db verify [--chat X]` checks the chains (no gaps, each `prev` right), the node's and the
   authors' signatures and the chat's clock, and prints what does not hold. It changes nothing.
-- `ccqc db rebuild [--chat ID]` builds the projections again from the journal into a scratch
+- `ccqc db rebuild [--chat X]` builds the projections again from the journal into a scratch
   database, compares them with the current ones and replaces the tables that differ (the read
   cursors are kept). With an owner registered it asks for the owner's password. Both commands
-  work on the database file, so the broker must be stopped.
-- **First start after the update**: the broker moves the rows that predate the journal into it
-  (one transaction per chat, marked in `meta`, so an interrupted start continues and a finished
-  one does nothing; the log says how long it took). Rows keep their payload, key and signature;
-  unsigned ones get an empty signature. Board state without per-change history (tasks, sprints,
-  comments, the process) and the pages come in as one snapshot event each (`import.board`,
-  `import.docs`).
+  work on the chat files, so the broker must be stopped.
+- The journal of a chat laid out from an old database: rows keep their payload, key and
+  signature (unsigned ones get an empty signature). Board state without per-change history
+  (tasks, sprints, comments, the process) and the pages come in as one snapshot event each
+  (`import.board`, `import.docs`).
 - Events of nicks, rooms and settings carry the chat's clock as it is, without advancing it, so the
   rule "a signed write carries the next clock value" is unchanged.
 - The journal grows with the history (about as much as the messages themselves): `CCQC_SCALE=1 go
   test ./internal/store/sqlite -run TestJournalScale -v` prints the sizes and the start times on a
   database of 100,000 messages.
-- **Rollback** to a broker without the journal is not safe for the journal: the older broker
-  ignores `events` and writes rows without events. `ccqc db verify` then reports the clock
-  "ahead of its events"; do not run `ccqc db rebuild` on such a database (it would drop those
-  rows). Copy `ccqc.db` before updating (see "Updating").
+- **Rollback** to a broker without the journal or without chat files is not supported: copy the
+  data directory before updating.
 
 ## Cards in the transcript (`quant-ui`)
 
@@ -527,18 +566,17 @@ and the other test fails until both agree.
 - **Transport:** a named pipe `\\.\pipe\ccqc-<user>` restricted to the current user on
   Windows, a `0600` unix socket on Linux/macOS (guarded by a lock file, so two brokers
   can't start at once). A chat is identified by `SHA-256(token)`; the token is never stored.
-- **Storage:** SQLite in WAL mode (pure-Go driver, no cgo) at `CCQC_DB`, default
-  `<user config dir>/ccqc/ccqc.db` (`%APPDATA%\ccqc\ccqc.db` on Windows): chats, nicks (key
-  hashes only), rooms, membership, messages (text as is; the file is created private to
-  the user). If the database can't be opened or migrated the broker does not start (see
-  `broker.log`): running on without it would silently lose history and nick keys. A chat
-  whose history can't be read is not joined, and a message or room change that can't be
-  stored is refused, not delivered. `CCQC_STORE=memory` runs without saving, on purpose.
-- **Migrations:** `internal/store/sqlite/migrations/NNNN_name.sql`, applied by the broker
-  on start (`internal/migrate`): each in its own transaction, recorded with a checksum in
-  `schema_migrations`. Editing an applied migration or opening a database migrated by a
-  newer binary is an error. Forward-only: to roll back, restore a copy of the database
-  file. `ccqc db path|status|migrate|verify|rebuild`.
+- **Storage:** SQLite in WAL mode (pure-Go driver, no cgo): `node.db` and one file per chat in
+  the directory of `CCQC_DB` (see "Where the data lives"): chats, nicks (key hashes and
+  public keys only), rooms, membership, messages (text as is; files are created private to
+  the user). If `node.db` can't be opened or migrated the broker does not start (see
+  `broker.log`): running on without it would silently lose the owner and the settings. A chat
+  whose file can't be read or is of a newer version is not joined (the others work), and a
+  message or room change that can't be stored is refused, not delivered.
+  `CCQC_STORE=memory` runs without saving, on purpose.
+- **Migrations:** `internal/store/sqlite/migrations_node|chat|legacy/NNNN_name.sql`, applied by
+  the broker (`internal/migrate`) when it opens `node.db` or a chat. Forward-only: to roll back,
+  restore a copy of the data directory. `ccqc db path|status|migrate|verify|rebuild`.
 - **Presence:** a disconnected member stays present for 60 s (`CCQC_GRACE`), then goes
   offline; nick, rooms and history stay.
 - **Delivery:** each nick has a read cursor. It moves when the session confirms delivery

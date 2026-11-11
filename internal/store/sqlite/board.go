@@ -13,12 +13,16 @@ var _ store.Board = (*DB)(nil)
 
 // Do runs fn in one transaction on the board of a chat; an error from fn rolls it all back.
 func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
-	tx, err := d.db.Begin()
+	c, err := d.chat(chatID, "", true)
+	if err != nil {
+		return err
+	}
+	tx, err := c.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if err := fn(&boardTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}}); err != nil {
+	if err := fn(&boardTx{tx: tx, rec: recorder{c: c, tx: tx}}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -26,25 +30,28 @@ func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
 
 // View runs fn on a consistent snapshot; nothing it does is kept.
 func (d *DB) View(chatID string, fn func(tx store.BoardTx) error) error {
-	tx, err := d.db.Begin()
+	c, err := d.chat(chatID, "", true)
+	if err != nil {
+		return err
+	}
+	tx, err := c.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // reads only
-	return fn(&boardTx{tx: tx, chat: chatID, rec: recorder{d: d, tx: tx, chat: chatID}})
+	return fn(&boardTx{tx: tx, rec: recorder{c: c, tx: tx}})
 }
 
 type boardTx struct {
-	tx   *sql.Tx
-	chat string
-	rec  recorder
+	tx  *sql.Tx
+	rec recorder
 }
 
 func (b *boardTx) RecordEvent(in store.EventIn) error { return b.rec.RecordEvent(in) }
 
 func (b *boardTx) nextID(table string) (int64, error) {
 	var n int64
-	err := b.tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM `+table+` WHERE chat_id = ?`, b.chat).Scan(&n)
+	err := b.tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM ` + table).Scan(&n)
 	return n, err
 }
 
@@ -63,7 +70,7 @@ func scanTask(row interface{ Scan(...any) error }) (store.Task, error) {
 }
 
 func (b *boardTx) GetTask(id int64) (store.Task, bool, error) {
-	t, err := scanTask(b.tx.QueryRow(`SELECT `+taskCols+` FROM board_tasks WHERE chat_id = ? AND id = ?`, b.chat, id))
+	t, err := scanTask(b.tx.QueryRow(`SELECT `+taskCols+` FROM board_tasks WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Task{}, false, nil
 	}
@@ -72,8 +79,8 @@ func (b *boardTx) GetTask(id int64) (store.Task, bool, error) {
 
 func (b *boardTx) PutTask(t store.Task) error {
 	b.rec.touch("board_tasks", t.ID)
-	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_tasks (chat_id, `+taskCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, t.ID, t.Title, t.Description, t.Status, t.Sprint, t.Assignee, t.Priority, t.CreatedBy, t.CreatedAt, t.UpdatedAt, boolInt(t.Deleted))
+	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_tasks (`+taskCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Title, t.Description, t.Status, t.Sprint, t.Assignee, t.Priority, t.CreatedBy, t.CreatedAt, t.UpdatedAt, boolInt(t.Deleted))
 	return err
 }
 
@@ -87,8 +94,8 @@ func boolInt(v bool) int {
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
 
 func (b *boardTx) ListTasks(f store.TaskFilter) ([]store.Task, error) {
-	q := `SELECT ` + taskCols + ` FROM board_tasks WHERE chat_id = ? AND deleted = 0`
-	args := []any{b.chat}
+	q := `SELECT ` + taskCols + ` FROM board_tasks WHERE deleted = 0`
+	var args []any
 	if f.Sprint >= 0 {
 		q += ` AND sprint = ?`
 		args = append(args, f.Sprint)
@@ -131,8 +138,8 @@ func (b *boardTx) ListTasks(f store.TaskFilter) ([]store.Task, error) {
 }
 
 func (b *boardTx) CountByStatus(sprint int64) (map[string]int, error) {
-	q := `SELECT status, count(*) FROM board_tasks WHERE chat_id = ? AND deleted = 0`
-	args := []any{b.chat}
+	q := `SELECT status, count(*) FROM board_tasks WHERE deleted = 0`
+	var args []any
 	if sprint >= 0 {
 		q += ` AND sprint = ?`
 		args = append(args, sprint)
@@ -165,7 +172,7 @@ func scanSprint(row interface{ Scan(...any) error }) (store.Sprint, error) {
 }
 
 func (b *boardTx) GetSprint(id int64) (store.Sprint, bool, error) {
-	s, err := scanSprint(b.tx.QueryRow(`SELECT `+sprintCols+` FROM board_sprints WHERE chat_id = ? AND id = ?`, b.chat, id))
+	s, err := scanSprint(b.tx.QueryRow(`SELECT `+sprintCols+` FROM board_sprints WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Sprint{}, false, nil
 	}
@@ -174,13 +181,13 @@ func (b *boardTx) GetSprint(id int64) (store.Sprint, bool, error) {
 
 func (b *boardTx) PutSprint(s store.Sprint) error {
 	b.rec.touch("board_sprints", s.ID)
-	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_sprints (chat_id, `+sprintCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, s.ID, s.Name, s.Goal, s.State, s.CreatedAt, s.StartedAt, s.ClosedAt, boolInt(s.Deleted))
+	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_sprints (`+sprintCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.Name, s.Goal, s.State, s.CreatedAt, s.StartedAt, s.ClosedAt, boolInt(s.Deleted))
 	return err
 }
 
 func (b *boardTx) ListSprints() ([]store.Sprint, error) {
-	rows, err := b.tx.Query(`SELECT `+sprintCols+` FROM board_sprints WHERE chat_id = ? AND deleted = 0 ORDER BY id`, b.chat)
+	rows, err := b.tx.Query(`SELECT ` + sprintCols + ` FROM board_sprints WHERE deleted = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +204,7 @@ func (b *boardTx) ListSprints() ([]store.Sprint, error) {
 }
 
 func (b *boardTx) ActiveSprint() (store.Sprint, bool, error) {
-	s, err := scanSprint(b.tx.QueryRow(`SELECT `+sprintCols+` FROM board_sprints WHERE chat_id = ? AND state = 'active' AND deleted = 0`, b.chat))
+	s, err := scanSprint(b.tx.QueryRow(`SELECT ` + sprintCols + ` FROM board_sprints WHERE state = 'active' AND deleted = 0`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Sprint{}, false, nil
 	}
@@ -206,7 +213,7 @@ func (b *boardTx) ActiveSprint() (store.Sprint, bool, error) {
 
 func (b *boardTx) GetWorkflow() (store.Workflow, bool, error) {
 	var raw string
-	err := b.tx.QueryRow(`SELECT json FROM board_workflow WHERE chat_id = ?`, b.chat).Scan(&raw)
+	err := b.tx.QueryRow(`SELECT json FROM board_workflow WHERE id = 1`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Workflow{}, false, nil
 	}
@@ -226,7 +233,7 @@ func (b *boardTx) PutWorkflow(w store.Workflow, ts string) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.tx.Exec(`INSERT OR REPLACE INTO board_workflow (chat_id, json, updated_at) VALUES (?, ?, ?)`, b.chat, string(raw), ts)
+	_, err = b.tx.Exec(`INSERT OR REPLACE INTO board_workflow (id, json, updated_at) VALUES (1, ?, ?)`, string(raw), ts)
 	return err
 }
 
@@ -259,8 +266,8 @@ func (b *boardTx) AppendLog(e store.LogEntry) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.tx.Exec(`INSERT INTO board_log (chat_id, `+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, e.ID, e.TS, e.Actor, boolInt(e.ActorOwner), e.Kind, e.Entity, e.EntityID, string(before), string(after), e.Reverts, e.Note,
+	_, err = b.tx.Exec(`INSERT INTO board_log (`+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TS, e.Actor, boolInt(e.ActorOwner), e.Kind, e.Entity, e.EntityID, string(before), string(after), e.Reverts, e.Note,
 		e.Origin, e.Lamport, e.ActorGrant, e.AuthorPub, e.Sig, e.Payload)
 	return err
 }
@@ -273,7 +280,7 @@ func nonNil(m map[string]json.RawMessage) map[string]json.RawMessage {
 }
 
 func (b *boardTx) GetLog(id int64) (store.LogEntry, bool, error) {
-	e, err := scanLog(b.tx.QueryRow(`SELECT `+logCols+` FROM board_log WHERE chat_id = ? AND id = ?`, b.chat, id))
+	e, err := scanLog(b.tx.QueryRow(`SELECT `+logCols+` FROM board_log WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.LogEntry{}, false, nil
 	}
@@ -298,13 +305,13 @@ func (b *boardTx) queryLog(q string, args ...any) ([]store.LogEntry, error) {
 }
 
 func (b *boardTx) LogsAfter(entity string, entityID, after int64) ([]store.LogEntry, error) {
-	return b.queryLog(`SELECT `+logCols+` FROM board_log WHERE chat_id = ? AND entity = ? AND entity_id = ? AND id > ? ORDER BY id`,
-		b.chat, entity, entityID, after)
+	return b.queryLog(`SELECT `+logCols+` FROM board_log WHERE entity = ? AND entity_id = ? AND id > ? ORDER BY id`,
+		entity, entityID, after)
 }
 
 func (b *boardTx) LogFor(entity string, entityID int64, before int64, limit int) ([]store.LogEntry, error) {
-	q := `SELECT ` + logCols + ` FROM board_log WHERE chat_id = ?`
-	args := []any{b.chat}
+	q := `SELECT ` + logCols + ` FROM board_log WHERE 1 = 1`
+	var args []any
 	if entity != "" {
 		q += ` AND entity = ? AND entity_id = ?`
 		args = append(args, entity, entityID)
@@ -320,11 +327,11 @@ func (b *boardTx) LogFor(entity string, entityID int64, before int64, limit int)
 
 // NextLamport advances the chat's logical clock and returns the new value.
 func (b *boardTx) NextLamport() (int64, error) {
-	if _, err := b.tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, b.chat); err != nil {
+	if _, err := b.tx.Exec(`UPDATE chat SET lamport = lamport + 1 WHERE id = 1`); err != nil {
 		return 0, err
 	}
 	var n int64
-	err := b.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, b.chat).Scan(&n)
+	err := b.tx.QueryRow(`SELECT lamport FROM chat WHERE id = 1`).Scan(&n)
 	if b.rec.lamport == 0 {
 		b.rec.lamport = n // the event carries the clock of the change's first write
 	}
@@ -345,13 +352,13 @@ func scanComment(row interface{ Scan(...any) error }) (store.Comment, error) {
 
 func (b *boardTx) PutComment(c store.Comment) error {
 	b.rec.touch("board_comments", c.ID)
-	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (chat_id, `+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport, c.AuthorPub, c.Sig)
+	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (`+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport, c.AuthorPub, c.Sig)
 	return err
 }
 
 func (b *boardTx) GetComment(id int64) (store.Comment, bool, error) {
-	c, err := scanComment(b.tx.QueryRow(`SELECT `+commentCols+` FROM board_comments WHERE chat_id = ? AND id = ?`, b.chat, id))
+	c, err := scanComment(b.tx.QueryRow(`SELECT `+commentCols+` FROM board_comments WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Comment{}, false, nil
 	}
@@ -359,8 +366,8 @@ func (b *boardTx) GetComment(id int64) (store.Comment, bool, error) {
 }
 
 func (b *boardTx) ListComments(taskID, before int64, limit int) ([]store.Comment, error) {
-	q := `SELECT ` + commentCols + ` FROM board_comments WHERE chat_id = ? AND task_id = ? AND deleted = 0`
-	args := []any{b.chat, taskID}
+	q := `SELECT ` + commentCols + ` FROM board_comments WHERE task_id = ? AND deleted = 0`
+	args := []any{taskID}
 	if before > 0 {
 		q += ` AND id < ?`
 		args = append(args, before)
@@ -386,11 +393,11 @@ func (b *boardTx) CountComments(taskIDs []int64) (map[int64]int, error) {
 	if len(taskIDs) == 0 {
 		return out, nil
 	}
-	args := []any{b.chat}
+	var args []any
 	for _, id := range taskIDs {
 		args = append(args, id)
 	}
-	rows, err := b.tx.Query(`SELECT task_id, count(*) FROM board_comments WHERE chat_id = ? AND deleted = 0 AND task_id IN (`+placeholders(len(taskIDs))+`) GROUP BY task_id`, args...)
+	rows, err := b.tx.Query(`SELECT task_id, count(*) FROM board_comments WHERE deleted = 0 AND task_id IN (`+placeholders(len(taskIDs))+`) GROUP BY task_id`, args...)
 	if err != nil {
 		return nil, err
 	}

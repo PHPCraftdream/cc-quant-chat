@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,77 +11,29 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-// Rows written before the journal existed are moved into it once, by the broker at its start (SQL
-// cannot sign with the node key). A chat is moved in one transaction and marked in meta, so an
-// interrupted run continues where it stopped and a finished one does nothing.
-//
-// The move is mechanical. Payload, author key and signature are taken as they are (an unsigned
-// row gets an empty signature). Order: the nicks, rooms and settings first, then messages, board
-// changes and document versions by (lamport, kind of row, id). Rows that were never written one
-// change at a time (tasks, sprints, the process, comments, documents) come in as one snapshot
-// event each, at the end.
+// Rows of a chat that were written before it had a journal (it was laid out from the single
+// database of earlier versions) are moved into the journal once, inside the chat's new file and
+// before it is put in place (layout.go). The move is mechanical. Payload, author key and
+// signature are taken as they are (an unsigned row gets an empty signature). Order: the nicks,
+// rooms and settings first, then messages, board changes and document versions by (lamport, kind
+// of row, id). Rows that were never written one change at a time (tasks, sprints, the process,
+// comments, documents) come in as one snapshot event each, at the end.
 
 const backfillBatch = 5000
 
-// BackfillReport: what a run moved.
-type BackfillReport struct {
-	Chats  int // chats moved by this run
-	Events int
-}
-
-func metaKey(chatID string) string { return "events:" + chatID }
-
-// BackfillEvents moves the rows that predate the journal into it; see the top of the file. It
-// needs the node key (SetNode).
-func (d *DB) BackfillEvents() (chats, events int, err error) {
-	rep, err := d.backfill()
-	return rep.Chats, rep.Events, err
-}
-
-func (d *DB) backfill() (BackfillReport, error) {
-	var rep BackfillReport
-	if done, err := d.BackfillDone(); err != nil || done {
-		return rep, err
-	}
-	if d.node == nil {
-		return rep, errors.New("sqlite: moving rows into the journal needs the node key")
-	}
-	chats, err := d.chatIDs("")
-	if err != nil {
-		return rep, err
-	}
-	for i, c := range chats {
-		n, moved, err := d.backfillChat(c[0], c[2])
-		if err != nil {
-			return rep, fmt.Errorf("chat %s: %w", c[0][:min(8, len(c[0]))], err)
-		}
-		if moved {
-			rep.Chats++
-			rep.Events += n
-		}
-		if d.afterBackfillChat != nil {
-			if err := d.afterBackfillChat(i); err != nil {
-				return rep, err
-			}
-		}
-	}
-	_, err = d.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done')`, metaBackfill)
-	return rep, err
-}
-
 type chainWriter struct {
-	d     *DB
+	c     *chatDB
 	tx    *sql.Tx
-	chat  string
+	key   *nodeKey
 	seq   int64
 	prev  string
 	count int
 }
 
 func (w *chainWriter) add(e events.Event) error {
-	e.ChatID, e.Origin = w.chat, w.d.node.origin
+	e.ChatID, e.Origin = w.c.id, w.key.origin
 	e.Seq, e.Prev = w.seq+1, w.prev
-	e.Sign(w.d.node.priv)
+	e.Sign(w.key.priv)
 	if err := putEvent(w.tx, e); err != nil {
 		return err
 	}
@@ -103,46 +54,69 @@ func (w *chainWriter) simple(kind, ts string, lamport int64, payload, assigned a
 	return w.add(events.Event{Lamport: lamport, Kind: kind, Payload: p, Assigned: a, TS: ts})
 }
 
-func (d *DB) backfillChat(chatID, createdAt string) (int, bool, error) {
-	tx, err := d.db.Begin()
+// backfillEvents writes the events of the rows the chat has and marks the chat complete. It does
+// nothing for a chat that is complete already. It returns the number of events written.
+func (c *chatDB) backfillEvents(key *nodeKey) (int, error) {
+	tx, err := c.db.Begin()
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	var marked, have int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM meta WHERE key = ?`, metaKey(chatID)).Scan(&marked); err != nil {
-		return 0, false, err
+	var done, have int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM meta WHERE key = ? AND value = 'done'`, metaBackfill).Scan(&done); err != nil {
+		return 0, err
 	}
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM events WHERE chat_id = ?`, chatID).Scan(&have); err != nil {
-		return 0, false, err
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&have); err != nil {
+		return 0, err
 	}
-	if marked > 0 || have > 0 {
-		return 0, false, nil
+	if done > 0 || have > 0 { // already in the journal: never twice
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done')`, metaBackfill); err != nil {
+			return 0, err
+		}
+		return 0, tx.Commit()
 	}
-	w := &chainWriter{d: d, tx: tx, chat: chatID}
-	if err := d.backfillState(w, createdAt); err != nil {
-		return 0, false, err
+	var created string
+	if err := tx.QueryRow(`SELECT created_at FROM chat WHERE id = 1`).Scan(&created); err != nil {
+		return 0, err
 	}
-	if err := d.backfillTimeline(w); err != nil {
-		return 0, false, err
+	w := &chainWriter{c: c, tx: tx, key: key}
+	if err := c.backfillState(w, created); err != nil {
+		return 0, err
 	}
-	if err := d.backfillSnapshots(w); err != nil {
-		return 0, false, err
+	if err := c.backfillTimeline(w); err != nil {
+		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES (?, 'done')`, metaKey(chatID)); err != nil {
-		return 0, false, err
+	if err := c.backfillSnapshots(w); err != nil {
+		return 0, err
 	}
-	return w.count, true, tx.Commit()
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done')`, metaBackfill); err != nil {
+		return 0, err
+	}
+	return w.count, tx.Commit()
+}
+
+func eachRow(tx *sql.Tx, q string, args []any, fn func(*sql.Rows) error) error {
+	rows, err := tx.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := fn(rows); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 // backfillState: nicks (with their pinned roles), rooms, memberships, settings of the chat.
-func (d *DB) backfillState(w *chainWriter, ts string) error {
+func (c *chatDB) backfillState(w *chainWriter, ts string) error {
 	type nickRow struct {
 		nick, hash, role, pub string
 		seen                  int64
 	}
 	var nicks []nickRow
-	err := eachRow(w.tx, `SELECT nick, key_hash, seen, pinned_role, pubkey FROM nicks WHERE chat_id = ? ORDER BY nick`, []any{w.chat}, func(rows *sql.Rows) error {
+	err := eachRow(w.tx, `SELECT nick, key_hash, seen, pinned_role, pubkey FROM nicks ORDER BY nick`, nil, func(rows *sql.Rows) error {
 		var n nickRow
 		if err := rows.Scan(&n.nick, &n.hash, &n.seen, &n.role, &n.pub); err != nil {
 			return err
@@ -165,7 +139,7 @@ func (d *DB) backfillState(w *chainWriter, ts string) error {
 	}
 	type roomRow struct{ room, topic, by string }
 	var rooms []roomRow
-	err = eachRow(w.tx, `SELECT room, topic, created_by FROM rooms WHERE chat_id = ? AND room != ? ORDER BY room`, []any{w.chat, proto.RoomCommon}, func(rows *sql.Rows) error {
+	err = eachRow(w.tx, `SELECT room, topic, created_by FROM rooms WHERE room != ? ORDER BY room`, []any{proto.RoomCommon}, func(rows *sql.Rows) error {
 		var r roomRow
 		if err := rows.Scan(&r.room, &r.topic, &r.by); err != nil {
 			return err
@@ -182,7 +156,7 @@ func (d *DB) backfillState(w *chainWriter, ts string) error {
 		}
 	}
 	var members [][2]string
-	err = eachRow(w.tx, `SELECT room, nick FROM room_members WHERE chat_id = ? AND room != ? ORDER BY room, nick`, []any{w.chat, proto.RoomCommon}, func(rows *sql.Rows) error {
+	err = eachRow(w.tx, `SELECT room, nick FROM room_members WHERE room != ? ORDER BY room, nick`, []any{proto.RoomCommon}, func(rows *sql.Rows) error {
 		var m [2]string
 		if err := rows.Scan(&m[0], &m[1]); err != nil {
 			return err
@@ -199,7 +173,7 @@ func (d *DB) backfillState(w *chainWriter, ts string) error {
 		}
 	}
 	var settings [][2]string
-	err = eachRow(w.tx, `SELECT key, value FROM settings WHERE scope = ? ORDER BY key`, []any{w.chat}, func(rows *sql.Rows) error {
+	err = eachRow(w.tx, `SELECT key, value FROM settings ORDER BY key`, nil, func(rows *sql.Rows) error {
 		var s [2]string
 		if err := rows.Scan(&s[0], &s[1]); err != nil {
 			return err
@@ -218,20 +192,6 @@ func (d *DB) backfillState(w *chainWriter, ts string) error {
 	return nil
 }
 
-func eachRow(tx *sql.Tx, q string, args []any, fn func(*sql.Rows) error) error {
-	rows, err := tx.Query(q, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := fn(rows); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
 // A row of the board's journal or of a page's versions waiting to become an event.
 type legacyRow struct {
 	lamport                 int64
@@ -245,9 +205,9 @@ type legacyRow struct {
 	touch                   touch
 }
 
-func (d *DB) backfillTimeline(w *chainWriter) error {
+func (c *chatDB) backfillTimeline(w *chainWriter) error {
 	var rest []legacyRow
-	err := eachRow(w.tx, `SELECT id, lamport, ts, actor, actor_owner, actor_grant, kind, author_pub, sig, payload FROM board_log WHERE chat_id = ?`, []any{w.chat}, func(rows *sql.Rows) error {
+	err := eachRow(w.tx, `SELECT id, lamport, ts, actor, actor_owner, actor_grant, kind, author_pub, sig, payload FROM board_log`, nil, func(rows *sql.Rows) error {
 		r := legacyRow{class: 1}
 		var id int64
 		var owner int
@@ -261,7 +221,7 @@ func (d *DB) backfillTimeline(w *chainWriter) error {
 	if err != nil {
 		return err
 	}
-	err = eachRow(w.tx, `SELECT path, version, lamport, ts, author, author_owner, note, deleted, author_pub, sig, payload FROM doc_versions WHERE chat_id = ?`, []any{w.chat}, func(rows *sql.Rows) error {
+	err = eachRow(w.tx, `SELECT path, version, lamport, ts, author, author_owner, note, deleted, author_pub, sig, payload FROM doc_versions`, nil, func(rows *sql.Rows) error {
 		r := legacyRow{class: 2}
 		var path string
 		var version int64
@@ -288,16 +248,16 @@ func (d *DB) backfillTimeline(w *chainWriter) error {
 		return a.id < b.id
 	})
 
-	rec := &recorder{d: w.d, tx: w.tx, chat: w.chat}
+	rec := &recorder{c: c, tx: w.tx}
 	next := 0
-	flush := func(beforeLamport int64) error { // rows of the board and documents up to a clock value
-		for next < len(rest) && rest[next].lamport <= beforeLamport {
+	flush := func(upTo int64) error { // rows of the board and documents up to a clock value
+		for next < len(rest) && rest[next].lamport <= upTo {
 			n := 1
 			if rest[next].class == 2 && rest[next].sig != "" && next+1 < len(rest) && rest[next+1].class == 2 &&
 				rest[next+1].lamport == rest[next].lamport && rest[next+1].sig == rest[next].sig {
 				n = 2 // the two versions a move writes are one event
 			}
-			if err := d.legacyEvent(w, rec, rest[next:next+n]); err != nil {
+			if err := c.legacyEvent(w, rec, rest[next:next+n]); err != nil {
 				return err
 			}
 			next += n
@@ -313,7 +273,7 @@ func (d *DB) backfillTimeline(w *chainWriter) error {
 		}
 		var page []msgRow
 		err := eachRow(w.tx, `SELECT id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, lamport, author_pub, sig, payload
-			FROM messages WHERE chat_id = ? AND (lamport, id) > (?, ?) ORDER BY lamport, id LIMIT ?`, []any{w.chat, lamport, id, backfillBatch}, func(rows *sql.Rows) error {
+			FROM messages WHERE (lamport, id) > (?, ?) ORDER BY lamport, id LIMIT ?`, []any{lamport, id, backfillBatch}, func(rows *sql.Rows) error {
 			m := &proto.Message{}
 			r := store.Record{T: "msg", Msg: m}
 			var owner int
@@ -332,7 +292,7 @@ func (d *DB) backfillTimeline(w *chainWriter) error {
 			if err := flush(m.lam - 1); err != nil { // rows of earlier clock values first
 				return err
 			}
-			e, _, err := recordEvent(w.chat, m.rec, m.lam)
+			e, _, err := recordEvent(c.id, m.rec, m.lam)
 			if err != nil {
 				return err
 			}
@@ -366,7 +326,7 @@ func docKind(note string, deleted bool) string {
 
 // legacyEvent writes one event for one row of the board's journal, or one or two versions of a
 // page: the row images are the rows as they are now.
-func (d *DB) legacyEvent(w *chainWriter, rec *recorder, rows []legacyRow) error {
+func (c *chatDB) legacyEvent(w *chainWriter, rec *recorder, rows []legacyRow) error {
 	r := rows[0]
 	imgs := []image{}
 	for _, x := range rows {
@@ -384,7 +344,7 @@ func (d *DB) legacyEvent(w *chainWriter, rec *recorder, rows []legacyRow) error 
 	}
 	e := events.Event{Lamport: r.lamport, Kind: r.kind, Payload: r.payload, AuthorPub: r.authorPub, Sig: r.sig, Assigned: assigned, TS: r.ts}
 	if r.sig != "" { // the kind the author signed is the operation, not what the journal row calls it
-		e.ChatID, e.Origin = w.chat, d.node.origin
+		e.ChatID, e.Origin = c.id, w.key.origin
 		cands := []string{r.kind, "board.revert", "board.workflow_set"}
 		if r.class == 2 {
 			cands = []string{r.kind, "doc.put", "doc.append", "doc.move", "doc.delete", "doc.revert"}
@@ -405,10 +365,10 @@ func (d *DB) legacyEvent(w *chainWriter, rec *recorder, rows []legacyRow) error 
 
 // backfillSnapshots: one event with images of all rows of the board that are not rows of its
 // journal, one for the documents.
-func (d *DB) backfillSnapshots(w *chainWriter) error {
-	rec := &recorder{d: d, tx: w.tx, chat: w.chat}
+func (c *chatDB) backfillSnapshots(w *chainWriter) error {
+	rec := &recorder{c: c, tx: w.tx}
 	var lamport int64
-	if err := w.tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, w.chat).Scan(&lamport); err != nil {
+	if err := w.tx.QueryRow(`SELECT lamport FROM chat WHERE id = 1`).Scan(&lamport); err != nil {
 		return err
 	}
 	for _, s := range []struct {
@@ -422,7 +382,7 @@ func (d *DB) backfillSnapshots(w *chainWriter) error {
 		{"board_comments", "id", scanIntKey},
 		{"docs", "path", scanStrKey},
 	} {
-		if err := d.collectKeys(w, rec, s.table, s.keyCol, s.keyOf); err != nil {
+		if err := collectKeys(w, rec, s.table, s.keyCol, s.keyOf); err != nil {
 			return err
 		}
 	}
@@ -468,20 +428,21 @@ func scanStrKey(rows *sql.Rows) ([]any, error) {
 	return []any{k}, err
 }
 
-// collectKeys notes every row of a table of the chat in rec.
-func (d *DB) collectKeys(w *chainWriter, rec *recorder, table, keyCol string, keyOf func(*sql.Rows) ([]any, error)) error {
+// collectKeys notes every row of a table in rec.
+func collectKeys(w *chainWriter, rec *recorder, table, keyCol string, keyOf func(*sql.Rows) ([]any, error)) error {
 	if keyCol == "" {
 		var one int
-		err := w.tx.QueryRow(`SELECT 1 FROM `+table+` WHERE chat_id = ?`, w.chat).Scan(&one)
+		err := w.tx.QueryRow(`SELECT 1 FROM ` + table + ` LIMIT 1`).Scan(&one)
 		if err == nil {
 			rec.touch(table)
+			return nil
 		}
-		if errors.Is(err, sql.ErrNoRows) {
+		if err == sql.ErrNoRows {
 			return nil
 		}
 		return err
 	}
-	return eachRow(w.tx, `SELECT `+keyCol+` FROM `+table+` WHERE chat_id = ? ORDER BY `+keyCol, []any{w.chat}, func(rows *sql.Rows) error {
+	return eachRow(w.tx, `SELECT `+keyCol+` FROM `+table+` ORDER BY `+keyCol, nil, func(rows *sql.Rows) error {
 		k, err := keyOf(rows)
 		if err != nil {
 			return err

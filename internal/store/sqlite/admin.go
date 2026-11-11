@@ -3,51 +3,85 @@ package sqlite
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-var _ store.AdminStore = (*DB)(nil)
+var (
+	_ store.AdminStore        = (*DB)(nil)
+	_ store.AttestedSettings  = (*DB)(nil)
+	_ store.ChatSettingsStore = (*DB)(nil)
+)
 
-// Settings returns every stored setting as scope → key → value.
+// Settings returns the broker-wide settings as scope "" → key → value. The settings of a chat are
+// in its own database (ChatSettings).
 func (d *DB) Settings() (map[string]map[string]string, error) {
-	rows, err := d.db.Query(`SELECT scope, key, value FROM settings`)
+	rows, err := d.node.Query(`SELECT key, value FROM settings`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]map[string]string{}
+	out := map[string]map[string]string{"": {}}
 	for rows.Next() {
-		var scope, key, value string
-		if err := rows.Scan(&scope, &key, &value); err != nil {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
 			return nil, err
 		}
-		if out[scope] == nil {
-			out[scope] = map[string]string{}
-		}
-		out[scope][key] = value
+		out[""][key] = value
 	}
 	return out, rows.Err()
+}
+
+// ChatSettings returns the settings of one chat.
+func (d *DB) ChatSettings(chatID string) (map[string]string, error) {
+	c, err := d.chat(chatID, "", false)
+	if err != nil || c == nil {
+		return map[string]string{}, err
+	}
+	out := map[string]string{}
+	err = c.each(`SELECT key, value FROM settings`, nil, func(rows *sql.Rows) error {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return err
+		}
+		out[k] = v
+		return nil
+	})
+	return out, err
 }
 
 // SetSetting stores a value, replacing an earlier one. A setting of a chat (scope is its id) is an
 // event of that chat.
 func (d *DB) SetSetting(scope, key, value string) error {
-	if scope != "" {
-		var one int
-		switch err := d.db.QueryRow(`SELECT 1 FROM chats WHERE id = ?`, scope).Scan(&one); {
-		case err == nil:
-			return d.setChatSetting(scope, key, value)
-		case !errors.Is(err, sql.ErrNoRows):
-			return err
-		}
+	if scope == "" {
+		_, err := d.node.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, key, value)
+		return err
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)`, scope, key, value)
-	return err
+	return d.setChatSetting(scope, key, value, nil)
+}
+
+// SetChatSettingAttested is SetSetting for a setting changed by a signed administrator operation:
+// the event carries the owner's signature.
+func (d *DB) SetChatSettingAttested(chatID, key, value string, a store.AdminAttest) error {
+	return d.setChatSetting(chatID, key, value, &a)
+}
+
+func (d *DB) setChatSetting(chatID, key, value string, a *store.AdminAttest) error {
+	c, err := d.chat(chatID, "", false)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return fmt.Errorf("sqlite: no chat %.8s for the setting %s", chatID, key)
+	}
+	return c.chatSetting(key, value, a)
 }
 
 // LogAdmin appends an administrator attempt to the log.
 func (d *DB) LogAdmin(e store.AdminEntry) error {
-	_, err := d.db.Exec(`INSERT INTO admin_log (ts, op, args, result, origin) VALUES (?, ?, ?, ?, ?)`, e.TS, e.Op, e.Args, e.Result, e.Origin)
+	_, err := d.node.Exec(`INSERT INTO admin_log (ts, op, args, result, origin) VALUES (?, ?, ?, ?, ?)`, e.TS, e.Op, e.Args, e.Result, e.Origin)
 	return err
 }
+
+var errNoChat = errors.New("no such chat")

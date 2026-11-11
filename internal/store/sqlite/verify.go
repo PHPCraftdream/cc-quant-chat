@@ -3,6 +3,7 @@ package sqlite
 import (
 	"crypto/ed25519"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
@@ -29,56 +30,33 @@ func (i Issue) String() string {
 
 // VerifyReport: what Verify read and what it found.
 type VerifyReport struct {
-	Chats  int
 	Events int
 	Signed int // events with an author's signature that verified
 	Issues []Issue
 }
 
-// Verify checks the journal of one chat (all chats when chatID is ""): every origin's chain has
-// no gaps and each event names its predecessor (prev), the node's signature verifies against the
-// key recorded for the origin, the author's signature verifies, and the chat's clock is not
-// behind its events. Nothing is changed.
+// Verify checks the journal of a chat: every origin's chain has no gaps and each event names its
+// predecessor (prev), the node's signature verifies against the key recorded for the origin, the
+// author's signature verifies, and the chat's clock is neither behind nor ahead of its events.
+// Nothing is changed.
 func (d *DB) Verify(chatID string) (VerifyReport, error) {
 	var rep VerifyReport
-	chats, err := d.chatIDs(chatID)
+	c, err := d.chat(chatID, "", false)
 	if err != nil {
 		return rep, err
+	}
+	if c == nil {
+		return rep, fmt.Errorf("no chat %.8s", chatID)
 	}
 	keys, err := d.originKeys()
 	if err != nil {
 		return rep, err
 	}
-	for _, c := range chats {
-		rep.Chats++
-		if err := d.verifyChat(c[0], keys, &rep); err != nil {
-			return rep, err
-		}
-	}
-	return rep, nil
+	return rep, c.verify(keys, &rep)
 }
 
-func (d *DB) originKeys() (map[string]ed25519.PublicKey, error) {
-	rows, err := d.db.Query(`SELECT origin, pubkey FROM origins`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	keys := map[string]ed25519.PublicKey{}
-	for rows.Next() {
-		var o string
-		var pub []byte
-		if err := rows.Scan(&o, &pub); err != nil {
-			return nil, err
-		}
-		keys[o] = ed25519.PublicKey(pub)
-	}
-	return keys, rows.Err()
-}
-
-func (d *DB) verifyChat(chatID string, keys map[string]ed25519.PublicKey, rep *VerifyReport) error {
-	rows, err := d.db.Query(`SELECT origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events
-		WHERE chat_id = ? ORDER BY origin, seq`, chatID)
+func (c *chatDB) verify(keys map[string][]byte, rep *VerifyReport) error {
+	rows, err := c.db.Query(`SELECT origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events ORDER BY origin, seq`)
 	if err != nil {
 		return err
 	}
@@ -86,7 +64,7 @@ func (d *DB) verifyChat(chatID string, keys map[string]ed25519.PublicKey, rep *V
 	chatEvents := 0
 	lastOrigin, lastSeq, lastID := "", int64(0), ""
 	for rows.Next() {
-		e := events.Event{ChatID: chatID}
+		e := events.Event{ChatID: c.id}
 		if err := rows.Scan(&e.Origin, &e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig); err != nil {
 			rows.Close()
 			return err
@@ -94,7 +72,7 @@ func (d *DB) verifyChat(chatID string, keys map[string]ed25519.PublicKey, rep *V
 		rep.Events++
 		chatEvents++
 		bad := func(what string) {
-			rep.Issues = append(rep.Issues, Issue{Chat: chatID, Origin: e.Origin, Seq: e.Seq, What: what})
+			rep.Issues = append(rep.Issues, Issue{Chat: c.id, Origin: e.Origin, Seq: e.Seq, What: what})
 		}
 		if e.Origin != lastOrigin {
 			lastOrigin, lastSeq, lastID = e.Origin, 0, ""
@@ -113,7 +91,7 @@ func (d *DB) verifyChat(chatID string, keys map[string]ed25519.PublicKey, rep *V
 			bad("no key is recorded for the origin of this event")
 		case e.NodeSig == "":
 			bad("the node did not sign this event")
-		case !e.VerifyNode(pub):
+		case !e.VerifyNode(ed25519.PublicKey(pub)):
 			bad("the node's signature does not verify")
 		}
 		if ok, signed := e.VerifyAuthor(); !ok {
@@ -127,21 +105,14 @@ func (d *DB) verifyChat(chatID string, keys map[string]ed25519.PublicKey, rep *V
 	if err != nil {
 		return err
 	}
-	if clock, err := d.chatClockNow(chatID); err != nil {
+	var clock int64
+	switch err := c.db.QueryRow(`SELECT lamport FROM chat WHERE id = 1`).Scan(&clock); {
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
 		return err
-	} else if chatEvents > 0 && clock < maxLamport {
-		rep.Issues = append(rep.Issues, Issue{Chat: chatID, What: fmt.Sprintf("the chat's clock %d is behind its events (%d)", clock, maxLamport)})
-	} else if chatEvents > 0 && clock > maxLamport {
-		rep.Issues = append(rep.Issues, Issue{Chat: chatID, What: fmt.Sprintf("the chat's clock %d is ahead of its events (%d): rows were written without events (an older broker?); do not rebuild", clock, maxLamport)})
+	case chatEvents > 0 && clock < maxLamport:
+		rep.Issues = append(rep.Issues, Issue{Chat: c.id, What: fmt.Sprintf("the chat's clock %d is behind its events (%d)", clock, maxLamport)})
+	case chatEvents > 0 && clock > maxLamport:
+		rep.Issues = append(rep.Issues, Issue{Chat: c.id, What: fmt.Sprintf("the chat's clock %d is ahead of its events (%d): rows were written without events (an older broker?); do not rebuild", clock, maxLamport)})
 	}
 	return nil
-}
-
-func (d *DB) chatClockNow(chatID string) (int64, error) {
-	var n int64
-	err := d.db.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, chatID).Scan(&n)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return n, err
 }

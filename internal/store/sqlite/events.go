@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -24,18 +23,19 @@ type nodeKey struct {
 	priv   ed25519.PrivateKey
 }
 
-// SetNode gives the database the identity events are signed with. Without it events are written
+// SetNode gives the store the identity events are signed with. Without it events are written
 // unsigned under the origin their writer names (unit tests).
-func (d *DB) SetNode(origin string, priv ed25519.PrivateKey) { d.node = &nodeKey{origin, priv} }
-
-func (d *DB) originOr(fallback string) string {
-	if d.node != nil {
-		return d.node.origin
-	}
-	return fallback
+func (d *DB) SetNode(origin string, priv ed25519.PrivateKey) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.key = &nodeKey{origin, priv}
 }
 
-func now() string { return time.Now().UTC().Format(time.RFC3339) }
+func (d *DB) nodeKey() *nodeKey {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.key
+}
 
 // jsonText is the canonical JSON of v (sorted keys, no spaces), as stored in payload/assigned.
 func jsonText(v any) (string, error) {
@@ -48,17 +48,17 @@ func jsonText(v any) (string, error) {
 }
 
 func putEvent(tx *sql.Tx, e events.Event) error {
-	_, err := tx.Exec(`INSERT INTO events (chat_id, origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ChatID, e.Origin, e.Seq, e.Prev, e.Lamport, e.Kind, e.Payload, e.AuthorPub, e.Sig, e.Assigned, e.TS, e.NodeSig)
+	_, err := tx.Exec(`INSERT INTO events (origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.Origin, e.Seq, e.Prev, e.Lamport, e.Kind, e.Payload, e.AuthorPub, e.Sig, e.Assigned, e.TS, e.NodeSig)
 	return err
 }
 
-// chainTail: the last event of (chat, origin): its seq and ID (0 and "" for none).
-func chainTail(tx *sql.Tx, chatID, origin string) (int64, string, error) {
-	e := events.Event{ChatID: chatID, Origin: origin}
+// chainTail: the last event of an origin: its seq and ID (0 and "" for none).
+func (c *chatDB) chainTail(tx *sql.Tx, origin string) (int64, string, error) {
+	e := events.Event{ChatID: c.id, Origin: origin}
 	err := tx.QueryRow(`SELECT seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts FROM events
-		WHERE chat_id = ? AND origin = ? ORDER BY seq DESC LIMIT 1`, chatID, origin).
+		WHERE origin = ? ORDER BY seq DESC LIMIT 1`, origin).
 		Scan(&e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", nil
@@ -66,32 +66,36 @@ func chainTail(tx *sql.Tx, chatID, origin string) (int64, string, error) {
 	return e.Seq, e.ID(), err
 }
 
-// appendEvent chains the event to the node's journal of its chat, signs it and stores it.
-func (d *DB) appendEvent(tx *sql.Tx, e events.Event) (events.Event, error) {
-	e.Origin = d.originOr(e.Origin)
-	seq, prev, err := chainTail(tx, e.ChatID, e.Origin)
+// appendEvent chains the event to the node's journal of the chat, signs it and stores it.
+func (c *chatDB) appendEvent(tx *sql.Tx, e events.Event) (events.Event, error) {
+	e.ChatID = c.id
+	key := c.s.nodeKey()
+	if key != nil {
+		e.Origin = key.origin
+	}
+	seq, prev, err := c.chainTail(tx, e.Origin)
 	if err != nil {
 		return e, err
 	}
 	e.Seq, e.Prev = seq+1, prev
-	if d.node != nil {
-		e.Sign(d.node.priv)
+	if key != nil {
+		e.Sign(key.priv)
 	}
 	return e, putEvent(tx, e)
 }
 
-func chatClock(tx *sql.Tx, chatID string) (int64, error) {
+func chatClock(tx *sql.Tx) (int64, error) {
 	var n int64
-	err := tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, chatID).Scan(&n)
+	err := tx.QueryRow(`SELECT lamport FROM chat WHERE id = 1`).Scan(&n)
 	return n, err
 }
 
 // tick advances the chat's logical clock and returns the new value.
-func tick(tx *sql.Tx, chatID string) (int64, error) {
-	if _, err := tx.Exec(`UPDATE chats SET lamport = lamport + 1 WHERE id = ?`, chatID); err != nil {
+func tick(tx *sql.Tx) (int64, error) {
+	if _, err := tx.Exec(`UPDATE chat SET lamport = lamport + 1 WHERE id = 1`); err != nil {
 		return 0, err
 	}
-	return chatClock(tx, chatID)
+	return chatClock(tx)
 }
 
 // msgPayload is the canonical request of a message: what a signing client signed, rebuilt for an
@@ -215,9 +219,9 @@ func applyMsg(tx *sql.Tx, e events.Event) error {
 	if e.Sig != "" {
 		payload = e.Payload // kept with the row the way the signature needs it
 	}
-	_, err = tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport, author_pub, sig, payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ChatID, a.ID, a.Thread, str(p, "room"), a.From, a.FromRole, str(p, "to"), str(p, "text"), replyTo, e.TS,
+	_, err = tx.Exec(`INSERT INTO messages (id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport, author_pub, sig, payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Thread, str(p, "room"), a.From, a.FromRole, str(p, "to"), str(p, "text"), replyTo, e.TS,
 		str(p, "client_msg_id"), a.Owner, e.Origin, e.Lamport, e.AuthorPub, e.Sig, payload)
 	return err
 }
@@ -239,57 +243,44 @@ func applySimple(tx *sql.Tx, e events.Event) error {
 		if f, ok := a["seen"].(float64); ok {
 			seen = int64(f)
 		}
-		if _, err := tx.Exec(`INSERT INTO nicks (chat_id, nick, key_hash, seen, pubkey) VALUES (?, ?, ?, ?, ?)`,
-			e.ChatID, str(p, "nick"), str(a, "hash"), seen, str(p, "pub")); err != nil {
+		if _, err := tx.Exec(`INSERT INTO nicks (nick, key_hash, seen, pubkey) VALUES (?, ?, ?, ?)`,
+			str(p, "nick"), str(a, "hash"), seen, str(p, "pub")); err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`, e.ChatID, proto.RoomCommon, str(p, "nick"))
+		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (room, nick) VALUES (?, ?)`, proto.RoomCommon, str(p, "nick"))
 		return err
 	case "nick.key", "nick.reset": // the nick's credentials as they are now
-		_, err = tx.Exec(`UPDATE nicks SET key_hash = ?, pubkey = ? WHERE chat_id = ? AND nick = ?`, str(a, "hash"), str(p, "pub"), e.ChatID, str(p, "nick"))
+		_, err = tx.Exec(`UPDATE nicks SET key_hash = ?, pubkey = ? WHERE nick = ?`, str(a, "hash"), str(p, "pub"), str(p, "nick"))
 	case "nick.pin":
-		_, err = tx.Exec(`UPDATE nicks SET pinned_role = ? WHERE chat_id = ? AND nick = ?`, str(p, "role"), e.ChatID, str(p, "nick"))
+		_, err = tx.Exec(`UPDATE nicks SET pinned_role = ? WHERE nick = ?`, str(p, "role"), str(p, "nick"))
 	case "room.create":
-		_, err = tx.Exec(`INSERT OR IGNORE INTO rooms (chat_id, room, topic, created_by) VALUES (?, ?, ?, ?)`,
-			e.ChatID, str(p, "room"), str(p, "topic"), str(p, "created_by"))
+		_, err = tx.Exec(`INSERT OR IGNORE INTO rooms (room, topic, created_by) VALUES (?, ?, ?)`,
+			str(p, "room"), str(p, "topic"), str(p, "created_by"))
 	case "room.join":
-		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`, e.ChatID, str(p, "room"), str(p, "nick"))
+		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (room, nick) VALUES (?, ?)`, str(p, "room"), str(p, "nick"))
 	case "room.leave":
-		_, err = tx.Exec(`DELETE FROM room_members WHERE chat_id = ? AND room = ? AND nick = ?`, e.ChatID, str(p, "room"), str(p, "nick"))
+		_, err = tx.Exec(`DELETE FROM room_members WHERE room = ? AND nick = ?`, str(p, "room"), str(p, "nick"))
 	case "config.set": // the stored value may be the normalized form of the one that was signed
 		value := str(p, "value")
 		if v, ok := a["value"].(string); ok {
 			value = v
 		}
-		_, err = tx.Exec(`INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)`, e.ChatID, str(p, "key"), value)
+		_, err = tx.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, str(p, "key"), value)
 	default:
 		return fmt.Errorf("unknown event kind %q", e.Kind)
 	}
 	return err
 }
 
-func (d *DB) setChatSetting(chatID, key, value string) error {
-	return d.chatSetting(chatID, key, value, nil)
-}
-
-// SetChatSettingAttested is setChatSetting for a setting changed by a signed administrator
-// operation: the event carries the owner's signature.
-func (d *DB) SetChatSettingAttested(chatID, key, value string, a store.AdminAttest) error {
-	return d.chatSetting(chatID, key, value, &a)
-}
-
-// chatSetting stores a chat-scoped setting as an event of that chat.
-func (d *DB) chatSetting(chatID, key, value string, a *store.AdminAttest) error {
-	return d.inTx(func(tx *sql.Tx) error {
-		var one int
-		if err := tx.QueryRow(`SELECT 1 FROM chats WHERE id = ?`, chatID).Scan(&one); err != nil {
-			return err
-		}
-		lam, err := chatClock(tx, chatID)
+// chatSetting stores a setting of a chat as an event of that chat. a is the owner's signature of
+// the administrator operation that set it, if there was one.
+func (c *chatDB) chatSetting(key, value string, a *store.AdminAttest) error {
+	return c.inTx(func(tx *sql.Tx) error {
+		lam, err := chatClock(tx)
 		if err != nil {
 			return err
 		}
-		e := events.Event{ChatID: chatID, Lamport: lam, Kind: "config.set", TS: now()}
+		e := events.Event{Lamport: lam, Kind: "config.set", TS: now()}
 		assigned := map[string]any{"value": value}
 		if a != nil {
 			e.Payload, e.AuthorPub, e.Sig = a.Args, a.Pub, a.Sig
@@ -300,7 +291,7 @@ func (d *DB) chatSetting(chatID, key, value string, a *store.AdminAttest) error 
 		if e.Assigned, err = jsonText(assigned); err != nil {
 			return err
 		}
-		if e, err = d.appendEvent(tx, e); err != nil {
+		if e, err = c.appendEvent(tx, e); err != nil {
 			return err
 		}
 		return applyEvent(tx, e)

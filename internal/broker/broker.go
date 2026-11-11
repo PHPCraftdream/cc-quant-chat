@@ -312,6 +312,20 @@ func (b *Broker) loadChat(id, name string) (*chat, error) {
 	for _, r := range recs {
 		ch.replay(r)
 	}
+	// The settings of a chat are kept with the chat.
+	if cs, ok := b.store.(store.ChatSettingsStore); ok {
+		m, err := cs.ChatSettings(id)
+		if err != nil {
+			log.Printf("broker: chat %s#%s: settings: %v", name, id[:8], err)
+			return nil, err
+		}
+		if len(m) > 0 {
+			if b.settings == nil {
+				b.settings = map[string]map[string]string{}
+			}
+			b.settings[id] = m
+		}
+	}
 	return ch, nil
 }
 

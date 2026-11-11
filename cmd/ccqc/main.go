@@ -54,11 +54,11 @@ Broker (started automatically; one per user):
   ccqc broker [run]         run the broker in the foreground
 
 Database (SQLite, WAL; CCQC_DB, default <user config dir>/ccqc/ccqc.db):
-  ccqc db path              print the database location
-  ccqc db status            applied and pending schema migrations
-  ccqc db migrate           apply pending migrations (the broker also does it on start)
-  ccqc db verify [--chat ID]   check the journal of events: chains, node and author signatures
-  ccqc db rebuild [--chat ID]  build messages, board, documents, nicks again from the journal
+  ccqc db path              print the data directory (node.db, chats/<id>.db)
+  ccqc db status [--chat X] applied and pending schema migrations of node.db and the chat databases
+  ccqc db migrate [--chat X] apply pending migrations (the broker also does it when it opens a chat)
+  ccqc db verify [--chat X]    check the journal of events: chains, node and author signatures (all chats without --chat)
+  ccqc db rebuild [--chat X]   build messages, board, documents, nicks again from the journal
                                and replace what differs (the broker must be stopped)
 
 Used by Claude Code (configured by /quant-setup or the plugin):

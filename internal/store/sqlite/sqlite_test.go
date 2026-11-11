@@ -27,7 +27,7 @@ func openTemp(t *testing.T) (*DB, string) {
 func TestOpenUsesWALAndIsRepeatable(t *testing.T) {
 	db, path := openTemp(t)
 	var mode string
-	if err := db.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
+	if err := db.node.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
 		t.Fatalf("journal_mode = %q, err %v; want wal", mode, err)
 	}
 	db.Close()
@@ -186,16 +186,20 @@ func TestLoadKeepsOnlyTheNewestPerThreadButAllIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	total := store.ThreadWindow + 5
-	tx, err := db.db.Begin()
+	c, err := db.chat(chatID, "", false)
+	if err != nil || c == nil {
+		t.Fatal(c, err)
+	}
+	tx, err := c.db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= total; i++ {
-		if _, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, text, ts) VALUES (?, ?, 'r:common', 'common', 'a', 't', 'ts')`, chatID, i); err != nil {
+		if _, err := tx.Exec(`INSERT INTO messages (id, thread, room, from_nick, text, ts) VALUES (?, 'r:common', 'common', 'a', 't', 'ts')`, i); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, text, ts) VALUES (?, ?, 'd:a|b', 'direct', 'a', 't', 'ts')`, chatID, total+1); err != nil {
+	if _, err := tx.Exec(`INSERT INTO messages (id, thread, room, from_nick, text, ts) VALUES (?, 'd:a|b', 'direct', 'a', 't', 'ts')`, total+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -228,14 +232,25 @@ func TestLoadKeepsOnlyTheNewestPerThreadButAllIDs(t *testing.T) {
 	}
 }
 
-func TestDatabaseFileIsPrivate(t *testing.T) {
-	_, path := openTemp(t)
+func TestDatabaseFilesArePrivate(t *testing.T) {
+	db, path := openTemp(t)
+	if _, err := db.Load(chatID, "x"); err != nil {
+		t.Fatal(err)
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes")
 	}
-	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("mode %v, err %v; want no access for group/others", fi.Mode(), err)
+	dir := filepath.Dir(path)
+	for _, p := range []string{filepath.Join(dir, "node.db"), filepath.Join(dir, "chats", chatID+".db")} {
+		fi, err := os.Stat(p)
+		if err != nil || fi.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s: mode %v, err %v; want no access for group/others", p, fi.Mode(), err)
+		}
+	}
+	for _, p := range []string{dir, filepath.Join(dir, "chats")} {
+		if fi, err := os.Stat(p); err != nil || fi.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s: mode %v, err %v; want a private directory", p, fi.Mode(), err)
+		}
 	}
 }
 
@@ -250,7 +265,7 @@ func TestPathWithURICharacters(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, err := os.Stat(filepath.Join(dir, "ccqc.db")); err != nil {
-		t.Fatalf("database not at the requested path: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "node.db")); err != nil {
+		t.Fatalf("database not in the requested directory: %v", err)
 	}
 }

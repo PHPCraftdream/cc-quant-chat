@@ -49,12 +49,12 @@ func dump(t *testing.T, path string) string {
 	defer raw.Close()
 	var out strings.Builder
 	for _, q := range []string{
-		"SELECT * FROM rooms ORDER BY 1, 2", "SELECT * FROM room_members ORDER BY 1, 2, 3",
-		"SELECT chat_id, nick, key_hash, pinned_role, pubkey FROM nicks ORDER BY 1, 2",
-		"SELECT * FROM messages ORDER BY 1, 2", "SELECT * FROM board_sprints ORDER BY 1, 2", "SELECT * FROM board_tasks ORDER BY 1, 2",
-		"SELECT * FROM board_workflow ORDER BY 1", "SELECT * FROM board_log ORDER BY 1, 2", "SELECT * FROM board_comments ORDER BY 1, 2",
-		"SELECT * FROM docs ORDER BY 1, 2", "SELECT * FROM doc_versions ORDER BY 1, 2, 3", "SELECT * FROM settings ORDER BY 1, 2",
-		"SELECT id, lamport FROM chats ORDER BY 1",
+		"SELECT * FROM rooms ORDER BY 1", "SELECT * FROM room_members ORDER BY 1, 2",
+		"SELECT nick, key_hash, pinned_role, pubkey FROM nicks ORDER BY 1",
+		"SELECT * FROM messages ORDER BY 1", "SELECT * FROM board_sprints ORDER BY 1", "SELECT * FROM board_tasks ORDER BY 1",
+		"SELECT * FROM board_workflow ORDER BY 1", "SELECT * FROM board_log ORDER BY 1", "SELECT * FROM board_comments ORDER BY 1",
+		"SELECT * FROM docs ORDER BY 1", "SELECT * FROM doc_versions ORDER BY 1, 2", "SELECT * FROM settings ORDER BY 1",
+		"SELECT lamport FROM chat",
 	} {
 		rows, err := raw.Query(q)
 		if err != nil {
@@ -80,18 +80,28 @@ func dump(t *testing.T, path string) string {
 // consistent checks that the journal verifies and that the projections are what it gives.
 func consistent(t *testing.T, db *sqlite.DB, after string) {
 	t.Helper()
-	rep, err := db.Rebuild("", true)
-	if err != nil {
-		t.Fatalf("after %s: rebuild: %v", after, err)
+	ids, err := db.ChatIDs()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("after %s: chats: %v %v", after, ids, err)
 	}
-	if rep.Total() != 0 {
-		t.Fatalf("after %s: the projections differ from the journal: %v", after, rep.Diffs)
-	}
-	v, err := db.Verify("")
-	if err != nil || len(v.Issues) > 0 {
-		t.Fatalf("after %s: verify: %v %v", after, err, v.Issues)
+	for _, id := range ids {
+		rep, err := db.Rebuild(id, true)
+		if err != nil {
+			t.Fatalf("after %s: rebuild: %v", after, err)
+		}
+		if rep.Total() != 0 {
+			t.Fatalf("after %s: the projections differ from the journal: %v", after, rep.Diffs)
+		}
+		v, err := db.Verify(id)
+		if err != nil || len(v.Issues) > 0 {
+			t.Fatalf("after %s: verify: %v %v", after, err, v.Issues)
+		}
 	}
 }
+
+// chatFile is the database file of a chat in the data directory of the broker whose old database
+// file is path.
+func chatFile(path, id string) string { return filepath.Join(filepath.Dir(path), "chats", id+".db") }
 
 func mustCode(t *testing.T, what, code string) {
 	t.Helper()
@@ -194,11 +204,11 @@ func runScenario(t *testing.T) (*sqlite.DB, string, string, ed25519.PrivateKey) 
 		t.Fatalf("nick reset: %v", perr)
 	}
 	consistent(t, db, "a nick reset")
-	return db, path, id, priv
+	return db, chatFile(path, id), id, priv
 }
 
 func TestEveryChangeIsAnEventAndTheProjectionsAreWhatTheJournalGives(t *testing.T) {
-	db, path, _, _ := runScenario(t)
+	db, path, id, _ := runScenario(t)
 	before := dump(t, path)
 
 	// A projection that was damaged (a message lost, a task edited, a page gone) is rebuilt from
@@ -220,7 +230,7 @@ func TestEveryChangeIsAnEventAndTheProjectionsAreWhatTheJournalGives(t *testing.
 	if dump(t, path) == before {
 		t.Fatal("the damage was not done")
 	}
-	rep, err := db.Rebuild("", false)
+	rep, err := db.Rebuild(id, false)
 	if err != nil || !rep.Replaced || rep.Total() == 0 {
 		t.Fatalf("rebuild: %+v, %v", rep, err)
 	}
@@ -238,7 +248,7 @@ func TestEveryChangeIsAnEventAndTheProjectionsAreWhatTheJournalGives(t *testing.
 	if err := raw.QueryRow("SELECT MAX(seen) FROM nicks").Scan(&seen); err != nil || seen != 7 {
 		t.Fatalf("the read cursors must survive a rebuild: %d, %v", seen, err)
 	}
-	if rep, err := db.Rebuild("", false); err != nil || rep.Total() != 0 || rep.Replaced {
+	if rep, err := db.Rebuild(id, false); err != nil || rep.Total() != 0 || rep.Replaced {
 		t.Fatalf("a second rebuild finds %+v, %v", rep, err)
 	}
 }
@@ -277,7 +287,7 @@ func TestVerifyFindsAForgedPayloadABrokenChainAndAForeignNodeSignature(t *testin
 	}
 	verify := func() sqlite.VerifyReport {
 		t.Helper()
-		rep, err := db.Verify("")
+		rep, err := db.Verify(id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -293,8 +303,8 @@ func TestVerifyFindsAForgedPayloadABrokenChainAndAForeignNodeSignature(t *testin
 	read := func(seq int64) events.Event {
 		t.Helper()
 		e := events.Event{ChatID: id, Origin: origin, Seq: seq}
-		if err := raw.QueryRow(`SELECT prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events WHERE chat_id = ? AND origin = ? AND seq = ?`,
-			id, origin, seq).Scan(&e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig); err != nil {
+		if err := raw.QueryRow(`SELECT prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events WHERE origin = ? AND seq = ?`,
+			origin, seq).Scan(&e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig); err != nil {
 			t.Fatal(err)
 		}
 		return e
@@ -335,8 +345,8 @@ func TestVerifyFindsAForgedPayloadABrokenChainAndAForeignNodeSignature(t *testin
 	if rep := verify(); !issuesWith(rep, "gap") {
 		t.Fatalf("a removed event: %v", rep.Issues)
 	}
-	exec(`INSERT INTO events (chat_id, origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, origin, gone.Seq, gone.Prev, gone.Lamport, gone.Kind, gone.Payload, gone.AuthorPub, gone.Sig, gone.Assigned, gone.TS, gone.NodeSig)
+	exec(`INSERT INTO events (origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		origin, gone.Seq, gone.Prev, gone.Lamport, gone.Kind, gone.Payload, gone.AuthorPub, gone.Sig, gone.Assigned, gone.TS, gone.NodeSig)
 	exec("UPDATE events SET prev = 'ab' WHERE seq = ?", seq+1)
 	if rep := verify(); !issuesWith(rep, "chain is broken") {
 		t.Fatalf("a changed link: %v", rep.Issues)
@@ -348,15 +358,15 @@ func TestVerifyFindsAForgedPayloadABrokenChainAndAForeignNodeSignature(t *testin
 }
 
 func TestTheJournalAndItsSignaturesSurviveARestart(t *testing.T) {
-	_, path, _, priv := runScenario(t)
+	_, path, id, priv := runScenario(t)
 	db := reopen(t, path)
 	pub := priv.Public().(ed25519.PublicKey)
 	db.SetNode(node.Origin(pub), priv)
-	rep, err := db.Verify("")
+	rep, err := db.Verify(id)
 	if err != nil || len(rep.Issues) != 0 || rep.Events == 0 {
 		t.Fatalf("after a restart: %+v, %v", rep, err)
 	}
-	if rep, err := db.Rebuild("", true); err != nil || rep.Total() != 0 {
+	if rep, err := db.Rebuild(id, true); err != nil || rep.Total() != 0 {
 		t.Fatalf("rebuild after a restart: %+v, %v", rep, err)
 	}
 }
@@ -366,7 +376,7 @@ func TestAnEventThatCannotBeWrittenRollsBackItsProjection(t *testing.T) {
 	b, _, path, _ := journalBroker(t)
 	tok, id := token(t)
 	a := b.mustJoin(t, tok, "alice", newKey(t))
-	raw, err := sqlite.OpenRaw(path)
+	raw, err := sqlite.OpenRaw(chatFile(path, id))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +386,7 @@ func TestAnEventThatCannotBeWrittenRollsBackItsProjection(t *testing.T) {
 	}
 	count := func(q string) int {
 		var n int
-		if err := raw.QueryRow(q, id).Scan(&n); err != nil {
+		if err := raw.QueryRow(q).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -391,9 +401,9 @@ func TestAnEventThatCannotBeWrittenRollsBackItsProjection(t *testing.T) {
 		t.Fatalf("doc: %v", err)
 	}
 	for _, q := range []string{
-		"SELECT COUNT(*) FROM messages WHERE chat_id = ?", "SELECT COUNT(*) FROM board_tasks WHERE chat_id = ?",
-		"SELECT COUNT(*) FROM board_log WHERE chat_id = ?", "SELECT COUNT(*) FROM doc_versions WHERE chat_id = ?",
-		"SELECT lamport FROM chats WHERE id = ?",
+		"SELECT COUNT(*) FROM messages", "SELECT COUNT(*) FROM board_tasks",
+		"SELECT COUNT(*) FROM board_log", "SELECT COUNT(*) FROM doc_versions",
+		"SELECT lamport FROM chat",
 	} {
 		if n := count(q); n != 0 {
 			t.Errorf("%s = %d: a projection was written without its event", q, n)
@@ -425,12 +435,12 @@ func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.
 	mustCode(t, "config_set", adminReq(t, c, k, "config_set", proto.AdminConfig{Chat: id, Key: "board.manager_role", Value: " lead "}))
 	mustCode(t, "nick_reset", adminReq(t, c, k, "nick_reset", proto.AdminRole{Chat: id, Nick: "bob"}))
 	consistent(t, db, "three administrator operations")
-	rep, err := db.Verify("")
+	rep, err := db.Verify(id)
 	if err != nil || rep.Signed != 3 {
 		t.Fatalf("%d signed events (want the three operations): %+v %v", rep.Signed, rep.Issues, err)
 	}
 
-	raw, err := sqlite.OpenRaw(path)
+	raw, err := sqlite.OpenRaw(chatFile(path, id))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +451,7 @@ func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.
 		t.Fatal(err)
 	}
 	e := events.Event{ChatID: id, Origin: origin, Seq: seq}
-	if err := raw.QueryRow(`SELECT prev, lamport, kind, payload, author_pub, sig, assigned, ts FROM events WHERE chat_id = ? AND seq = ?`, id, seq).
+	if err := raw.QueryRow(`SELECT prev, lamport, kind, payload, author_pub, sig, assigned, ts FROM events WHERE seq = ?`, seq).
 		Scan(&e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS); err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +462,7 @@ func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.
 	if _, err := raw.Exec("UPDATE events SET payload = ?, node_sig = ? WHERE seq = ?", e.Payload, e.NodeSig, seq); err != nil {
 		t.Fatal(err)
 	}
-	if rep, err := db.Verify(""); err != nil || !issuesWith(rep, "author's signature does not verify") {
+	if rep, err := db.Verify(id); err != nil || !issuesWith(rep, "author's signature does not verify") {
 		t.Fatalf("a changed decision: %v %v", rep.Issues, err)
 	}
 }

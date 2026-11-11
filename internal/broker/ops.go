@@ -392,6 +392,9 @@ func (b *Broker) unloadIfEmpty(ch *chat) {
 	if len(ch.members) == 0 {
 		if _, memoryOnly := ch.store.(store.Memory); !memoryOnly { // memory-only: unloading would lose history
 			delete(b.chats, ch.id)
+			if r, ok := ch.store.(store.Releaser); ok { // its database is closed until the chat is used again
+				r.Release(ch.id)
+			}
 			log.Printf("broker: chat %s#%s unloaded (nobody present)", ch.name, ch.id[:8])
 		}
 	}

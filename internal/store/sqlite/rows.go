@@ -17,7 +17,7 @@ import (
 // writes the images back in event order and so reaches the same rows without running the rules
 // again.
 
-// imageTables: the tables the images belong to and the columns that identify a row in a chat.
+// imageTables: the tables the images belong to and the columns that identify a row.
 var imageTables = map[string][]string{
 	"board_sprints": {"id"}, "board_tasks": {"id"}, "board_workflow": nil, "board_log": {"id"}, "board_comments": {"id"},
 	"docs": {"path"}, "doc_versions": {"path", "version"},
@@ -30,9 +30,8 @@ type touch struct {
 
 // recorder notes which rows a transaction of the board or of documents wrote.
 type recorder struct {
-	d       *DB
+	c       *chatDB
 	tx      *sql.Tx
-	chat    string
 	touched []touch
 	lamport int64 // the chat's clock at the last write of the transaction
 }
@@ -51,12 +50,17 @@ type image struct {
 	R map[string]any `json:"r"`
 }
 
-// row reads one row of a table by its key as an image (chat_id left out: the event has it).
+// row reads one row of a table by its key as an image.
 func (r *recorder) row(t touch) (image, bool, error) {
-	q := `SELECT * FROM ` + t.table + ` WHERE chat_id = ?`
-	args := []any{r.chat}
+	q := `SELECT * FROM ` + t.table
+	var args []any
 	for i, c := range imageTables[t.table] {
-		q += ` AND ` + c + ` = ?`
+		if i == 0 {
+			q += ` WHERE `
+		} else {
+			q += ` AND `
+		}
+		q += c + ` = ?`
 		args = append(args, t.key[i])
 	}
 	rows, err := r.tx.Query(q, args...)
@@ -81,9 +85,6 @@ func (r *recorder) row(t touch) (image, bool, error) {
 	}
 	img := image{T: t.table, R: map[string]any{}}
 	for i, c := range cols {
-		if c == "chat_id" {
-			continue
-		}
 		if b, ok := vals[i].([]byte); ok {
 			vals[i] = string(b)
 		}
@@ -115,7 +116,7 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 	if ts == "" {
 		ts = now()
 	}
-	_, err = r.d.appendEvent(r.tx, events.Event{ChatID: r.chat, Lamport: r.lamport, Kind: in.Kind, Payload: in.Payload,
+	_, err = r.c.appendEvent(r.tx, events.Event{Lamport: r.lamport, Kind: in.Kind, Payload: in.Payload,
 		AuthorPub: in.AuthorPub, Sig: in.Sig, Assigned: assigned, TS: ts})
 	return err
 }
@@ -140,19 +141,19 @@ func applyImages(tx *sql.Tx, e events.Event) error {
 			late = append(late, img)
 			continue
 		}
-		if err := writeImage(tx, e.ChatID, img); err != nil {
+		if err := writeImage(tx, img); err != nil {
 			return err
 		}
 	}
 	for _, img := range late {
-		if err := writeImage(tx, e.ChatID, img); err != nil {
+		if err := writeImage(tx, img); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeImage(tx *sql.Tx, chatID string, img image) error {
+func writeImage(tx *sql.Tx, img image) error {
 	if _, ok := imageTables[img.T]; !ok {
 		return fmt.Errorf("an image of the unknown table %q", img.T)
 	}
@@ -161,7 +162,7 @@ func writeImage(tx *sql.Tx, chatID string, img image) error {
 		cols = append(cols, c)
 	}
 	sort.Strings(cols)
-	args := []any{chatID}
+	var args []any
 	for _, c := range cols {
 		v := img.R[c]
 		if n, ok := v.(json.Number); ok {
@@ -173,7 +174,7 @@ func writeImage(tx *sql.Tx, chatID string, img image) error {
 		}
 		args = append(args, v)
 	}
-	_, err := tx.Exec(`INSERT OR REPLACE INTO `+img.T+` (chat_id, `+strings.Join(cols, ", ")+`) VALUES (?`+strings.Repeat(", ?", len(cols))+`)`, args...)
+	_, err := tx.Exec(`INSERT OR REPLACE INTO `+img.T+` (`+strings.Join(cols, ", ")+`) VALUES (?`+strings.Repeat(", ?", len(cols)-1)+`)`, args...)
 	return err
 }
 
