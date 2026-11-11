@@ -278,6 +278,7 @@ func TestDeliveryIsConfirmedByAckNotByDisconnect(t *testing.T) {
 	b.waitOffline(t, b.chatOf(id), "bob")
 
 	c2 := b.connect(t)
+	c2.key = c.key
 	w, code := c2.join(tok, "bob", proto.ProtoVersion)
 	if code != "" || len(w.Backlog) != 2 {
 		t.Fatalf("rejoin: code %q, backlog %d; want both unconfirmed messages again", code, len(w.Backlog))
@@ -289,7 +290,8 @@ func TestDeliveryIsConfirmedByAckNotByDisconnect(t *testing.T) {
 	b.waitOffline(t, b.chatOf(id), "bob")
 
 	c3 := b.connect(t)
-	if w, _ := c3.join(tok, "bob", proto.ProtoVersion); len(w.Backlog) != 0 {
+	c3.key = c.key
+	if w, code := c3.join(tok, "bob", proto.ProtoVersion); code != "" || len(w.Backlog) != 0 {
 		t.Fatalf("after ack the backlog must be empty, got %d", len(w.Backlog))
 	}
 	if c3.call("ack", proto.AckArgs{ID: 99}, nil) != "bad_args" {
@@ -309,7 +311,8 @@ func TestOlderClientsKeepTheDisconnectCursor(t *testing.T) {
 	c.close()
 	b.waitOffline(t, b.chatOf(id), "bob")
 	c2 := b.connect(t)
-	if w, _ := c2.join(tok, "bob", 0); len(w.Backlog) != 0 {
+	c2.key = c.key
+	if w, code := c2.join(tok, "bob", 0); code != "" || len(w.Backlog) != 0 {
 		t.Fatalf("legacy client got %d old messages", len(w.Backlog))
 	}
 }
