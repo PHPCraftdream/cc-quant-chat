@@ -23,6 +23,9 @@ var (
 	ErrGap       = errors.New("the event is not the next of its origin: earlier ones are missing")
 	ErrChain     = errors.New("the event does not follow the last event of its origin (prev)")
 	ErrDuplicate = errors.New("the event is stored already")
+	// ErrMissingRef: the event names something made by an event of another origin that has not
+	// arrived yet. Like a gap, it is waited out: the event comes again with what it lacks.
+	ErrMissingRef = errors.New("the event names something that this node does not hold yet")
 )
 
 // ForkError: the origin has two different events with one (origin, seq). Stored is the one this

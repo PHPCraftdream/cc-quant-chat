@@ -45,6 +45,7 @@ type session struct {
 	common map[string]bool                  // chats both share: the ones exchanged
 	remote map[string]map[string]int64      // chat -> origin -> highest seq the peer is known to hold
 	rej    map[string]map[string]*rejection // chat -> origin -> the event that is refused for now
+	waits  map[string]int                   // chat/origin/seq -> times the event was put off for what it names
 	strike int                              // frames in a row in which an event of the peer itself was refused
 	once   sync.Once
 	done   chan struct{}
@@ -100,7 +101,7 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		return err
 	}
 	s := &session{m: m, conn: conn, peer: peer, initiator: initiator, enc: json.NewEncoder(conn),
-		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, done: make(chan struct{})}
+		mine: map[string]bool{}, common: map[string]bool{}, remote: map[string]map[string]int64{}, rej: map[string]map[string]*rejection{}, waits: map[string]int{}, done: make(chan struct{})}
 	var chats []string
 	for _, p := range peers {
 		if p.Origin == peer {
@@ -365,6 +366,15 @@ func (s *session) receive(f Frame) error {
 			}
 		case errors.Is(err, store.ErrGap):
 			blocked[e.Origin] = true // we lack events before this one: our vector, sent below, makes the peer resend
+		case errors.Is(err, store.ErrMissingRef):
+			// It names an event of another origin that has not come: the peer sends that one on our
+			// vector and this one again. Quietly, a few times; a peer that cannot supply it is then
+			// treated as one whose event is refused (backoff, one line of log).
+			blocked[e.Origin] = true
+			if s.waitedFor(chat, e) > maxWaits {
+				s.refuse(chat, e, err)
+				refusedOwn = refusedOwn || e.Origin == s.peer
+			}
 		default:
 			blocked[e.Origin] = true
 			s.refuse(chat, e, err)
@@ -442,7 +452,19 @@ func (s *session) refuse(chat string, e events.Event, why error) {
 func (s *session) forgive(chat string, e events.Event) {
 	s.mu.Lock()
 	delete(s.rej[chat], e.Origin)
+	delete(s.waits, fmt.Sprintf("%s/%s/%d", chat, e.Origin, e.Seq))
 	s.mu.Unlock()
+}
+
+const maxWaits = 3 // how many times an event may be put off for something it names before it counts as refused
+
+// waitedFor counts one more time that the event is put off for something it names.
+func (s *session) waitedFor(chat string, e events.Event) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := fmt.Sprintf("%s/%s/%d", chat, e.Origin, e.Seq)
+	s.waits[k]++
+	return s.waits[k]
 }
 
 // sendVector says what this node holds of a chat; of the origins whose event is refused for now it

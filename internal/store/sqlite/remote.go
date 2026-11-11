@@ -85,18 +85,8 @@ func remoteMsg(tx *sql.Tx, e events.Event, self string) ([]store.Record, error) 
 	if !proto.ValidName(room) || a.From == "" || strings.Contains(a.From, "@") {
 		return nil, errors.New("message: a malformed room or sender")
 	}
-	if e.Sig != "" && !a.Owner { // a nick signs with its key, which its node registered
-		var pub string
-		err := tx.QueryRow(`SELECT pub FROM remote_nicks WHERE origin = ? AND nick = ?`, e.Origin, a.From).Scan(&pub)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("message of %s: that nick was not registered at its node", a.From)
-		}
-		if err != nil {
-			return nil, err
-		}
-		if pub != e.AuthorPub {
-			return nil, fmt.Errorf("message of %s is signed by a key that is not the one registered for the nick", a.From)
-		}
+	if err := checkAuthor(tx, e, a.From); err != nil { // a nick with a key is spoken for only with that key
+		return nil, err
 	}
 	recs, err := ensureRoom(tx, room)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
 // The documents of a chat when other nodes write to it (docs/design-federation.md §4).
@@ -236,7 +237,7 @@ func remoteDoc(tx *sql.Tx, e events.Event, self string) error {
 					return err
 				}
 				if held == 0 {
-					return fmt.Errorf("%w: a version of %s by %s#%d", errMissingRef, path, r.Origin, r.Seq)
+					return fmt.Errorf("%w: a version of %s by %s#%d", store.ErrMissingRef, path, r.Origin, r.Seq)
 				}
 				return nil // written over something that can never be here: kept in the journal, not applied
 			}
@@ -257,6 +258,9 @@ func remoteDoc(tx *sql.Tx, e events.Event, self string) error {
 			signed = e.Payload
 		}
 		author := asStr(v.R["author"])
+		if err := checkAuthor(tx, e, author); err != nil {
+			return err
+		}
 		if author != "" {
 			author = remoteName(self, e.Origin, author)
 		}

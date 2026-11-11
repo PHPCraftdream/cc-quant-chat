@@ -89,6 +89,15 @@ func (r *rogue) send(chat string, pubs map[string]string, evs ...events.Event) {
 func victim(t *testing.T, r *rogue) *tnode {
 	t.Helper()
 	v := newTnode(t, "victim")
+	t.Cleanup(func() {
+		if t.Failed() {
+			v.mu.Lock()
+			defer v.mu.Unlock()
+			for _, l := range v.logs {
+				t.Log("victim log:", l)
+			}
+		}
+	})
 	v.listen()
 	v.chat(chatX)
 	if err := v.db.AddPeer(r.origin, ""); err != nil {

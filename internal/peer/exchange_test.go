@@ -124,7 +124,7 @@ func TestWhatIsPrivateGoesAcrossRedactedAndTheChainStillVerifies(t *testing.T) {
 	if err := a.db.Append(chatX, store.Record{T: "msg", Key: "d:alice|dave", Msg: dm}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.Append(chatX, store.Record{T: "nick", Nick: "alice", Hash: "hash-of-the-secret", Pub: "alice-key"}); err != nil {
+	if err := a.db.Append(chatX, store.Record{T: "nick", Nick: "alice", Hash: "hash-of-the-secret"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.db.Append(chatX, store.Record{T: "pin", Nick: "alice", Role: "lead"}); err != nil {

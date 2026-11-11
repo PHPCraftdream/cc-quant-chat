@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
 // ---- the board events of other nodes ----
@@ -28,7 +30,7 @@ var boardRules = map[string]boardRule{
 	"task.update":   {"task", []string{"title", "description", "assignee", "priority", "sprint"}, "", []string{"board_tasks"}},
 	"task.move":     {"task", []string{"status"}, "", []string{"board_tasks"}},
 	"task.delete":   {"task", []string{"deleted"}, "", []string{"board_tasks"}},
-	"task.comment":  {"task", allBoardFields, "board_comments", nil},
+	"task.comment":  {"task", []string{"comment", "text", "hidden"}, "board_comments", nil},
 	"sprint.create": {"sprint", []string{"name", "goal", "state", "started_at", "closed_at", "deleted"}, "board_sprints", nil},
 	"sprint.update": {"sprint", []string{"name", "goal"}, "", []string{"board_sprints"}},
 	"sprint.start":  {"sprint", []string{"state", "started_at"}, "", []string{"board_sprints"}},
@@ -81,6 +83,17 @@ func checkBoardEvent(e events.Event, ba boardAssigned, log image) error {
 	if rule.make != "" && made != 1 {
 		return fmt.Errorf("%s makes one row of %s, the event has %d", e.Kind, rule.make, made)
 	}
+	if e.Sig != "" {
+		var payload map[string]any
+		dec := json.NewDecoder(bytes.NewReader([]byte(e.Payload)))
+		dec.UseNumber()
+		if err := dec.Decode(&payload); err != nil {
+			return fmt.Errorf("the signed request is not JSON: %w", err)
+		}
+		if err := strictPayload(e.Kind, payload, after); err != nil {
+			return err
+		}
+	}
 	if e.Payload != "" {
 		var payload map[string]any
 		dec := json.NewDecoder(bytes.NewReader([]byte(e.Payload)))
@@ -101,9 +114,6 @@ func checkBoardEvent(e events.Event, ba boardAssigned, log image) error {
 	}
 	return nil
 }
-
-// errMissingRef: the event names something this node does not hold yet; it may come.
-var errMissingRef = errors.New("the event names something that this node does not hold yet")
 
 // boardPlan is what a board event of another node means here.
 type boardPlan struct {
@@ -172,10 +182,20 @@ func remoteBoard(tx *sql.Tx, e events.Event, self string) error {
 	if err := checkBoardEvent(e, ba, *log); err != nil {
 		return err
 	}
+	if actor := asStr(log.R["actor"]); strings.Contains(actor, "@") {
+		return fmt.Errorf("%s: the actor %q is not a name of its own node", e.Kind, actor)
+	} else if err := checkAuthor(tx, e, actor); err != nil {
+		return err
+	}
 	p := &boardPlan{tx: tx, e: e, self: self, ba: ba, local: map[string]map[int64]int64{}, made: map[string]map[int64]int64{}}
 	skip, err := p.resolveRefs()
 	if err != nil || skip {
 		return err
+	}
+	if e.Kind == "revert" {
+		if err := p.checkRevert(*log); err != nil {
+			return err
+		}
 	}
 	return p.apply(*log)
 }
@@ -203,7 +223,7 @@ func (p *boardPlan) resolveRefs() (skip bool, err error) {
 				return false, err
 			}
 			if held == 0 {
-				return false, fmt.Errorf("%w: %s %s#%d", errMissingRef, kind, ref.Origin, ref.Seq)
+				return false, fmt.Errorf("%w: %s %s#%d", store.ErrMissingRef, kind, ref.Origin, ref.Seq)
 			}
 			return true, nil
 		}
