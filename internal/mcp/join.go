@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -8,18 +10,51 @@ import (
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/addr"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// join enters a chat under a nick and remembers it for this Claude Code session, so resuming
-// the session joins again. auto: called on session start; backlog goes out as events.
+// joinTarget names the chat a join is for: an older chat by its token, a chat made for invitations by
+// its id (and name, which the chat tells and the invitation carries).
+type joinTarget struct{ token, id, name string }
+
+// join enters a chat by its token under a nick and remembers it for this Claude Code session, so
+// resuming the session joins again. auto: called on session start; backlog goes out as events.
 func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	token = strings.TrimSpace(token)
 	chatName, chatID, err := proto.ParseToken(token)
 	if err != nil {
 		return "", err
 	}
+	return s.joinTo(joinTarget{token, chatID, chatName}, name, alias, auto, nil)
+}
+
+// joinEntry joins again a chat remembered for the session: by token, or by id and the nick's key.
+func (s *Session) joinEntry(e local.Entry) (string, error) {
+	if e.Token != "" {
+		return s.join(e.Token, e.Name, e.Alias, true)
+	}
+	return s.joinTo(joinTarget{id: e.ChatID, name: e.Chat}, e.Name, e.Alias, true, nil)
+}
+
+// joinInvite enters a chat with a one-time invitation. The invitation is spent by this join and kept
+// nowhere: not in the session's chats, not in the reply, not in an error. The nick is the one the
+// invitation is for.
+func (s *Session) joinInvite(line, alias string) (string, error) {
+	in, err := invite.Parse(line)
+	if err != nil {
+		return "", err // says what is wrong, never what was typed
+	}
+	if in.Kind != invite.KindChat {
+		return "", errors.New("this invitation is not for a chat")
+	}
+	return s.joinTo(joinTarget{id: in.ChatID, name: in.Chat}, in.Nick, alias, false, &in)
+}
+
+// joinTo is the join of a session: the key of the nick, the connection, the state afterwards.
+func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invite.Invitation) (string, error) {
+	chatName, chatID := t.name, t.id
 	lname := chatName
 	if alias != "" {
 		lname = addr.Chat(alias)
@@ -38,29 +73,58 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	s.mu.Lock()
 	if cc := s.chats[lname]; cc != nil {
 		s.mu.Unlock()
-		if cc.token == token {
+		if cc.id == chatID {
 			return "", fmt.Errorf("already joined /%s as @%s; use chat_state", lname, cc.name)
 		}
 		return "", &proto.Error{Code: "chat_name_conflict", Msg: fmt.Sprintf("already in another chat named %q; retry chat_join with alias", lname)}
 	}
 	s.mu.Unlock()
 
-	key := local.NickKey(chatID, name) // the nick's old secret: moves a legacy nick to its key
-	priv, err := local.NickPrivateKey(chatID, name)
-	if err != nil {
-		return "", fmt.Errorf("the nick key could not be read or saved: %w", err)
+	key := ""
+	if t.token != "" {
+		key = local.NickKey(chatID, name) // the nick's old secret: moves a legacy nick to its key
+	}
+	var priv ed25519.PrivateKey
+	if inv != nil { // a new key: the invitation binds it to the nick (and replaces the old one, if any)
+		_, fresh, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return "", err
+		}
+		priv = fresh
+	} else {
+		var err error
+		if priv, err = local.NickPrivateKey(chatID, name); err != nil {
+			return "", fmt.Errorf("the nick key could not be read or saved: %w", err)
+		}
 	}
 	conn, err := client.Connect()
 	if err != nil {
 		return "", err
 	}
 	var w proto.Welcome
-	signer, err := client.JoinSigned(conn.Call, proto.JoinArgs{Token: token, Name: name, Key: key}, priv, chatID, &w)
+	var signer *client.Signer
+	if inv != nil {
+		signer, err = client.JoinInvited(conn.Call, name, priv, *inv, &w)
+	} else {
+		args := proto.JoinArgs{Name: name, Key: key}
+		if t.token != "" {
+			args.Token = t.token
+		} else {
+			args.Chat = chatID
+		}
+		signer, err = client.JoinSigned(conn.Call, args, priv, chatID, &w)
+	}
 	if err != nil {
 		conn.Close()
 		return "", err
 	}
 	keyNote := ""
+	if inv != nil { // the invitation is spent: the key it registered is the way in from now on
+		if err := local.SetNickPrivateKey(chatID, name, priv); err != nil {
+			log.Printf("save nick key: %v", err)
+			keyNote = fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that the owner must issue a new invitation.\n\n", name, err)
+		}
+	}
 	if w.Key != "" {
 		key = w.Key
 		if err := local.SetNickKey(chatID, name, key); err != nil {
@@ -73,7 +137,7 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	if w.Proto < proto.SigningProto {
 		brokerNote = "the broker runs an older ccqc that does not sign events: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
 	}
-	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, priv: priv, signer: signer, conn: conn,
+	cc := &chatConn{s: s, local: lname, token: t.token, id: chatID, name: name, key: key, priv: priv, signer: signer, conn: conn,
 		role: w.State.MyRole, rooms: set(w.State.MyRooms)}
 
 	s.mu.Lock()
@@ -88,7 +152,7 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	// The backlog is handled before live events are read, so ids stay in order for the dedupe.
 	remembered := ""
 	if !auto {
-		remembered = s.remember(local.Entry{Token: token, Name: name, Alias: alias})
+		remembered = s.remember(local.Entry{Token: t.token, ChatID: chatID, Chat: chatName, Name: name, Alias: alias})
 	}
 	if auto {
 		cc.presence(fmt.Sprintf("auto-joined /%s as @%s", lname, name))

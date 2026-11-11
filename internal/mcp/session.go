@@ -110,7 +110,7 @@ func (s *Session) get(chat string) (*chatConn, error) {
 	}
 	sort.Strings(joined)
 	if len(joined) == 0 {
-		return nil, fmt.Errorf("not_joined: not in any chat; the user should run /quant-join <token> <nick>")
+		return nil, fmt.Errorf("not_joined: not in any chat; the user should run /quant-join <invitation>")
 	}
 	return nil, fmt.Errorf("not_joined: not in chat %q; joined: %s", name, strings.Join(joined, ", "))
 }
@@ -122,6 +122,7 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 	}
 	var a struct {
 		Token     string  `json:"token"`
+		Invite    string  `json:"invite"`
 		Name      string  `json:"name"`
 		Alias     string  `json:"alias"`
 		To        string  `json:"to"`
@@ -147,6 +148,9 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 	}
 	switch name {
 	case "chat_join":
+		if a.Invite != "" {
+			return s.joinInvite(a.Invite, a.Alias)
+		}
 		return s.join(a.Token, a.Name, a.Alias, false)
 	case "chat_send":
 		return s.send(a.To, a.Text, a.ReplyTo)

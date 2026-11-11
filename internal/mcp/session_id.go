@@ -114,7 +114,7 @@ func (s *Session) autoJoin(sid string, st *autoState) {
 	for _, e := range entries {
 		var err error
 		for try := 1; try <= autoJoinTries; try++ {
-			if _, err = s.join(e.Token, e.Name, e.Alias, true); err == nil || !(proto.IsCode(err, "name_online") || proto.IsCode(err, "restarting")) {
+			if _, err = s.joinEntry(e); err == nil || !(proto.IsCode(err, "name_online") || proto.IsCode(err, "restarting")) {
 				break // the previous connection of this nick may still be closing: only that and a restarting broker are retried
 			}
 			time.Sleep(autoJoinDelay)

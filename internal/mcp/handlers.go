@@ -42,7 +42,7 @@ func (s *Session) state(chat string) (string, error) {
 		}
 		s.mu.Unlock()
 		if len(list) == 0 {
-			return "not joined to any chat; the user should run /quant-join <token> [name]", nil
+			return "not joined to any chat; the user should run /quant-join <invitation>", nil
 		}
 		sort.Slice(list, func(i, j int) bool { return list[i].local < list[j].local })
 	}

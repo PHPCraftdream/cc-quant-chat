@@ -61,7 +61,9 @@ function heading(kind: ToolKind, input: Record<string, unknown>): { title: strin
     case 'inbox':
       return { title: 'ccqc · inbox' }
     case 'join':
-      // The token is a secret: only the chat name from it, and the nick.
+      // The token and the invitation are secrets: the invitation is not even looked into (it names the
+      // chat and the nick, which the broker's answer shows); of a token, only the chat name and the nick.
+      if (str(input.invite)) return { title: 'ccqc · join by invitation' }
       return { title: `ccqc · join /${chatOfToken(input.token) || '?'}`, subtitle: `as @${str(input.name)}` }
     default:
       return { title: 'ccqc' }

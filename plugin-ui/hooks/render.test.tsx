@@ -170,6 +170,19 @@ test('a join never shows the token', async $ => {
   await ui.unmount()
 })
 
+test('a join by invitation never shows the invitation', async $ => {
+  const secret = 'ccqc1.' + 'Q'.repeat(60) + '.abcd1234'
+  const ui = await $.ui.mount({
+    ...tool('mcp__plugin_quant_chat__chat_join', { invite: secret }, { output: 'chat /team — you are "bob", role: none\nmembers (1):\n' }),
+    surface: 'terminal',
+  })
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(all.includes('QQQQ')).toBe(false)
+  expect(all.includes('ccqc1.')).toBe(false)
+  expect(all.includes('join by invitation')).toBe(true)
+  await ui.unmount()
+})
+
 test('the result row of a chat tool is empty; other tools keep theirs', async ($, on) => {
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)

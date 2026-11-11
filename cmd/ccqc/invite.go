@@ -76,8 +76,10 @@ func findChat(c *client.Conn, what string) (string, error) {
 	for _, x := range r.Chats {
 		fmt.Fprintf(&sb, "\n  %s", x.ID)
 	}
-	return "", fmt.Errorf("several chats are named %q; give the id:%s", name, sb.String())
+	return "", fmt.Errorf("%w: several chats are named %q; give the id:%s", errSeveralChats, name, sb.String())
 }
+
+var errSeveralChats = errors.New("ambiguous chat")
 
 func runInvite(args []string) error {
 	var rest []string

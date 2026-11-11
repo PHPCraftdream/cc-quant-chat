@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	cl "github.com/PHPCraftdream/cc-quant-chat/internal/client"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -352,5 +353,28 @@ func TestTooManyInvitationsOnOneConnectionAreRefusedWhatEverTheirIds(t *testing.
 	}
 	if last != "rate_limited" {
 		t.Fatalf("one try too many: %q", last)
+	}
+}
+
+// The client's own code (what a session runs) makes the proof the broker wants.
+func TestTheProofOfTheClientCodeIsTheOneTheBrokerChecks(t *testing.T) {
+	ic := newInvitedChat(t)
+	in := ic.issue(t, "kim")
+	key := newKey(t)
+	c := ic.b.connect(t)
+	var w proto.Welcome
+	signer, err := cl.JoinInvited(c.callE, "kim", key, in, &w)
+	if err != nil || signer == nil || w.State.Me != "kim" {
+		t.Fatalf("%v %v %+v", signer, err, w.State)
+	}
+	c.close()
+	ic.b.waitOffline(t, ic.b.chatOf(ic.chat), "kim")
+	var w2 proto.Welcome
+	if _, err := cl.JoinInvited(ic.b.connect(t).callE, "kim", newKey(t), in, &w2); codeOf(err) != "invite_invalid" {
+		t.Fatalf("the same invitation again: %v", err)
+	}
+	wrongNick := ic.issue(t, "lee")
+	if _, err := cl.JoinInvited(ic.b.connect(t).callE, "kim", newKey(t), wrongNick, &w2); codeOf(err) != "invite_invalid" {
+		t.Fatalf("an invitation for another nick: %v", err)
 	}
 }

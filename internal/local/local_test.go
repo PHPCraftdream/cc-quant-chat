@@ -1,8 +1,12 @@
 package local
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -153,5 +157,37 @@ func TestFindChatTokenTakesTheNewestSessionsEntry(t *testing.T) {
 	}
 	if _, ok := FindChatToken("nope"); ok {
 		t.Fatal("found a token for a chat nobody joined")
+	}
+}
+
+func TestAChatForInvitationsIsRememberedWithoutAnythingThatLetsAStrangerIn(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	folder := t.TempDir()
+	e := Entry{ChatID: strings.Repeat("ab", 32), Chat: "team", Name: "bob"}
+	if e.Local() != "team" {
+		t.Fatalf("local name %q", e.Local())
+	}
+	if err := RememberChat(folder, "sid", e); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SessionChats(folder, "sid")
+	if err != nil || len(got) != 1 || got[0].ChatID != e.ChatID || got[0].Token != "" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	raw, err := os.ReadFile(folderPath(folder))
+	if err == nil && bytes.Contains(raw, []byte("token")) {
+		t.Errorf("a chat without a token is remembered with a token field: %s", raw)
+	}
+	// An invitation for a nick that exists replaces its key.
+	_, first, _ := ed25519.GenerateKey(rand.Reader)
+	_, second, _ := ed25519.GenerateKey(rand.Reader)
+	if err := SetNickPrivateKey(e.ChatID, "bob", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetNickPrivateKey(e.ChatID, "bob", second); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := NickPrivateKey(e.ChatID, "bob"); err != nil || !got.Equal(second) {
+		t.Fatalf("the key after a replacement: %v", err)
 	}
 }

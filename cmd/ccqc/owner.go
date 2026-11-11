@@ -247,51 +247,11 @@ func ownerSay(args []string) error {
 		return errors.New("the message is empty")
 	}
 
-	token, ok := local.FindChatToken(a.Chat)
-	if !ok {
-		if token, err = owner.ReadSecret(fmt.Sprintf("Token of chat /%s (not stored): ", a.Chat)); err != nil {
-			return err
-		}
-	}
-	_, chatID, err := proto.ParseToken(strings.TrimSpace(token))
-	if err != nil {
-		return err
-	}
-	f, err := owner.Load(local.OwnerKeyPath())
-	if err != nil {
-		return fmt.Errorf("no key file at %s (run `ccqc owner init`): %w", local.OwnerKeyPath(), err)
-	}
-	c, err := client.Connect()
+	c, chatID, priv, w, err := joinOwner(a.Chat, nick, proto.ProtoVersion)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	if err := matchBroker(c, f); err != nil {
-		return err
-	}
-	pw, err := owner.ReadSecret("Owner password: ")
-	if err != nil {
-		return err
-	}
-	priv, err := f.Open(pw)
-	if err != nil {
-		return err
-	}
-	var ch proto.Challenge
-	if err := c.Call("challenge", nil, &ch); err != nil {
-		return err
-	}
-	sig := owner.Encode(ed25519.Sign(priv, proto.OwnerJoinMessage(chatID, nick, ch.Nonce)))
-	key := local.NickKey(chatID, nick)
-	var w proto.Welcome
-	if err := c.Call("join", proto.JoinArgs{Token: strings.TrimSpace(token), Name: nick, Key: key, Proto: proto.ProtoVersion, OwnerSig: sig}, &w); err != nil {
-		return err
-	}
-	if w.Key != "" {
-		if err := local.SetNickKey(chatID, nick, w.Key); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: the key of nick @%s could not be saved (%v)\n", nick, err)
-		}
-	}
 	defer func() { _ = c.Call("leave", nil, nil) }()
 	if a.Room != proto.RoomCommon && a.Room != proto.RoomDirect {
 		if err := c.Call("room_join", proto.RoomArgs{Room: a.Room}, nil); err != nil {

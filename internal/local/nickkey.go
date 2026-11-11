@@ -42,3 +42,16 @@ func NickPrivateKey(chatID, nick string) (ed25519.PrivateKey, error) {
 	})
 	return priv, err
 }
+
+// SetNickPrivateKey keeps the key of a nick of this machine, replacing the one it had (an invitation
+// for a nick that exists replaces its key).
+func SetNickPrivateKey(chatID, nick string, priv ed25519.PrivateKey) error {
+	return withLock(func() error {
+		keys := map[string]string{}
+		if err := readJSON(keysPath(), &keys); err != nil {
+			return err
+		}
+		keys[seedKey(chatID, nick)] = base64.RawURLEncoding.EncodeToString(priv.Seed())
+		return writeJSON(keysPath(), keys)
+	})
+}

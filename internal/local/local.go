@@ -18,16 +18,23 @@ import (
 )
 
 // Entry: a chat a session joins automatically.
+// A chat made for invitations has no token: it is joined by its id (ChatID) and the key of the nick;
+// nothing that lets a stranger in is kept here.
 type Entry struct {
-	Token string `json:"token"`
-	Name  string `json:"name"`
-	Alias string `json:"alias,omitempty"`
+	Token  string `json:"token,omitempty"`
+	ChatID string `json:"chat_id,omitempty"`
+	Chat   string `json:"chat,omitempty"` // the chat's name
+	Name   string `json:"name"`
+	Alias  string `json:"alias,omitempty"`
 }
 
-// Local name of an entry: alias or the chat name from the token.
+// Local name of an entry: alias, the chat's name, or the chat name from the token.
 func (e Entry) Local() string {
 	if e.Alias != "" {
 		return e.Alias
+	}
+	if e.Chat != "" {
+		return e.Chat
 	}
 	if i := strings.LastIndexByte(e.Token, '.'); i > 0 {
 		return e.Token[:i]

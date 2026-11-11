@@ -14,16 +14,23 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const docUsage = "usage: ccqc doc tree <chat> [prefix] | get <chat> <path> | put <chat> <path> <file|-> | export <chat> <dir>   [--nick NAME]"
+const docUsage = "usage: ccqc doc tree <chat> [prefix] | get <chat> <path> | put <chat> <path> <file|-> | export <chat> <dir>   [--nick NAME | --invite LINE]"
 
-// runDoc: the chat's document tree from a terminal, as an ordinary member (no owner password).
-// The chat token comes from your sessions' config, or is asked for on the console.
+// runDoc: the chat's document tree from a terminal. With an owner on this machine it enters with the
+// owner's key (the password is asked for on the console) under --nick, "owner" by default; or with
+// --invite, an invitation of its own for another nick. Before there is an owner it is an ordinary
+// member by the chat's token (from your sessions' config, or asked for on the console).
 func runDoc(args []string) error {
-	nick := "cli"
+	nick, invitation := "", ""
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--nick" && i+1 < len(args) {
 			nick = strings.TrimPrefix(args[i+1], "@")
+			i++
+			continue
+		}
+		if args[i] == "--invite" && i+1 < len(args) {
+			invitation = args[i+1]
 			i++
 			continue
 		}
@@ -33,7 +40,7 @@ func runDoc(args []string) error {
 		return errors.New(docUsage)
 	}
 	cmd, chat := rest[0], strings.Trim(rest[1], "/")
-	c, leave, err := joinAsMember(chat, nick)
+	c, leave, err := joinForDoc(chat, nick, invitation)
 	if err != nil {
 		return err
 	}
@@ -132,6 +139,33 @@ func exportDocs(call func(proto.DocArgs) (proto.DocReply, error), dir string) er
 	}
 	fmt.Printf("exported %d page(s) to %s\n", len(tree.Paths), dir)
 	return nil
+}
+
+// joinForDoc enters a chat for the document commands: by an invitation, by the owner's key, or (no
+// owner on this machine) as before by the token.
+func joinForDoc(chat, nick, invitation string) (*client.Conn, func(), error) {
+	if invitation != "" {
+		c, _, _, err := joinInvited(invitation)
+		if err != nil {
+			return nil, nil, err
+		}
+		return c, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+	}
+	if _, err := owner.Load(local.OwnerKeyPath()); err == nil {
+		if nick == "" {
+			nick = proto.OwnerNick
+		}
+		// Proto 3: the owner's writes from a terminal are unsigned, as they were.
+		c, _, _, _, err := joinOwner(chat, nick, proto.LegacyProto)
+		if err != nil {
+			return nil, nil, err
+		}
+		return c, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+	}
+	if nick == "" {
+		nick = "cli"
+	}
+	return joinAsMember(chat, nick)
 }
 
 // joinAsMember joins a chat as an ordinary member under nick (its key kept like any nick's) and

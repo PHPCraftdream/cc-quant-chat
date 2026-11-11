@@ -18,7 +18,8 @@ import (
 type chatConn struct {
 	s     *Session
 	local string
-	token string
+	token string // "" for a chat made for invitations: it is joined by its id
+	id    string // the chat's id
 	name  string
 	key   string // the nick's old secret (a legacy nick moves to its key with it)
 	priv  ed25519.PrivateKey
@@ -50,10 +51,7 @@ func (cc *chatConn) call(op string, args, out any) error {
 	return conn.Call(op, args, out)
 }
 
-func (cc *chatConn) chatID() string {
-	_, id, _ := proto.ParseToken(cc.token)
-	return id
-}
+func (cc *chatConn) chatID() string { return cc.id }
 
 // write sends a change signed by this nick, as its author (an unsigned one while the broker is
 // older than proto 4).
@@ -130,7 +128,11 @@ func (cc *chatConn) reconnect() *client.Conn {
 			continue
 		}
 		var w proto.Welcome
-		signer, err := client.JoinSigned(conn.Call, proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}, cc.priv, cc.chatID(), &w)
+		args := proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}
+		if cc.token == "" {
+			args.Chat = cc.id // by the key alone
+		}
+		signer, err := client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
 		if err != nil {
 			conn.Close()
 			log.Printf("rejoin /%s: %v", cc.local, err)

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
@@ -112,5 +113,15 @@ func TestCompactMovesAndUnknownSourceChangesNothing(t *testing.T) {
 	s.setSessionID("b", "compact", true)
 	if got, _ := local.SessionChats(folder, "b"); len(got) != 1 || s.sid != "b" {
 		t.Fatalf("compact must carry the chats over: %v, sid %q", got, s.sid)
+	}
+}
+
+func TestAnInvitationThatIsNotOneIsRefusedWithoutBeingEchoed(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	s := newSession(func(string, map[string]string) {})
+	typed := "ccqc1.SECRETSECRETSECRET.deadbeef"
+	_, err := s.Call("chat_join", []byte(`{"invite":"`+typed+`"}`))
+	if err == nil || strings.Contains(err.Error(), "SECRETSECRET") {
+		t.Fatalf("an invalid invitation: %v", err)
 	}
 }

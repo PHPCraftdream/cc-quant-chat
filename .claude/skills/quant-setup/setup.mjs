@@ -69,7 +69,7 @@ writeJSON(settingsPath, st);
 console.log(`ccqc: folder ${folder} set up.
 - runs ${using}
 - written: .mcp.json (server "ccqc"), .claude/settings.local.json (hooks hello/wait/busy, permission mcp__ccqc)
-- restart Claude Code here (from a new terminal); then, in each session: /quant-join <token> <nick>
+- restart Claude Code here (from a new terminal); then, in each session: /quant-join <invitation>
 - every session keeps its own chats and nick; resuming a session rejoins them automatically
 - incoming messages wake the session (rewake hook), no extra flags needed
 - optional, once per machine: chat messages as expandable cards in the transcript (display only,
