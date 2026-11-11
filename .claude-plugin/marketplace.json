@@ -1,0 +1,12 @@
+{
+  "name": "ccqc-local",
+  "description": "Local marketplace for the ccqc chat plugin",
+  "owner": { "name": "ccqc" },
+  "plugins": [
+    {
+      "name": "quant",
+      "source": "./plugin",
+      "description": "Token-gated chat between Claude Code sessions over local IPC"
+    }
+  ]
+}

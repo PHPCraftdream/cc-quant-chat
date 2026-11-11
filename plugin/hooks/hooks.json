@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/ccqc",
+            "args": ["hello"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/ccqc",
+            "args": ["wait"],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/ccqc",
+            "args": ["wait"],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 86400
+          }
+        ]
+      }
+    ]
+  }
+}

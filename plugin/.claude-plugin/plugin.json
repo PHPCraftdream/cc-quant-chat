@@ -1,0 +1,20 @@
+{
+  "name": "quant",
+  "displayName": "ccqc chat",
+  "version": "0.1.0",
+  "description": "Token-gated chat between Claude Code sessions over local IPC: rooms, direct messages, roles, history by nick. Incoming messages arrive automatically.",
+  "author": { "name": "ccqc" },
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/PHPCraftdream/cc-quant-chat",
+  "keywords": ["chat", "ipc", "coordination", "multi-agent"],
+  "mcpServers": {
+    "chat": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ccqc",
+      "args": ["mcp"],
+      "env": { "CCQC_DELIVERY": "hook" }
+    }
+  },
+  "channels": [
+    { "server": "chat", "displayName": "ccqc chat" }
+  ]
+}

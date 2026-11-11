@@ -1,0 +1,4 @@
+/bin/
+/plugin/bin/
+/.live/
+/.claude/settings.local.json
