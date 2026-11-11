@@ -27,6 +27,19 @@ func runNick(args []string) error {
 		return err
 	}
 	defer c.Close()
+	// With an owner registered this is an administrator operation, signed with the owner key.
+	if info, ierr := brokerOwner(c); ierr == nil && info.Registered {
+		_, id, perr := proto.ParseToken(token)
+		if perr != nil {
+			return perr
+		}
+		text, err := adminDo(c, "nick_reset", proto.AdminRole{Chat: id, Nick: name})
+		if err != nil {
+			return err
+		}
+		fmt.Println(text)
+		return nil
+	}
 	if err := c.Call("nick_reset", proto.NickResetArgs{Token: token, Name: name}, nil); err != nil {
 		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
 			return errors.New("the running broker is older and can't reset nicks: run `ccqc broker restart` first")

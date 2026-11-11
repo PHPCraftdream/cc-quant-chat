@@ -246,6 +246,31 @@ carries a ready `reply` address.
 Search, context and timeline cover only what the member can see: their rooms and their
 own direct dialogs. Message ids are per chat.
 
+## Administrator operations, pinned roles, settings
+
+Some operations can only be done by the owner, from their own terminal, signed with the owner
+key (the password is typed on the console): `ccqc role give|take`, `ccqc config set`, and
+`ccqc nick reset` once an owner exists. The client signs `ccqc/v1/admin`, the operation, its
+arguments in canonical JSON and a one-time challenge of the connection. Without an initialized
+owner they are unavailable (`no_owner`). A refusal tells an agent not to look for a way around
+and to ask the user. Every attempt, refused ones included, goes to the `admin_log` table
+(timestamp, operation, arguments without secrets, outcome).
+
+- **Pinned role:** `ccqc role give <chat> <nick> <role>`, `ccqc role take <chat> <nick>`. The
+  member can't change or release it (`role_pinned`) and nobody else can claim the name while it
+  is pinned. It is stored with the nick (survives restarts, returns when the member rejoins,
+  shown while the member is away), marked with a star in `chat_state` and in message lines
+  (`nick(lead*)`; role names can't contain `*`), and announced to the chat loudly. The role is
+  also written to the board journal as the actor's grant.
+- **Settings:** `ccqc config list|get|set <key> <value> [--chat NAME]`. Keys: `broker.idle`,
+  `broker.grace`, `limits.messages_per_minute` and, per chat, `board.manager_role`. A set value
+  applies without a restart; environment variables remain the defaults.
+- **Board rule:** with `board.manager_role` empty everyone moves everything. With a role set, only
+  the owner and the member holding that pinned role change task statuses, start/close sprints,
+  change the process and revert; an assignee moves its own task between unfinished statuses
+  (finishing it is for the owner/role); creating, editing, commenting and reading stay open.
+  Refusals are `forbidden` and say who may.
+
 ## Task board
 
 Every chat has one board: tasks, sprints and a status process. Any member sees everything and

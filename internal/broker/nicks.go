@@ -124,6 +124,10 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}
+	if nk.pinned != "" && m.role != nk.pinned { // the owner's role comes back with the member
+		b.release(ch, m)
+		b.holdRole(ch, m, nk.pinned)
+	}
 	c.ch, c.m = ch, m
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion}, nil
 }

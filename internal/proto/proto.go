@@ -2,6 +2,7 @@
 package proto
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -139,6 +140,62 @@ type OwnerInfo struct {
 	Registered  bool   `json:"registered"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Since       string `json:"since,omitempty"` // when the key was registered (RFC 3339)
+}
+
+// AdminMessage is what the owner signs for an administrator operation: the operation, its
+// arguments in canonical JSON, and the nonce of a challenge on the connection.
+func AdminMessage(op string, canonicalArgs []byte, nonce string) []byte {
+	return []byte(strings.Join([]string{"ccqc/v1/admin", op, string(canonicalArgs), nonce}, "\n"))
+}
+
+// CanonicalJSON re-encodes a JSON value with sorted keys and no whitespace, so two sides that
+// hold the same data sign the same bytes.
+func CanonicalJSON(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return []byte("null"), nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v) // map keys are written in sorted order
+}
+
+// AdminArgs is an administrator operation: Op with Args (a JSON object), signed by the owner key
+// over AdminMessage(Op, CanonicalJSON(Args), nonce).
+type AdminArgs struct {
+	Op   string          `json:"op"`
+	Args json.RawMessage `json:"args"`
+	Sig  string          `json:"sig"`
+}
+
+// Arguments of the administrator operations (no secrets: they are logged).
+type AdminRole struct {
+	Chat string `json:"chat"` // chat id
+	Nick string `json:"nick"`
+	Role string `json:"role,omitempty"`
+}
+
+type AdminConfig struct {
+	Chat  string `json:"chat,omitempty"` // chat id for chat-scoped keys
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ConfigItem is one setting with its effective value.
+type ConfigItem struct {
+	Key     string `json:"key"`
+	Chat    bool   `json:"chat"` // chat-scoped
+	Value   string `json:"value"`
+	Default string `json:"default"`
+	Source  string `json:"source"` // default | env | setting
+	Help    string `json:"help"`
+}
+
+type ConfigList struct {
+	Items []ConfigItem `json:"items"`
 }
 
 // OwnerNick is reserved for the owner once one is registered.
@@ -290,6 +347,7 @@ type MemberInfo struct {
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
 	Owner         bool   `json:"owner,omitempty"` // an owner-verified connection
+	RolePinned    bool   `json:"role_pinned,omitempty"`
 	// Status of a present member (not stored; see StatusArgs). Activity is "busy", "free" or ""
 	// when the member's client does not report it.
 	Activity  string `json:"activity,omitempty"`

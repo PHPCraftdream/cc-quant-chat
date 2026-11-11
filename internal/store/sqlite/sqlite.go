@@ -121,12 +121,16 @@ func (d *DB) Load(chatID, name string) ([]store.Record, error) {
 		return nil
 	})
 	if err == nil {
-		err = d.each(`SELECT nick, key_hash, seen FROM nicks WHERE chat_id = ?`, chatID, func(rows *sql.Rows) error {
+		err = d.each(`SELECT nick, key_hash, seen, pinned_role FROM nicks WHERE chat_id = ?`, chatID, func(rows *sql.Rows) error {
 			r := store.Record{T: "nick"}
-			if err := rows.Scan(&r.Nick, &r.Hash, &r.ID); err != nil {
+			var pinned string
+			if err := rows.Scan(&r.Nick, &r.Hash, &r.ID, &pinned); err != nil {
 				return err
 			}
 			recs = append(recs, r)
+			if pinned != "" {
+				recs = append(recs, store.Record{T: "pin", Nick: r.Nick, Role: pinned})
+			}
 			return nil
 		})
 	}
@@ -227,6 +231,8 @@ func (d *DB) Append(chatID string, r store.Record) error {
 				chatID, proto.RoomCommon, r.Nick)
 			return err
 		})
+	case "pin":
+		_, err = d.db.Exec(`UPDATE nicks SET pinned_role = ? WHERE chat_id = ? AND nick = ?`, r.Role, chatID, r.Nick)
 	case "nick_key": // reset (empty hash) or rebinding of a reset nick
 		_, err = d.db.Exec(`UPDATE nicks SET key_hash = ? WHERE chat_id = ? AND nick = ?`, r.Hash, chatID, r.Nick)
 	case "seen":

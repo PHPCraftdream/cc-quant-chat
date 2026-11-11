@@ -8,7 +8,8 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// Record kinds: msg, room, in (joined room), out (left room), nick (registered),
+// Record kinds: msg, room, in (joined room), out (left room), nick (registered), pin (a role pinned
+// to a nick),
 // nick_key (new key hash; empty = reset), seen, and maxid (Load only: newest message id
 // of the chat, which may lie outside the returned window).
 type Record struct {
@@ -24,6 +25,21 @@ type Record struct {
 	ClientID string `json:"cid,omitempty"`
 	// Origin: the node (broker) that wrote a msg; see NodeStore.
 	Origin string `json:"origin,omitempty"`
+	// Role: for "pin", the role pinned to Nick ("" unpins).
+	Role string `json:"role,omitempty"`
+}
+
+// AdminEntry is one attempt of an administrator operation.
+type AdminEntry struct {
+	TS, Op, Args, Result, Origin string
+}
+
+// AdminStore is the optional part of a backend that keeps settings and the administrator log.
+type AdminStore interface {
+	// Settings returns every stored setting as scope → key → value.
+	Settings() (map[string]map[string]string, error)
+	SetSetting(scope, key, value string) error
+	LogAdmin(e AdminEntry) error
 }
 
 // DuplicateError: Append refused a msg whose sender and ClientID were stored before; ID is the

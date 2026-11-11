@@ -39,9 +39,10 @@ func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs) (any, *proto.Er
 			return nil, e
 		}
 		var change board.Change
-		who := actor{nick: m.name, owner: m.owner}
+		who := b.actorOf(ch, m)
+		manager := b.managerRole(ch.id)
 		err := bs.Do(ch.id, func(tx store.BoardTx) error {
-			if err := b.authorize(tx, who, a); err != nil {
+			if err := b.authorize(tx, who, manager, a); err != nil {
 				return err
 			}
 			var err error
@@ -195,16 +196,26 @@ func (b *Broker) notifyAssignee(ch *chat, actor *member, c board.Change) {
 }
 
 // actor is who asks to change the board: the nick, whether the connection proved it holds the
-// owner key, and (reserved) a grant it holds.
+// owner key, and the role the owner pinned to it (written to the journal as the actor's grant).
 type actor struct {
 	nick  string
 	owner bool
 	grant string
 }
 
-// authorize is the one place that decides whether an actor may make a board change. t is the
-// task the op is about (loaded here), nil for ops that are not about one task.
-func (b *Broker) authorize(tx store.BoardTx, who actor, a proto.BoardArgs) error {
+func (b *Broker) actorOf(ch *chat, m *member) actor {
+	a := actor{nick: m.name, owner: m.owner}
+	if nk := ch.nicks[m.name]; nk != nil {
+		a.grant = nk.pinned
+	}
+	return a
+}
+
+// authorize is the one place that decides whether an actor may make a board change.
+func (b *Broker) authorize(tx store.BoardTx, who actor, manager string, a proto.BoardArgs) error {
+	if manager == "" {
+		return nil // no manager role set: every member may do everything
+	}
 	var t *store.Task
 	if strings.HasPrefix(a.Op, "task.") && a.Op != "task.create" {
 		if task, ok, err := tx.GetTask(a.ID); err != nil {
@@ -213,14 +224,57 @@ func (b *Broker) authorize(tx store.BoardTx, who actor, a proto.BoardArgs) error
 			t = &task
 		}
 	}
-	if e := b.canBoard(who, a.Op, t); e != nil {
+	var terminal []string
+	if a.Op == "task.move" {
+		wf, _, err := board.GetWorkflow(tx)
+		if err != nil {
+			return err
+		}
+		terminal = wf.Terminal
+	}
+	if e := canBoard(who, manager, terminal, a, t); e != nil {
 		return e
 	}
 	return nil
 }
 
-// canBoard: may who do op (on task t, if any)? For now every member of the chat may do
-// everything; the signature is where a rule about roles will go.
-func (b *Broker) canBoard(who actor, op string, t *store.Task) *proto.Error {
-	return nil
+// canBoard, with board.manager_role set: the owner and the member holding that pinned role may
+// change a task's status, start and close sprints, change the process and revert. The assignee
+// may move its own task between unfinished states; finishing it is the manager's. Creating,
+// editing, commenting and reading stay open to everyone.
+func canBoard(who actor, manager string, terminal []string, a proto.BoardArgs, t *store.Task) *proto.Error {
+	isManager := who.owner || who.grant == manager
+	switch a.Op {
+	case "task.move":
+		if isManager {
+			return nil
+		}
+		if t != nil && t.Assignee == who.nick && !containsStr(terminal, a.Status) && !containsStr(terminal, t.Status) {
+			return nil
+		}
+	case "sprint.start", "sprint.close", "board.workflow_set", "board.revert":
+		if isManager {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return proto.Errf("forbidden", "%s is for the owner or a member with the pinned role %q (board.manager_role)%s",
+		a.Op, manager, assigneeHint(a.Op))
+}
+
+func assigneeHint(op string) string {
+	if op == "task.move" {
+		return "; the assignee may move its own task between unfinished states, finishing it is for them"
+	}
+	return ""
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

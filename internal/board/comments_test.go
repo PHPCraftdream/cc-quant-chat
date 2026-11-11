@@ -75,7 +75,7 @@ func TestListShowsOnlyACountAndGetShowsTheThreeLatest(t *testing.T) {
 		page, err = Comments(tx, 1, 3, 0)
 		return err
 	})
-	if !strings.Contains(list, "T-1 todo - p0 busy task [7c]") || strings.Contains(list, "comment number") || strings.Contains(list, "T-2 todo - p0 quiet task [") {
+	if !strings.Contains(list, "T-1 todo - p1 busy task [7c]") || strings.Contains(list, "comment number") || strings.Contains(list, "T-2 todo - p1 quiet task [") {
 		t.Fatalf("list shows a count and no text:\n%s", list)
 	}
 	if !strings.Contains(get, "comments (3 of 7") || !strings.Contains(get, "comment number 7") || strings.Contains(get, "comment number 4") {

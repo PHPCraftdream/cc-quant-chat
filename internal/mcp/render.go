@@ -118,6 +118,9 @@ func renderState(local string, st *proto.State) string {
 		r := "—"
 		if m.Role != "" {
 			r = m.Role
+			if m.RolePinned {
+				r += "*" // pinned by the owner: the member can't change it
+			}
 			if m.RoleExclusive {
 				r += " (exclusive)"
 			}

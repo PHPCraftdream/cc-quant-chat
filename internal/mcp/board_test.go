@@ -44,7 +44,7 @@ func TestTaskToolBuildsTheBrokerRequest(t *testing.T) {
 	if _, err := build(t, "task", `{"op":"move","status":"doing"}`); err == nil || !strings.Contains(err.Error(), "id is required") {
 		t.Fatalf("move without an id: %v", err)
 	}
-	if _, err := build(t, "task", `{"op":"frobnicate"}`); err == nil || !strings.Contains(err.Error(), "create, update, move, delete, get, list") {
+	if _, err := build(t, "task", `{"op":"frobnicate"}`); err == nil || !strings.Contains(err.Error(), "create, update, move, delete, comment, comments, get, list") {
 		t.Fatalf("unknown op: %v", err)
 	}
 	if _, err := build(t, "task", `{"op":"get","id":"banana"}`); err == nil {

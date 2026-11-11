@@ -26,6 +26,15 @@ Owner (the human who owns ccqc on this machine; needs your own console, the pass
                             join as OWNER, send one message, leave
   ccqc owner rotate         replace the key; the request is signed with the old one
 
+Administrator operations (signed with the owner key; the owner password is typed on the console):
+  ccqc role give <chat> <nick> <role>   pin a role to a nick: it can't change or release it, nobody
+                            else can claim the name; shown as role* ; announced to the chat
+  ccqc role take <chat> <nick>          take it back
+  ccqc config list|get [<key>] [--chat NAME]
+  ccqc config set <key> <value> [--chat NAME]
+                            settings applied without a restart: broker.idle, broker.grace,
+                            limits.messages_per_minute, board.manager_role (per chat)
+
 Nicks:
   ccqc nick reset - <nick>  free an offline nick whose key was lost on this machine (the token is
                             read from stdin; avoid putting it in the arguments); the next join binds
@@ -80,6 +89,10 @@ func main() {
 		err = runNick(os.Args[2:])
 	case "owner":
 		err = runOwner(os.Args[2:])
+	case "role":
+		err = runRole(os.Args[2:])
+	case "config":
+		err = runConfig(os.Args[2:])
 	case "token":
 		if len(os.Args) != 4 || os.Args[2] != "new" {
 			fmt.Fprintln(os.Stderr, usage)

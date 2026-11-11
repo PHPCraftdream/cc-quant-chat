@@ -44,10 +44,11 @@ type Broker struct {
 	warning   string // set when history can't be saved; shown to every joiner
 	chats     map[string]*chat
 	conns     map[*conn]bool
-	hits      map[string][]time.Time // rate limiter: chat/nick/class → recent actions
-	ownerPub  ed25519.PublicKey      // the registered owner key, nil if none
-	ownerAt   string                 // when it was registered
-	origin    string                 // this broker's identity: first 16 bytes of SHA-256(node key), hex
+	hits      map[string][]time.Time       // rate limiter: chat/nick/class → recent actions
+	settings  map[string]map[string]string // changed with `ccqc config set`: scope ("" or chat id) → key → value
+	ownerPub  ed25519.PublicKey            // the registered owner key, nil if none
+	ownerAt   string                       // when it was registered
+	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
 	active    int
 	idleAt    time.Time
 	idle      time.Duration
@@ -76,6 +77,9 @@ type chat struct {
 type nick struct {
 	hash string // SHA-256 of the nick key
 	seen int64  // last message id delivered live before going offline
+	// pinned: a role the owner pinned to this nick; the member holds it, can't change it and
+	// nobody else can claim the name.
+	pinned string
 }
 
 type member struct {
@@ -116,6 +120,10 @@ func Run() error {
 	if err := b.initNode(); err != nil {
 		b.closeStore()
 		return fmt.Errorf("node key: %w", err)
+	}
+	if err := b.loadSettings(); err != nil {
+		b.closeStore()
+		return fmt.Errorf("settings: %w", err)
 	}
 	if err := b.loadOwner(); err != nil {
 		b.closeStore()
@@ -257,13 +265,13 @@ func (b *Broker) janitor() {
 		now := time.Now()
 		for _, ch := range b.chats {
 			for _, m := range ch.members {
-				if m.conn == nil && !m.offline.IsZero() && now.Sub(m.offline) > b.grace {
+				if m.conn == nil && !m.offline.IsZero() && now.Sub(m.offline) > b.graceFor() {
 					b.removeMember(ch, m, m.name+" went offline")
 				}
 			}
 		}
 		b.pruneHits(now)
-		stop := b.active == 0 && now.Sub(b.idleAt) > b.idle
+		stop := b.active == 0 && now.Sub(b.idleAt) > b.idleFor()
 		b.mu.Unlock()
 		if stop {
 			b.shutdown("idle")
@@ -314,6 +322,10 @@ func (ch *chat) replay(r store.Record) {
 		}
 	case "maxid":
 		ch.nextID = max(ch.nextID, r.ID)
+	case "pin":
+		if n := ch.nicks[r.Nick]; n != nil {
+			n.pinned = r.Role
+		}
 	case "nick_key":
 		if n := ch.nicks[r.Nick]; n != nil {
 			n.hash = r.Hash

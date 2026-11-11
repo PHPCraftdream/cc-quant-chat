@@ -15,6 +15,7 @@ import (
 var changes = map[string]bool{
 	"join": true, "send": true, "room_create": true, "room_join": true, "room_leave": true,
 	"role_claim": true, "role_release": true, "nick_reset": true, "owner_register": true, "owner_rotate": true,
+	"admin": true,
 }
 
 func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
@@ -53,10 +54,26 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 			return nil, e
 		}
 		return b.ownerRotate(a)
+	case "admin":
+		var a proto.AdminArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.admin(c, a)
+	case "config_list":
+		var a proto.AdminConfig
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.configList(a.Chat), nil
 	case "nick_reset":
 		var a proto.NickResetArgs
 		if e := decode(f.Args, &a); e != nil {
 			return nil, e
+		}
+		if b.ownerPub != nil { // with an owner, this is an administrator operation
+			b.logAdmin("nick_reset", []byte(`{"via":"token"}`), "refused: needs the owner's signature")
+			return nil, proto.Errf("admin_only", "%s", adminRefusal)
 		}
 		return b.nickReset(a)
 	}
@@ -141,6 +158,9 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 		}
 		return b.claim(ch, m, a)
 	case "role_release":
+		if nk := ch.nicks[m.name]; nk != nil && nk.pinned != "" {
+			return nil, proto.Errf("role_pinned", "your role %q is pinned by the owner; you can't release it", nk.pinned)
+		}
 		if old := b.release(ch, m); old != "" {
 			b.presence(ch, nil, m.name, fmt.Sprintf("%s released role %s", m.name, old))
 		}
@@ -163,14 +183,14 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 		return nil, proto.Errf("too_large", "text is %d bytes, max %d", len(a.Text), proto.MaxText)
 	}
 	now := time.Now()
-	if !b.allow(ch, m.name, "msg", rateLimit) {
-		return nil, proto.Errf("rate_limited", "max %d messages per minute", rateLimit)
+	if limit := b.msgLimit(); !b.allow(ch, m.name, "msg", limit) {
+		return nil, proto.Errf("rate_limited", "max %d messages per minute", limit)
 	}
 	if a.To != "" && ch.nicks[a.To] == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", a.To)
 	}
 	msg := proto.Message{
-		Room: a.Room, From: m.name, FromRole: m.role, To: a.To,
+		Room: a.Room, From: m.name, FromRole: ch.displayRole(m), To: a.To,
 		Text: a.Text, ReplyTo: a.ReplyTo, TS: now.UTC().Format(time.RFC3339), Owner: m.owner,
 	}
 	var key string
@@ -292,6 +312,12 @@ func (b *Broker) roomOp(op string, ch *chat, m *member, a proto.RoomArgs) (any, 
 func (b *Broker) claim(ch *chat, m *member, a proto.RoleArgs) (any, *proto.Error) {
 	if !proto.ValidName(a.Role) {
 		return nil, proto.Errf("bad_name", "role must match [a-z0-9-]{1,32}: %q", a.Role)
+	}
+	if nk := ch.nicks[m.name]; nk != nil && nk.pinned != "" && a.Role != nk.pinned {
+		return nil, proto.Errf("role_pinned", "your role %q is pinned by the owner; you can't change it", nk.pinned)
+	}
+	if holder := ch.pinnedHolder(a.Role, m.name); holder != "" {
+		return nil, proto.Errf("role_pinned", "the role %q is pinned to @%s by the owner", a.Role, holder)
 	}
 	r := ch.roles[a.Role]
 	if r != nil && len(r.holders) > 0 && !(len(r.holders) == 1 && r.holders[m.name]) {

@@ -43,9 +43,14 @@ func (ch *chat) state(me *member) proto.State {
 			mi.Role, mi.Online = m.role, m.conn != nil
 			m.fill(&mi)
 			mi.Owner = m.owner
+			if nkk := ch.nicks[n]; nkk != nil && nkk.pinned != "" && m.role == nkk.pinned {
+				mi.RolePinned = true
+			}
 			if r := ch.roles[m.role]; r != nil {
 				mi.RoleExclusive = r.exclusive
 			}
+		} else if nkk := ch.nicks[n]; nkk != nil && nkk.pinned != "" {
+			mi.Role, mi.RolePinned = nkk.pinned, true // a pinned role is shown even while the member is away
 		}
 		st.Members = append(st.Members, mi)
 	}
