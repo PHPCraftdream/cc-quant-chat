@@ -71,9 +71,14 @@ func (b *Broker) joinPre(c *conn, a proto.JoinArgs) (name, id string, signed boo
 	if c.m != nil {
 		return "", "", false, proto.Errf("already_joined", "this connection already joined a chat")
 	}
-	name, id, err := proto.ParseToken(a.Token)
-	if err != nil {
-		return "", "", false, proto.Errf("bad_token", "%v", err)
+	name, id, e = b.chatIDOf(a)
+	if e != nil {
+		return "", "", false, e
+	}
+	if a.Token != "" && b.entryByInviteOnly() && !b.chatKnown(id) {
+		if _, ok := b.store.(store.Invites); ok {
+			return "", "", false, proto.Errf("no_such_chat", "chats are made by the owner of this machine (ccqc chat new); this token belongs to no chat here")
+		}
 	}
 	if !proto.ValidName(a.Name) {
 		return "", "", false, proto.Errf("bad_name", "nick must match [a-z0-9-]{1,32}: %q", a.Name)
@@ -98,16 +103,23 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 	var pub ed25519.PublicKey
 	nk := ch.nicks[a.Name]
 	switch {
+	case a.Invite != nil: // proto 5: a one-time invitation registers the key, or replaces the nick's
+		var e *proto.Error
+		if nk, pub, e = b.joinByInvite(ch, c, a, nk); e != nil {
+			return nil, e
+		}
 	case a.Pub != "": // proto 4: the nick is its Ed25519 key
 		var e *proto.Error
 		if pub, e = b.verifyNick(c, id, a); e != nil {
 			return nil, e
 		}
-		if nk, e = b.bindPub(ch, a, nk); e != nil {
+		if nk, e = b.bindPub(ch, a, nk, signed); e != nil {
 			return nil, e
 		}
 	case nk != nil && nk.pub != "":
 		return nil, proto.Errf("name_taken", "nick @%s joins with a signing key and this client has none: update ccqc (the secret alone no longer opens it)", a.Name)
+	case (nk == nil || nk.hash == "") && b.entryByInviteOnly() && !signed: // by token, with an owner: by invitation only
+		return nil, inviteRequired(ch, a.Name)
 	case nk == nil || nk.hash == "": // new nick, or one freed by `ccqc nick reset`
 		// Bind it to the presented key, else a fresh one.
 		key := a.Key
@@ -162,11 +174,18 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 // bindPub binds the key a client proved to hold to its nick. A new nick is registered with it; a
 // legacy nick (or one freed by `ccqc nick reset`) moves to it once, a legacy nick only for the
 // holder of its old secret; a nick that has a key takes only that key.
-func (b *Broker) bindPub(ch *chat, a proto.JoinArgs, nk *nick) (*nick, *proto.Error) {
+func (b *Broker) bindPub(ch *chat, a proto.JoinArgs, nk *nick, owner bool) (*nick, *proto.Error) {
 	taken := func(why string) *proto.Error {
 		return proto.Errf("name_taken", "nick @%s is registered in this chat %s; pick another nick (or, if it is yours and its key was lost, `ccqc nick reset - %s` (token on stdin))", a.Name, why, a.Name)
 	}
+	// Once the machine has an owner, a new nick and a nick that moves to a key are made by invitation
+	// only; the owner enters as before (it proves itself by its key).
+	byToken := b.entryByInviteOnly() && !owner
 	switch {
+	case nk == nil && byToken:
+		return nil, inviteRequired(ch, a.Name)
+	case nk != nil && nk.pub == "" && byToken && nk.pub != a.Pub:
+		return nil, inviteRequired(ch, a.Name)
 	case nk == nil:
 		fresh := &nick{pub: a.Pub, seen: ch.nextID} // nothing is "unread" for a new nick
 		if e := ch.save(store.Record{T: "nick", Nick: a.Name, Pub: a.Pub, ID: fresh.seen}); e != nil {

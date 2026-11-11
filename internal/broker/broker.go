@@ -62,15 +62,17 @@ type Broker struct {
 	ownerPub  ed25519.PublicKey            // the registered owner key, nil if none
 	ownerAt   string                       // when it was registered
 	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
-	active    int
-	idleAt    time.Time
-	idle      time.Duration
-	grace     time.Duration
-	started   time.Time
-	ln        net.Listener
-	serving   sync.WaitGroup // serve goroutines; waited for before the store closes
-	stopping  atomic.Bool
-	reason    atomic.Value // why the broker stops: "idle" or "requested"
+	// lenientEntry: tests only. A token is enough for a new nick even with an owner (see entryByInviteOnly).
+	lenientEntry bool
+	active       int
+	idleAt       time.Time
+	idle         time.Duration
+	grace        time.Duration
+	started      time.Time
+	ln           net.Listener
+	serving      sync.WaitGroup // serve goroutines; waited for before the store closes
+	stopping     atomic.Bool
+	reason       atomic.Value // why the broker stops: "idle" or "requested"
 }
 
 type chat struct {

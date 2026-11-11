@@ -87,7 +87,7 @@ type DB struct {
 	afterLayoutChat func(i int) error // test hook: called after each chat is laid out
 
 	onEvents atomic.Pointer[func(chatID string)] // see OnEvents
-	closers  sync.WaitGroup                      // databases of released chats that are waiting to be closed
+	pending  map[*chatDB]struct{}                // databases of released chats that are waiting to be closed (under mu)
 }
 
 var (
@@ -229,14 +229,26 @@ func (d *DB) adoptStrays() error {
 
 // Close closes the chats that are open and node.db.
 func (d *DB) Close() error {
-	d.closers.Wait()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var first error
-	for id, c := range d.chats {
+	shut := func(c *chatDB) {
+		c.life.Lock()
+		defer c.life.Unlock()
+		if c.closed {
+			return
+		}
+		c.closed = true
 		if err := c.db.Close(); err != nil && first == nil {
 			first = err
 		}
+	}
+	for c := range d.pending { // released, waiting for their readers: they are waited for here
+		shut(c)
+		delete(d.pending, c)
+	}
+	for id, c := range d.chats {
+		shut(c)
 		delete(d.chats, id)
 	}
 	if err := d.node.Close(); err != nil && first == nil {
@@ -296,17 +308,26 @@ func (d *DB) Release(chatID string) {
 	d.mu.Lock()
 	c := d.chats[chatID]
 	delete(d.chats, chatID)
+	if c != nil {
+		if d.pending == nil {
+			d.pending = map[*chatDB]struct{}{}
+		}
+		d.pending[c] = struct{}{}
+	}
 	d.mu.Unlock()
 	if c == nil {
 		return
 	}
-	d.closers.Add(1)
 	go func() {
-		defer d.closers.Done()
 		c.life.Lock()
-		c.closed = true
-		_ = c.db.Close()
+		if !c.closed {
+			c.closed = true
+			_ = c.db.Close()
+		}
 		c.life.Unlock()
+		d.mu.Lock()
+		delete(d.pending, c)
+		d.mu.Unlock()
 	}()
 }
 

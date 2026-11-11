@@ -34,6 +34,12 @@ func NickJoinMessage(chatID, nick, pub, nonce string) []byte {
 	return []byte(strings.Join([]string{"ccqc/v1/nick-join", chatID, nick, pub, nonce}, "\n"))
 }
 
+// InviteSubject is what a use of a chat invitation is for: the chat, the nick, the key bound to it.
+// The invitation key signs it together with the nonce of the connection (invite.Invitation.Proof).
+func InviteSubject(chatID, nick, pub string) []byte {
+	return []byte(strings.Join([]string{"ccqc/v1/invite-use", chatID, nick, pub}, "\n"))
+}
+
 // EventMessage is what an author signs for an event: the chat, the origin (the broker the
 // request is addressed to: the numbers in it, such as a task id or a version, are that node's
 // own), the kind (msg, the board op such as task.create, doc.<op>), the canonical JSON of the request without its

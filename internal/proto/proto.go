@@ -105,6 +105,12 @@ type JoinArgs struct {
 	// with Pub; a legacy nick is rebound once, presenting its old secret in Key as well.
 	Pub     string `json:"pub,omitempty"`
 	NickSig string `json:"nick_sig,omitempty"`
+	// Chat: the chat's id (64 hex), instead of a token (proto 5): for a nick that has a key, or with
+	// an invitation. A chat is never made by a join with an id.
+	Chat string `json:"chat,omitempty"`
+	// Invite: the use of a one-time invitation (proto 5): it registers Pub for the nick it was
+	// issued for, or replaces the key of that nick. Needs Pub and NickSig.
+	Invite *JoinInvite `json:"invite,omitempty"`
 }
 
 // Challenge: reply to "challenge": a one-time nonce (base64url) for OwnerSig, valid 30 s on the
@@ -208,7 +214,7 @@ type ConfigList struct {
 const OwnerNick = "owner"
 
 // ProtoVersion is the protocol level this build speaks.
-const ProtoVersion = 4
+const ProtoVersion = 5
 
 // LegacyProto is the last level whose clients do not sign: they join by their secret and their
 // events are stored unsigned.

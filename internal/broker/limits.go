@@ -85,7 +85,7 @@ func (ch *chat) rememberSent(nick, cid string, id int64) {
 // warnFor: the standing warning plus, for a client older than this broker, how to update.
 func (b *Broker) warnFor(clientProto int) string {
 	w := b.warning
-	if clientProto < proto.ProtoVersion {
+	if clientProto < proto.SigningProto {
 		if w != "" {
 			w += "; "
 		}

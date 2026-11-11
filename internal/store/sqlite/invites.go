@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
@@ -75,16 +76,22 @@ func (d *DB) FindChats(name string) ([]store.ChatRef, error) {
 // inviteEvent writes the event of an administrator operation on an invitation: the owner's
 // signature of the operation travels with it; the invitation is named by its id, never by anything
 // that could be used.
-func (c *chatDB) inviteEvent(tx *sql.Tx, kind string, a store.AdminAttest, fields map[string]any) error {
+func (c *chatDB) inviteEvent(tx *sql.Tx, kind string, a *store.AdminAttest, fields map[string]any) error {
 	lam, err := chatClock(tx)
 	if err != nil {
 		return err
 	}
-	assigned := map[string]any{"admin": map[string]any{"op": a.Op, "nonce": a.Nonce}}
+	assigned := map[string]any{}
+	e := events.Event{Lamport: lam, Kind: kind, TS: now()}
+	if a != nil { // the owner's signature of the operation travels with the event
+		assigned["admin"] = map[string]any{"op": a.Op, "nonce": a.Nonce}
+		e.Payload, e.AuthorPub, e.Sig = a.Args, a.Pub, a.Sig
+	} else {
+		e.Payload = "{}"
+	}
 	for k, v := range fields {
 		assigned[k] = v
 	}
-	e := events.Event{Lamport: lam, Kind: kind, Payload: a.Args, AuthorPub: a.Pub, Sig: a.Sig, TS: now()}
 	if e.Assigned, err = jsonText(assigned); err != nil {
 		return err
 	}
@@ -105,7 +112,7 @@ func (d *DB) IssueInvite(chatID string, rec invite.Record, a store.AdminAttest) 
 		if err := (invite.SQLStore{DB: tx}).Insert(rec); err != nil {
 			return err
 		}
-		return c.inviteEvent(tx, "invite.issue", a, map[string]any{"invite": map[string]any{"id": rec.ID, "nick": rec.Scope, "exp": rec.ExpiresAt.Unix()}})
+		return c.inviteEvent(tx, "invite.issue", &a, map[string]any{"invite": map[string]any{"id": rec.ID, "nick": rec.Scope, "exp": rec.ExpiresAt.Unix()}})
 	})
 }
 
@@ -124,7 +131,7 @@ func (d *DB) RevokeInvite(chatID, id string, a store.AdminAttest) (bool, error) 
 		if revoked, err = (invite.SQLStore{DB: tx}).Revoke(id); err != nil || !revoked {
 			return err
 		}
-		return c.inviteEvent(tx, "invite.revoke", a, map[string]any{"invite": map[string]any{"id": id}})
+		return c.inviteEvent(tx, "invite.revoke", &a, map[string]any{"invite": map[string]any{"id": id}})
 	})
 	return revoked, err
 }
@@ -136,4 +143,38 @@ func (d *DB) ListInvites(chatID string) ([]invite.Record, error) {
 		return nil, err
 	}
 	return invite.SQLStore{DB: c.db}.List(invite.KindChat)
+}
+
+// JoinByInvite uses an invitation to register a nick (or replace its key): r is the record that does
+// it. Using the invitation, the nick's record and the events that say so are one transaction; a
+// wrong proof counts against the invitation and is journaled (invite.fail), anything else that makes
+// the invitation unusable writes nothing. See invite.Redeem for the errors.
+func (d *DB) JoinByInvite(chatID, id string, now time.Time, usedBy string, proofOK func(invite.Record) bool, r store.Record) (invite.Record, error) {
+	c, done, err := d.acquire(chatID, "", false)
+	defer done()
+	if err != nil {
+		return invite.Record{}, err
+	}
+	if c == nil {
+		return invite.Record{}, fmt.Errorf("sqlite: no chat %.8s", chatID)
+	}
+	var rec invite.Record
+	var used error
+	err = c.inTx(func(tx *sql.Tx) error {
+		rec, used = invite.Redeem(invite.SQLStore{DB: tx}, id, now, usedBy, proofOK)
+		var bad *invite.BadProof
+		switch {
+		case used == nil:
+			return c.appendIn(tx, r, map[string]any{"invite": map[string]any{"id": rec.ID, "issued_by": rec.IssuedBy}})
+		case errors.As(used, &bad):
+			return c.inviteEvent(tx, "invite.fail", nil, map[string]any{"invite": map[string]any{"id": bad.Record.ID, "nick": bad.Record.Scope, "tries": bad.Tries, "burnt": bad.Burnt}})
+		case errors.Is(used, invite.ErrInvalid):
+			return nil // nothing to write: nothing is known about what was tried
+		}
+		return used
+	})
+	if err != nil {
+		return invite.Record{}, err
+	}
+	return rec, used
 }

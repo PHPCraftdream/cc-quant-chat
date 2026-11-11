@@ -36,7 +36,7 @@ func JoinSigned(call Callf, args proto.JoinArgs, priv ed25519.PrivateKey, chatID
 	if err := call("join", args, w); err != nil {
 		return nil, err
 	}
-	if args.Pub == "" || w.Proto < proto.ProtoVersion || w.Origin == "" {
+	if args.Pub == "" || w.Proto < proto.SigningProto || w.Origin == "" {
 		return nil, nil
 	}
 	return &Signer{Priv: priv, ChatID: chatID, Origin: w.Origin}, nil

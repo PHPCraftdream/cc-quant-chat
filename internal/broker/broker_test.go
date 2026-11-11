@@ -19,6 +19,7 @@ func newTestBroker(be store.Backend) *Broker {
 		store: be, storeDesc: "test",
 		chats: map[string]*chat{}, conns: map[*conn]bool{}, hits: map[string][]time.Time{},
 		idle: time.Hour, grace: time.Hour, started: time.Now(), origin: "0123456789abcdef0123456789abcdef",
+		lenientEntry: true, // most tests join by token; the tests of invitations turn it off
 	}
 }
 

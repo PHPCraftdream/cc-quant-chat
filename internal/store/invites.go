@@ -1,6 +1,10 @@
 package store
 
-import "github.com/PHPCraftdream/cc-quant-chat/internal/invite"
+import (
+	"time"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
+)
 
 // ChatRef names a chat of this node.
 type ChatRef struct {
@@ -29,4 +33,7 @@ type Invites interface {
 	// RevokeInvite withdraws an open invitation (false: it was not open) and journals it.
 	RevokeInvite(chatID, id string, a AdminAttest) (bool, error)
 	ListInvites(chatID string) ([]invite.Record, error)
+	// JoinByInvite uses an invitation to write r (the nick's record) in one step; see invite.Redeem for
+	// the errors. A wrong proof is counted and journaled, and returned as *invite.BadProof.
+	JoinByInvite(chatID, id string, now time.Time, usedBy string, proofOK func(invite.Record) bool, r Record) (invite.Record, error)
 }

@@ -104,7 +104,7 @@ func (b *Broker) verifyWrite(ch *chat, m *member, kind string, raw json.RawMessa
 		return canon, nil
 	}
 	if s.Sig == "" {
-		if m.proto >= proto.ProtoVersion {
+		if m.proto >= proto.SigningProto {
 			return store.EventSig{}, proto.Errf("unsigned", "this client has a signing key: sign the %s (origin, lamport, sig)", kind)
 		}
 		return canon, nil

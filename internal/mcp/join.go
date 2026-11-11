@@ -70,7 +70,7 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 		}
 	}
 	brokerNote := ""
-	if w.Proto < proto.ProtoVersion {
+	if w.Proto < proto.SigningProto {
 		brokerNote = "the broker runs an older ccqc that does not sign events: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
 	}
 	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, priv: priv, signer: signer, conn: conn,

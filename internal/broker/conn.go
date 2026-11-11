@@ -24,6 +24,8 @@ type conn struct {
 	// A pending owner challenge (see Broker.challenge); only touched under Broker.mu.
 	nonce   string
 	nonceAt time.Time
+	// Uses of invitations tried on this connection lately (a join is served by one goroutine).
+	inviteHits []time.Time
 }
 
 func (c *conn) close() {

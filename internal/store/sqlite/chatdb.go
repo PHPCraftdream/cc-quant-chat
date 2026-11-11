@@ -201,34 +201,7 @@ func (c *chatDB) append(r store.Record) error {
 	if r.T == "msg" && r.Msg == nil {
 		return fmt.Errorf("sqlite: msg record without message")
 	}
-	err := c.inTx(func(tx *sql.Tx) error {
-		var lamport int64
-		var err error
-		if r.T == "msg" { // the chat's logical clock advances with every message (and journal row)
-			lamport, err = tick(tx)
-		} else { // other events carry the clock as it is
-			lamport, err = chatClock(tx)
-		}
-		if err != nil {
-			return err
-		}
-		e, _, err := recordEvent(c.id, r, lamport)
-		if err != nil {
-			return err
-		}
-		if r.T == "msg" && r.Msg.ReplyTo != 0 {
-			if e.Assigned, err = withReplyRef(tx, e.Assigned, r.Msg.ReplyTo); err != nil {
-				return err
-			}
-		}
-		if e, err = c.appendEvent(tx, e); err != nil {
-			return err
-		}
-		if err := applyEvent(tx, e); err != nil {
-			return err
-		}
-		return applyLocalState(tx, r)
-	})
+	err := c.inTx(func(tx *sql.Tx) error { return c.appendIn(tx, r, nil) })
 	if err != nil && r.T == "msg" && r.ClientID != "" {
 		// A repeat of an earlier send? Then the earlier message is the answer.
 		var id int64
@@ -240,6 +213,49 @@ func (c *chatDB) append(r store.Record) error {
 		return fmt.Errorf("sqlite: %s: %w", r.T, err)
 	}
 	return nil
+}
+
+// appendIn is append inside a transaction of the caller. extra is added to what the node assigns to
+// the event (for a nick that an invitation registered: which invitation).
+func (c *chatDB) appendIn(tx *sql.Tx, r store.Record, extra map[string]any) error {
+	var lamport int64
+	var err error
+	if r.T == "msg" { // the chat's logical clock advances with every message (and journal row)
+		lamport, err = tick(tx)
+	} else { // other events carry the clock as it is
+		lamport, err = chatClock(tx)
+	}
+	if err != nil {
+		return err
+	}
+	e, _, err := recordEvent(c.id, r, lamport)
+	if err != nil {
+		return err
+	}
+	if r.T == "msg" && r.Msg.ReplyTo != 0 {
+		if e.Assigned, err = withReplyRef(tx, e.Assigned, r.Msg.ReplyTo); err != nil {
+			return err
+		}
+	}
+	if len(extra) > 0 {
+		m, err := decodeMap(e.Assigned)
+		if err != nil {
+			return err
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		if e.Assigned, err = jsonText(m); err != nil {
+			return err
+		}
+	}
+	if e, err = c.appendEvent(tx, e); err != nil {
+		return err
+	}
+	if err := applyEvent(tx, e); err != nil {
+		return err
+	}
+	return applyLocalState(tx, r)
 }
 
 // Lamport returns the chat's logical clock: the value of the last write (0 before the first, and
