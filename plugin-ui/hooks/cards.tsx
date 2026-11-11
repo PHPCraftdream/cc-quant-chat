@@ -89,6 +89,12 @@ function OtherRow(ui: UI, e: Entry, i: number) {
           · {clean(e.lines.join('; '))}
         </Text>
       )
+    case 'board':
+      return (
+        <Text color="cyan">
+          ▣ /{e.chat} board: {clean(e.text)}
+        </Text>
+      )
     case 'notice':
       return (
         <Text color="red">

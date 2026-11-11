@@ -173,9 +173,9 @@ func (b *Broker) notifyAssignee(ch *chat, actor *member, c board.Change) {
 			wake = true
 		}
 	}
-	text := "board: @" + actor.name + " " + c.Text
+	text := "@" + actor.name + " " + c.Text
 	if assigned {
-		text = fmt.Sprintf("board: @%s assigned you %s %q (log #%d)", actor.name, board.TaskRef(t.ID), t.Title, c.LogID)
+		text = fmt.Sprintf("@%s assigned you %s %q (log #%d)", actor.name, board.TaskRef(t.ID), t.Title, c.LogID)
 	}
 	b.deliver(ch, t.Assignee, proto.Event{Kind: "board", Text: text, Wake: wake})
 }

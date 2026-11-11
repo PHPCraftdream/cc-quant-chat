@@ -22,8 +22,10 @@ export type Msg = {
 }
 export type Presence = { type: 'presence'; chat: string; lines: string[] }
 export type Notice = { type: 'notice'; chat: string; text: string }
+// A change of a task assigned to you (internal/mcp/board.go, boardLine).
+export type BoardEvent = { type: 'board'; chat: string; text: string }
 export type Note = { type: 'note'; text: string }
-export type Entry = Msg | Presence | Notice | Note
+export type Entry = Msg | Presence | Notice | BoardEvent | Note
 
 export type Batch = {
   count: number // what the header says: events in the batch
@@ -38,6 +40,7 @@ const OMITTED = /^\((\d+) older events omitted: call chat_inbox\)$/
 const MSG_HEAD =
   /^( {2}| {3}| » )?\[\/([a-z0-9-]+)\/@([a-z0-9-]+) #(\d+) ([^\s\]]+)(?: ↩#(\d+))?\] (?:(OWNER) )?([a-z0-9-]+)(?:\(([^)\n]*)\))?(?: → @([a-z0-9-]+))?: ?(.*)$/
 const PRESENCE = /^\[\/([a-z0-9-]+) presence\] (.*)$/
+const BOARD = /^\[\/([a-z0-9-]+) board\] (.*)$/
 const NOTICE = /^\[\/([a-z0-9-]+)\] (.*)$/
 const REPLY = / {3}\(reply: (\/[a-z0-9-]+\/@[a-z0-9-]+(?:\/@[a-z0-9-]+)?)\)$/
 
@@ -146,6 +149,9 @@ export function parseLines(text: string, notices = false): Entry[] {
     } else if ((g = PRESENCE.exec(line))) {
       cur = null
       out.push({ type: 'presence', chat: at(g, 1), lines: at(g, 2).split('; ') })
+    } else if ((g = BOARD.exec(line))) {
+      cur = null
+      out.push({ type: 'board', chat: at(g, 1), text: at(g, 2) })
     } else if (notices && (g = NOTICE.exec(line))) {
       cur = null
       out.push({ type: 'notice', chat: at(g, 1), text: at(g, 2) })

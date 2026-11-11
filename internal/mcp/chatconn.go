@@ -238,6 +238,11 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 		cc.s.emit(m.Text, meta, eventLine(cc.local, m, ev.ToMe), false, ackRef{cc, m.ID})
 	case "presence":
 		cc.presence(ev.Text)
+	case "board":
+		// A change of a task assigned to you. An assignment or a new status wakes the session;
+		// other changes ride along with the next wake-up.
+		line := boardLine(cc.local, ev.Text)
+		cc.s.emit(ev.Text, map[string]string{"kind": "board", "chat": cc.local}, line, !ev.Wake, ackRef{})
 	}
 }
 

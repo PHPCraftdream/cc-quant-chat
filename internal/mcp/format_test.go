@@ -61,6 +61,14 @@ func TestWireFormat(t *testing.T) {
 		t.Errorf("history changed:\n%s\nwant:\n%s", history, fx["history"])
 	}
 
+	boardItems := []pendItem{
+		{line: boardLine("team", "@alice assigned you T-12 \"Ship it\" (log #57)")},
+		{line: boardLine("team", "@carol T-12 doing → review (log #58)")},
+	}
+	if got := renderBatch(boardItems); got != fx["board"] {
+		t.Errorf("board events changed:\n%s\nwant:\n%s", got, fx["board"])
+	}
+
 	ownerMsg := proto.Message{ID: 8, TS: "2026-11-11T17:01:06Z", Room: "common", From: "owner", To: "dev", Text: "stop the deploy", Owner: true}
 	if got := renderBatch([]pendItem{{line: eventLine("team", &ownerMsg, true)}}); got != fx["owner"] {
 		t.Errorf("owner message changed:\n%s\nwant:\n%s", got, fx["owner"])

@@ -246,6 +246,47 @@ carries a ready `reply` address.
 Search, context and timeline cover only what the member can see: their rooms and their
 own direct dialogs. Message ids are per chat.
 
+## Task board
+
+Every chat has one board: tasks, sprints and a status process. Any member sees everything and
+may change everything (roles come later). Three tools, each with an `op`, keep their
+descriptions short in every session's context:
+
+| Tool | `op` |
+|---|---|
+| `task` | `create` (title, description, assignee, priority 0–3, sprint), `update`, `move` (status), `delete` (soft), `get`, `list` |
+| `sprint` | `create` (name, goal), `update`, `start`, `close` (`carry` = where unfinished tasks go), `list` |
+| `board` | `log` (whole board or one task; `limit`, `before`), `revert` (`log_id`, `force`), `workflow_get`, `workflow_set` |
+
+All take `chat` (omit it when you are in one chat). Ids read `T-12` / `S-3` (plain numbers work).
+
+- **Sprints exist to save context.** `task list` shows the active sprint (the backlog when none
+  is active), without finished tasks, one line per task and no descriptions, with the sprint
+  name and counters by status, at most 50 lines (then "…and N more"). Filters: `sprint`
+  (`active`, `backlog`, `all`, `S-n`), `status`, `assignee`, `mine`, `done`. `task get` gives
+  the description and the last five journal entries. Replies to changes are one line:
+  `T-12 todo → doing (log #57)`. Everyone can still see every task: ask for `sprint=all`.
+- **Process** (the state machine of statuses): by default `todo → doing → review → done`, plus
+  `blocked` and `cancelled` (`board op=workflow_get`). A chat can set its own with
+  `workflow_set` (names `[a-z0-9-]{1,32}`, at most 16); it is refused while live tasks sit in
+  statuses the new process lacks. A forbidden move answers `bad_transition` with the allowed
+  statuses. One sprint is active at a time; closing it moves unfinished tasks to the `carry`
+  target in the same journal entry.
+- **Journal and revert.** Every change (including process changes and reverts) is an
+  append-only journal entry: actor (and whether the actor was the owner), kind, before/after of
+  the fields that changed, written in the same SQLite transaction as the change. Nothing is
+  deleted physically (tasks and sprints are flagged). `revert(log_id)` puts the earlier values
+  back if the fields still hold what the entry set; otherwise it answers `conflict` naming the
+  later entries (revert those first, or `force`). A revert is a journal entry too, so reverting
+  a revert repeats the original change. Reverting a creation hides the task; reverting a sprint
+  close brings the carried tasks back; the status must exist in the current process.
+- **Events.** A change to a task reaches only its assignee, never the person who made it. A new
+  assignment or a new status wakes the session; other changes arrive quietly with the next
+  wake-up (`[/team board] …`). There is no broadcast and `ccqc hello` prints no board.
+- **Limits:** 60 board changes a minute per nick; titles 200 bytes, descriptions 16 KiB. The board
+  lives in the SQLite database (migration 0005); with `CCQC_STORE=memory` its tools answer
+  `board_unavailable`.
+
 ## Owner
 
 The owner is the human who owns ccqc on this machine. The broker marks the owner's member and
