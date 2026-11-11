@@ -35,6 +35,12 @@ Administrator operations (signed with the owner key; the owner password is typed
                             settings applied without a restart: broker.idle, broker.grace,
                             limits.messages_per_minute, board.manager_role (per chat)
 
+Chats and invitations (administrator operations; people are let in only by an invitation):
+  ccqc chat new <name>                  a chat with a random id and no token
+  ccqc invite <chat> <nick> [--ttl T]   a one-time invitation line for that nick (T: 15m default, up to 7d);
+                            the nick may exist already: the invitation then replaces its key
+  ccqc invite list <chat>   | revoke <chat> <id>   ids by their first 8 characters; no secret is shown
+
 Nodes (other brokers this one exchanges chats with; signed with the owner key; the peer.listen setting
 makes this broker accept nodes; nothing leaves unless a chat is shared):
   ccqc peer add <host:port> <origin>    a node by the origin shown by its "ccqc broker status"
@@ -108,6 +114,10 @@ func main() {
 		err = runRole(os.Args[2:])
 	case "peer":
 		err = runPeer(os.Args[2:])
+	case "chat":
+		err = runChatCmd(os.Args[2:])
+	case "invite":
+		err = runInvite(os.Args[2:])
 	case "doc":
 		err = runDoc(os.Args[2:])
 	case "config":
