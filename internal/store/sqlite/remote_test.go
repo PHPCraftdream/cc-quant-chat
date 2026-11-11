@@ -3,6 +3,7 @@ package sqlite
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 )
@@ -100,5 +101,43 @@ func TestAMessageNeedsItsRoomAndAMemberOfIt(t *testing.T) {
 	}
 	if err := accept(t, db, msg(4, join.ID(), "ops")); err != nil {
 		t.Fatalf("a message of a member: %v", err)
+	}
+}
+
+func TestReleaseDoesNotWaitForAReaderOfTheChat(t *testing.T) {
+	db, _ := openTemp(t)
+	if _, err := db.Load(chatID, "x"); err != nil {
+		t.Fatal(err)
+	}
+	c, done, err := db.acquire(chatID, "", false) // a session reading the journal
+	if err != nil || c == nil {
+		t.Fatalf("%v %v", c, err)
+	}
+	start := time.Now()
+	db.Release(chatID) // the broker unloads the chat, holding its locks
+	if time.Since(start) > time.Second {
+		t.Fatal("Release waited for the reader")
+	}
+	if _, err := db.Load(chatID2, "y"); err != nil { // another chat goes on at once
+		t.Fatal(err)
+	}
+	if err := c.db.Ping(); err != nil {
+		t.Fatalf("the reader's database was closed under it: %v", err)
+	}
+	done()
+	for i := 0; ; i++ {
+		c.life.RLock()
+		closed := c.closed
+		c.life.RUnlock()
+		if closed {
+			break
+		}
+		if i > 200 {
+			t.Fatal("the database was never closed after the reader was done")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := db.Load(chatID, ""); err != nil { // and the chat opens again
+		t.Fatal(err)
 	}
 }

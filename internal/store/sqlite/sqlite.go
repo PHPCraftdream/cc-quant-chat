@@ -87,6 +87,7 @@ type DB struct {
 	afterLayoutChat func(i int) error // test hook: called after each chat is laid out
 
 	onEvents atomic.Pointer[func(chatID string)] // see OnEvents
+	closers  sync.WaitGroup                      // databases of released chats that are waiting to be closed
 }
 
 var (
@@ -228,6 +229,7 @@ func (d *DB) adoptStrays() error {
 
 // Close closes the chats that are open and node.db.
 func (d *DB) Close() error {
+	d.closers.Wait()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var first error
@@ -286,19 +288,26 @@ func (d *DB) acquire(id, name string, create bool) (*chatDB, func(), error) {
 	}
 }
 
-// Release closes the database of a chat the broker no longer keeps in memory, once those who are
-// using it (the sessions with other nodes read without the broker's lock) are done.
+// Release lets go of the database of a chat the broker no longer keeps in memory. The chat is out
+// of the map at once; the database is closed by a goroutine as soon as those who are using it (the
+// sessions with other nodes read without the broker's lock) are done, so that a long read holds up
+// nobody: the caller holds the broker's lock.
 func (d *DB) Release(chatID string) {
 	d.mu.Lock()
 	c := d.chats[chatID]
 	delete(d.chats, chatID)
 	d.mu.Unlock()
-	if c != nil {
+	if c == nil {
+		return
+	}
+	d.closers.Add(1)
+	go func() {
+		defer d.closers.Done()
 		c.life.Lock()
 		c.closed = true
 		_ = c.db.Close()
 		c.life.Unlock()
-	}
+	}()
 }
 
 // Load returns a chat's state as records in replay order: rooms, nicks, memberships, messages.
