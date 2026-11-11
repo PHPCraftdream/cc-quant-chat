@@ -140,7 +140,11 @@ func (b *Broker) setConfig(chatID, key, value string) (string, *proto.Error) {
 	if e != nil {
 		return "", e
 	}
-	if as, ok := b.store.(store.AdminStore); ok {
+	if cs, ok := b.store.(store.AttestedSettings); ok && scope != "" && b.attest != nil {
+		if err := cs.SetChatSettingAttested(scope, key, v, *b.attest); err != nil {
+			return "", proto.Errf("store_failed", "%v", err)
+		}
+	} else if as, ok := b.store.(store.AdminStore); ok {
 		if err := as.SetSetting(scope, key, v); err != nil {
 			return "", proto.Errf("store_failed", "%v", err)
 		}

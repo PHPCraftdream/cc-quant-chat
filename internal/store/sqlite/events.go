@@ -162,6 +162,15 @@ func recordEvent(chatID string, r store.Record, lamport int64) (e events.Event, 
 	if assigned == nil {
 		assigned = map[string]any{}
 	}
+	if a := r.Admin; a != nil && r.T != "msg" { // the owner's signature of the operation travels with the event
+		e.Payload, e.AuthorPub, e.Sig = a.Args, a.Pub, a.Sig
+		m, _ := assigned.(map[string]any)
+		if m == nil {
+			m = map[string]any{}
+		}
+		m["admin"] = map[string]any{"op": a.Op, "nonce": a.Nonce}
+		assigned = m
+	}
 	if e.Assigned, err = jsonText(assigned); err != nil {
 		return e, false, err
 	}
@@ -247,16 +256,30 @@ func applySimple(tx *sql.Tx, e events.Event) error {
 		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`, e.ChatID, str(p, "room"), str(p, "nick"))
 	case "room.leave":
 		_, err = tx.Exec(`DELETE FROM room_members WHERE chat_id = ? AND room = ? AND nick = ?`, e.ChatID, str(p, "room"), str(p, "nick"))
-	case "config.set":
-		_, err = tx.Exec(`INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)`, e.ChatID, str(p, "key"), str(p, "value"))
+	case "config.set": // the stored value may be the normalized form of the one that was signed
+		value := str(p, "value")
+		if v, ok := a["value"].(string); ok {
+			value = v
+		}
+		_, err = tx.Exec(`INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)`, e.ChatID, str(p, "key"), value)
 	default:
 		return fmt.Errorf("unknown event kind %q", e.Kind)
 	}
 	return err
 }
 
-// SetChatSetting stores a chat-scoped setting as an event of that chat.
 func (d *DB) setChatSetting(chatID, key, value string) error {
+	return d.chatSetting(chatID, key, value, nil)
+}
+
+// SetChatSettingAttested is setChatSetting for a setting changed by a signed administrator
+// operation: the event carries the owner's signature.
+func (d *DB) SetChatSettingAttested(chatID, key, value string, a store.AdminAttest) error {
+	return d.chatSetting(chatID, key, value, &a)
+}
+
+// chatSetting stores a chat-scoped setting as an event of that chat.
+func (d *DB) chatSetting(chatID, key, value string, a *store.AdminAttest) error {
 	return d.inTx(func(tx *sql.Tx) error {
 		var one int
 		if err := tx.QueryRow(`SELECT 1 FROM chats WHERE id = ?`, chatID).Scan(&one); err != nil {
@@ -266,12 +289,18 @@ func (d *DB) setChatSetting(chatID, key, value string) error {
 		if err != nil {
 			return err
 		}
-		payload, err := jsonText(map[string]any{"key": key, "value": value})
-		if err != nil {
+		e := events.Event{ChatID: chatID, Lamport: lam, Kind: "config.set", TS: now()}
+		assigned := map[string]any{"value": value}
+		if a != nil {
+			e.Payload, e.AuthorPub, e.Sig = a.Args, a.Pub, a.Sig
+			assigned["admin"] = map[string]any{"op": a.Op, "nonce": a.Nonce}
+		} else if e.Payload, err = jsonText(map[string]any{"key": key, "value": value}); err != nil {
 			return err
 		}
-		e, err := d.appendEvent(tx, events.Event{ChatID: chatID, Lamport: lam, Kind: "config.set", Payload: payload, Assigned: "{}", TS: now()})
-		if err != nil {
+		if e.Assigned, err = jsonText(assigned); err != nil {
+			return err
+		}
+		if e, err = d.appendEvent(tx, e); err != nil {
 			return err
 		}
 		return applyEvent(tx, e)

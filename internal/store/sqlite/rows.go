@@ -107,7 +107,7 @@ func (r *recorder) RecordEvent(in store.EventIn) error {
 			imgs = append(imgs, img)
 		}
 	}
-	assigned, err := jsonText(map[string]any{"actor": in.Actor, "owner": in.Owner, "grant": in.Grant, "rows": imgs})
+	assigned, err := jsonText(map[string]any{"actor": in.Actor, "owner": in.Owner, "grant": in.Grant, "rows": imgs, "changes": changesOf(imgs)})
 	if err != nil {
 		return err
 	}
@@ -175,4 +175,31 @@ func writeImage(tx *sql.Tx, chatID string, img image) error {
 	}
 	_, err := tx.Exec(`INSERT OR REPLACE INTO `+img.T+` (chat_id, `+strings.Join(cols, ", ")+`) VALUES (?`+strings.Repeat(", ?", len(cols))+`)`, args...)
 	return err
+}
+
+// changesOf lists what a change did field by field, as the journal rows of the board say it
+// (before and after of each field that changed). The images are the node's claim; a node that
+// receives the event can check the claim against the signed request without running the rules
+// again, e.g. that task.move touched only the status.
+func changesOf(imgs []image) []map[string]any {
+	out := []map[string]any{}
+	for _, img := range imgs {
+		if img.T != "board_log" {
+			continue
+		}
+		var before, after map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(fmt.Sprint(img.R["before_json"])), &before)
+		_ = json.Unmarshal([]byte(fmt.Sprint(img.R["after_json"])), &after)
+		fields := map[string]any{}
+		for f, v := range after {
+			fields[f] = map[string]any{"before": before[f], "after": v}
+		}
+		for f, v := range before {
+			if _, ok := after[f]; !ok {
+				fields[f] = map[string]any{"before": v, "after": nil}
+			}
+		}
+		out = append(out, map[string]any{"entity": img.R["entity"], "entity_id": img.R["entity_id"], "kind": img.R["kind"], "fields": fields})
+	}
+	return out
 }

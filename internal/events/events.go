@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -99,5 +100,20 @@ func (e Event) VerifyAuthor() (ok, signed bool) {
 		return false, true
 	}
 	msg := proto.EventMessage(e.ChatID, e.Origin, e.Kind, []byte(e.Payload), e.Lamport)
+	if op, nonce, ok := e.adminOp(); ok { // the effect of an administrator operation: signed another way
+		msg = proto.AdminMessage(op, []byte(e.Payload), nonce)
+	}
 	return ed25519.Verify(pub, msg, sig), true
+}
+
+// adminOp: the operation and challenge nonce the owner signed, for an event that is the effect of
+// an administrator operation (the node recorded them in Assigned).
+func (e Event) adminOp() (op, nonce string, ok bool) {
+	var a struct {
+		Admin *struct{ Op, Nonce string } `json:"admin"`
+	}
+	if json.Unmarshal([]byte(e.Assigned), &a) != nil || a.Admin == nil {
+		return "", "", false
+	}
+	return a.Admin.Op, a.Admin.Nonce, true
 }

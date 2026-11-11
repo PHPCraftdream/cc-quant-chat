@@ -35,6 +35,22 @@ type Record struct {
 	AuthorPub string `json:"author_pub,omitempty"`
 	Sig       string `json:"sig,omitempty"`
 	Payload   string `json:"payload,omitempty"`
+	// Admin: set when the record is the effect of a signed administrator operation.
+	Admin *AdminAttest `json:"-"`
+}
+
+// AdminAttest is the owner's signature of the administrator operation that causes a record: the
+// operation, its arguments in canonical JSON, the challenge nonce it was signed with, the base64
+// signature and the owner's key. The record's event keeps them, so the signature can be checked
+// from the event alone.
+type AdminAttest struct {
+	Op, Args, Nonce, Sig, Pub string
+}
+
+// AttestedSettings is the optional part of a backend that records a chat setting changed by an
+// administrator operation together with the owner's signature of it.
+type AttestedSettings interface {
+	SetChatSettingAttested(chatID, key, value string, a AdminAttest) error
 }
 
 // EventSig is the author's signature on an event, kept with every row the event writes.

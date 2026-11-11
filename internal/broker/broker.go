@@ -48,6 +48,7 @@ type Broker struct {
 	settings  map[string]map[string]string // changed with `ccqc config set`: scope ("" or chat id) → key → value
 	ownerPub  ed25519.PublicKey            // the registered owner key, nil if none
 	ownerAt   string                       // when it was registered
+	attest    *store.AdminAttest           // the signed administrator operation being run, if any
 	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
 	active    int
 	idleAt    time.Time

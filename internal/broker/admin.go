@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
@@ -51,7 +52,9 @@ func (b *Broker) admin(c *conn, a proto.AdminArgs) (any, *proto.Error) {
 	case !ed25519.Verify(b.ownerPub, proto.AdminMessage(a.Op, canon, nonce), sig):
 		return refuse("admin_only", adminRefusal, "the signature does not verify")
 	}
+	b.attest = &store.AdminAttest{Op: a.Op, Args: string(canon), Nonce: nonce, Sig: a.Sig, Pub: owner.Encode(b.ownerPub)}
 	res, e := b.runAdmin(a.Op, a.Args)
+	b.attest = nil
 	if e != nil {
 		b.logAdmin(a.Op, canon, "failed: "+e.Code)
 		return nil, e
@@ -146,7 +149,7 @@ func (b *Broker) pinRole(ch *chat, nickName, role string) (any, *proto.Error) {
 			}
 		}
 	}
-	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: role}); e != nil {
+	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: role, Admin: b.attest}); e != nil {
 		return nil, e
 	}
 	nk.pinned = role
@@ -167,7 +170,7 @@ func (b *Broker) unpinRole(ch *chat, nickName string) (any, *proto.Error) {
 		return nil, proto.Errf("no_pinned_role", "@%s has no pinned role", nickName)
 	}
 	old := nk.pinned
-	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: ""}); e != nil {
+	if e := ch.save(store.Record{T: "pin", Nick: nickName, Role: "", Admin: b.attest}); e != nil {
 		return nil, e
 	}
 	nk.pinned = ""
@@ -212,7 +215,7 @@ func (b *Broker) resetNick(chatID, nickName string) (any, *proto.Error) {
 	if ch.members[nickName] != nil {
 		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", nickName)
 	}
-	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: ""}); e != nil {
+	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: "", Admin: b.attest}); e != nil {
 		return nil, e
 	}
 	nk.hash = ""

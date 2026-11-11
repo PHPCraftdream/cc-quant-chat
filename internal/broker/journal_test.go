@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -380,8 +381,8 @@ func TestAnEventThatCannotBeWrittenRollsBackItsProjection(t *testing.T) {
 		}
 		return n
 	}
-	if _, code := a.sendID("common", "", "lost", "x1"); code != "store_failed" {
-		t.Fatalf("send: %q", code)
+	if _, err := a.do("send", "msg", &proto.SendArgs{Room: "common", Text: "lost", ClientMsgID: "x1"}, nil); codeOf(err) != "store_failed" {
+		t.Fatalf("send: %v", err)
 	}
 	if _, err := a.do("board", "task.create", &proto.BoardArgs{Op: "task.create", Title: sp("lost")}, nil); codeOf(err) != "store_failed" {
 		t.Fatalf("board: %v", err)
@@ -403,5 +404,84 @@ func TestAnEventThatCannotBeWrittenRollsBackItsProjection(t *testing.T) {
 	}
 	if _, err := a.do("send", "msg", &proto.SendArgs{Room: "common", Text: "found"}, nil); err != nil {
 		t.Fatalf("after the journal works again: %v", err)
+	}
+}
+
+// The events of administrator operations (a pinned role, a chat setting, a freed nick) keep the
+// owner's signature, so the journal shows on its own who decided it.
+func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.T) {
+	b, db, path, priv := journalBroker(t)
+	tok, id := token(t)
+	k := newKey(t)
+	register(t, b, k)
+	b.mustJoin(t, tok, "alice", newKey(t))
+	bob := b.connect(t)
+	if _, code := bob.join(tok, "bob", proto.LegacyProto); code != "" {
+		t.Fatalf("bob: %q", code)
+	}
+	bob.call("leave", nil, nil)
+	c := b.connect(t)
+	mustCode(t, "role_give", adminReq(t, c, k, "role_give", proto.AdminRole{Chat: id, Nick: "alice", Role: "lead"}))
+	mustCode(t, "config_set", adminReq(t, c, k, "config_set", proto.AdminConfig{Chat: id, Key: "board.manager_role", Value: " lead "}))
+	mustCode(t, "nick_reset", adminReq(t, c, k, "nick_reset", proto.AdminRole{Chat: id, Nick: "bob"}))
+	consistent(t, db, "three administrator operations")
+	rep, err := db.Verify("")
+	if err != nil || rep.Signed != 3 {
+		t.Fatalf("%d signed events (want the three operations): %+v %v", rep.Signed, rep.Issues, err)
+	}
+
+	raw, err := sqlite.OpenRaw(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var origin string
+	var seq int64
+	if err := raw.QueryRow("SELECT origin, seq FROM events WHERE kind = 'nick.pin'").Scan(&origin, &seq); err != nil {
+		t.Fatal(err)
+	}
+	e := events.Event{ChatID: id, Origin: origin, Seq: seq}
+	if err := raw.QueryRow(`SELECT prev, lamport, kind, payload, author_pub, sig, assigned, ts FROM events WHERE chat_id = ? AND seq = ?`, id, seq).
+		Scan(&e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS); err != nil {
+		t.Fatal(err)
+	}
+	// The node cannot make up a decision of the owner: with another role in the payload (and the
+	// node's own signature renewed) the owner's signature no longer matches.
+	e.Payload = strings.Replace(e.Payload, `"lead"`, `"boss"`, 1)
+	e.Sign(priv)
+	if _, err := raw.Exec("UPDATE events SET payload = ?, node_sig = ? WHERE seq = ?", e.Payload, e.NodeSig, seq); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := db.Verify(""); err != nil || !issuesWith(rep, "author's signature does not verify") {
+		t.Fatalf("a changed decision: %v %v", rep.Issues, err)
+	}
+}
+
+// The event of a board change says, field by field, what the change did, next to the row images:
+// a receiver can check "task.move changes only the status" without running the rules again.
+func TestBoardEventsListTheFieldsTheyChanged(t *testing.T) {
+	_, path, _, _ := runScenario(t)
+	raw, err := sqlite.OpenRaw(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var assigned string
+	if err := raw.QueryRow("SELECT assigned FROM events WHERE kind = 'task.move'").Scan(&assigned); err != nil {
+		t.Fatal(err)
+	}
+	var a struct {
+		Changes []struct {
+			Entity string                       `json:"entity"`
+			ID     int64                        `json:"entity_id"`
+			Fields map[string]map[string]string `json:"fields"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal([]byte(assigned), &a); err != nil || len(a.Changes) != 1 {
+		t.Fatalf("changes: %s (%v)", assigned, err)
+	}
+	c := a.Changes[0]
+	if c.Entity != "task" || c.ID != 1 || len(c.Fields) != 1 || c.Fields["status"]["before"] != "todo" || c.Fields["status"]["after"] != "doing" {
+		t.Fatalf("task.move changes %+v, want only status todo → doing", c)
 	}
 }

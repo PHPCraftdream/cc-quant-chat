@@ -378,7 +378,7 @@ func (d *DB) legacyEvent(w *chainWriter, rec *recorder, rows []legacyRow) error 
 			imgs = append(imgs, img)
 		}
 	}
-	assigned, err := jsonText(map[string]any{"actor": r.actor, "owner": r.owner, "grant": r.grant, "rows": imgs})
+	assigned, err := jsonText(map[string]any{"actor": r.actor, "owner": r.owner, "grant": r.grant, "rows": imgs, "changes": changesOf(imgs)})
 	if err != nil {
 		return err
 	}
