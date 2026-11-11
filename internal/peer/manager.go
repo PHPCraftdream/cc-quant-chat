@@ -200,10 +200,13 @@ func sameSet(a, b []string) bool {
 	return true
 }
 
-// dial keeps a connection to one peer: it connects, runs the session, and tries again after a
-// pause that grows while it fails.
+// dial keeps a connection to one peer that has an address: it connects, runs the session, and tries
+// again after a pause that grows while it fails. One connection is enough, in either direction: while
+// the peer is connected (it may have dialed us) nothing is dialed, and a failure is logged once, not
+// at every try (a peer behind a NAT has an address nobody can reach).
 func (m *Manager) dial(ctx context.Context, origin string) {
 	pause := time.Second
+	lastErr := ""
 	for ctx.Err() == nil {
 		peers, err := m.st.Peers()
 		addr := ""
@@ -212,10 +215,24 @@ func (m *Manager) dial(ctx context.Context, origin string) {
 				addr = p.Addr
 			}
 		}
-		if err == nil && addr != "" {
+		switch {
+		case m.connected(origin):
+			pause, lastErr = time.Second, ""
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		case err == nil && addr != "":
 			started := time.Now()
 			if err := m.dialOnce(ctx, origin, addr); err != nil && ctx.Err() == nil {
-				m.logf("peer: %s at %s: %v", origin, addr, err)
+				if msg := err.Error(); msg != lastErr {
+					m.logf("peer: %s at %s: %v", origin, addr, err)
+					lastErr = msg
+				}
+			} else if err == nil {
+				lastErr = ""
 			}
 			if time.Since(started) > 10*time.Second {
 				pause = time.Second
@@ -232,6 +249,12 @@ func (m *Manager) dial(ctx context.Context, origin string) {
 	}
 }
 
+func (m *Manager) connected(origin string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessions[origin] != nil
+}
+
 func (m *Manager) dialOnce(ctx context.Context, origin, addr string) error {
 	cfg, err := tlsConfig(m.priv, false, func(got string, _ ed25519.PublicKey) error {
 		if got != origin {
@@ -242,8 +265,12 @@ func (m *Manager) dialOnce(ctx context.Context, origin, addr string) error {
 	if err != nil {
 		return err
 	}
+	_, hostport, err := ParseAddr(addr)
+	if err != nil {
+		return err
+	}
 	d := net.Dialer{Timeout: 5 * time.Second}
-	nc, err := d.DialContext(ctx, "tcp", addr)
+	nc, err := d.DialContext(ctx, "tcp", hostport)
 	if err != nil {
 		return err
 	}

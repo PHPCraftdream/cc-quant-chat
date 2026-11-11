@@ -23,6 +23,8 @@ const (
 	pushLimit    = 500 // events of one origin fetched per round
 	writeTimeout = 30 * time.Second
 	helloTimeout = 15 * time.Second
+	pingEvery    = 20 * time.Second // a quiet session is told apart from a dead one (a tunnel may not say)
+	readIdle     = 75 * time.Second
 )
 
 func originOf(pub ed25519.PublicKey) string { return node.Origin(pub) }
@@ -150,7 +152,12 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		}
 	}
 
-	for sc.Scan() {
+	go s.keepalive()
+	scan := func() bool {
+		_ = conn.SetReadDeadline(time.Now().Add(readIdle))
+		return sc.Scan()
+	}
+	for scan() {
 		var f Frame
 		if err := json.Unmarshal(sc.Bytes(), &f); err != nil {
 			return fmt.Errorf("%s: a frame that is not JSON", peer)
@@ -182,6 +189,22 @@ func (m *Manager) run(conn *tls.Conn, initiator string, ctx context.Context) err
 		return err
 	}
 	return errors.New("the connection ended")
+}
+
+func (s *session) keepalive() {
+	t := time.NewTicker(pingEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if s.send(Frame{T: "ping"}) != nil {
+				s.close()
+				return
+			}
+		}
+	}
 }
 
 func (s *session) setRemote(chat string, vec map[string]int64) {

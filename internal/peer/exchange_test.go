@@ -261,3 +261,48 @@ func TestTwoNodesThatDialEachOtherEndUpWithOneSession(t *testing.T) {
 	b.say(chatX, "y")
 	eventually(t, wait, "and the way back", func() bool { return len(a.journal(chatX)) == 2 })
 }
+
+func TestOneConnectionInEitherDirectionIsEnoughAndTheOtherSideIsNotTried(t *testing.T) {
+	a, b := newTnode(t, "alice"), newTnode(t, "bob")
+	a.listen() // bob listens to no one, as a node behind a NAT
+	a.chat(chatX)
+	b.chat(chatX)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Alice has an address for bob that nobody answers at; bob reaches alice by a URI.
+	must(a.db.AddPeer(b.origin, "tcp://127.0.0.1:1"))
+	must(b.db.AddPeer(a.origin, "tcp://"+a.addr))
+	must(a.db.SharePeerChat(chatX, b.origin))
+	must(b.db.SharePeerChat(chatX, a.origin))
+	a.say(chatX, "from alice")
+	must(a.m.Refresh())
+	must(b.m.Refresh())
+
+	eventually(t, wait, "alice's event reaches bob", func() bool { return len(b.journal(chatX)) == 1 })
+	b.say(chatX, "from bob")
+	eventually(t, wait, "bob's event reaches alice, over the same connection", func() bool { return len(a.journal(chatX)) == 2 })
+	if len(a.m.Sessions()) != 1 || len(b.m.Sessions()) != 1 {
+		t.Fatalf("sessions: a %v, b %v", a.m.Sessions(), b.m.Sessions())
+	}
+	time.Sleep(3 * time.Second)
+	if n := a.logCount(b.origin + " at"); n > 1 {
+		t.Fatalf("alice logged %d failed attempts to reach bob; a node that is connected is not dialed, and a failure is told once", n)
+	}
+	if len(a.m.Sessions()) != 1 || len(b.m.Sessions()) != 1 {
+		t.Fatalf("a working session was closed: a %v, b %v", a.m.Sessions(), b.m.Sessions())
+	}
+
+	// The connection breaks: bob, who dials, restores it.
+	for _, s := range b.m.sessionsOf(chatX) {
+		s.close()
+	}
+	a.say(chatX, "while apart")
+	eventually(t, wait, "bob restores the connection and catches up", func() bool {
+		jb := b.journal(chatX)
+		return len(jb) == 3 && sameJournal(a.journal(chatX), jb)
+	})
+}

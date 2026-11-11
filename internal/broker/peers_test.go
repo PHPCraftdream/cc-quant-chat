@@ -28,6 +28,7 @@ func TestNodesAreAddedSharedAndRemovedByTheOwnerOnly(t *testing.T) {
 		"a short origin": {Origin: "abc", Addr: "127.0.0.1:9"},
 		"this node":      {Origin: b.origin, Addr: "127.0.0.1:9"},
 		"no port":        {Origin: otherNode, Addr: "localhost"},
+		"unknown scheme": {Origin: otherNode, Addr: "quic://127.0.0.1:9"},
 	} {
 		if code := adminReq(t, adm, k, "peer_add", args); code != "bad_args" {
 			t.Fatalf("%s: %q", name, code)
@@ -54,7 +55,7 @@ func TestNodesAreAddedSharedAndRemovedByTheOwnerOnly(t *testing.T) {
 	if l.Node != b.origin || l.Listen != "" || len(l.Peers) != 1 {
 		t.Fatalf("list: %+v", l)
 	}
-	if p := l.Peers[0]; p.Origin != otherNode || p.Addr != "127.0.0.1:9" || p.Trust != "trusted" || len(p.Chats) != 1 || p.Chats[0] != id {
+	if p := l.Peers[0]; p.Origin != otherNode || p.Addr != "tcp://127.0.0.1:9" || p.Trust != "trusted" || len(p.Chats) != 1 || p.Chats[0] != id {
 		t.Fatalf("peer: %+v", p)
 	}
 

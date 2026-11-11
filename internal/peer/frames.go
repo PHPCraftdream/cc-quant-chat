@@ -19,6 +19,7 @@ const (
 //	hello   Origin, Chats: who the sender is and the chats it shares with the receiver
 //	vector  Chat, Vec: the highest seq the sender holds per origin in a chat (asks for the rest)
 //	events  Chat, Events, Pubs: events in the order of the clock, with the keys of their origins
+//	ping    nothing to say; the connection is alive
 //	bye     the sender is closing
 type Frame struct {
 	T      string            `json:"t"`

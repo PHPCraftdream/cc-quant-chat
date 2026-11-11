@@ -76,6 +76,18 @@ func (n *tnode) logged(part string) bool {
 	return false
 }
 
+func (n *tnode) logCount(part string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	c := 0
+	for _, l := range n.logs {
+		if strings.Contains(l, part) {
+			c++
+		}
+	}
+	return c
+}
+
 func (n *tnode) listen() string {
 	n.t.Helper()
 	addr, err := n.m.Listen("127.0.0.1:0")

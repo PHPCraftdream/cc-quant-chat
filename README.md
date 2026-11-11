@@ -525,7 +525,7 @@ Two brokers can keep the same chat. Nothing leaves a node unless the owner says 
 
 ```
 ccqc config set peer.listen 0.0.0.0:7700     # this broker accepts nodes (default: off; restart to apply)
-ccqc peer add <host:port> <origin>           # a node by the origin its "ccqc broker status" shows
+ccqc peer add <addr> <origin>                # addr is tcp://host:port (host:port alone is tcp); origin: see its "ccqc broker status"
 ccqc peer share <chat> <origin>              # the chat is exchanged with that node (both sides must share it)
 ccqc peer list                               # nodes, what is shared, whether connected or flagged
 ccqc peer unshare <chat> <origin>  /  ccqc peer remove <origin>
@@ -538,6 +538,10 @@ shared is not transferred, and a node that was not added cannot connect.
 - The link is TLS 1.3 with a self-signed Ed25519 certificate made from `broker.key`; each side
   checks that the certificate's key is the one its origin was derived from, so a node at the right
   address with another key is refused.
+- One connection in either direction is enough: a node with `peer.listen` off is a full neighbour if
+  it dials out; the node it dialed does not have to be able to dial back (and does not retry while
+  connected). A node is known by its key, not by the address it comes from, so a tunnel to a loopback
+  port works.
 - The nodes compare, per chat, the highest `seq` they hold of each origin and send each other what
   is missing, in the order of the chat's clock, including the events of a third node (a node need
   not trust the one it hears them from: it checks them itself). New events are pushed at once; a

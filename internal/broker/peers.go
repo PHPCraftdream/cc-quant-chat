@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"log"
-	"net"
 	"regexp"
 	"slices"
 
@@ -71,13 +70,14 @@ func (b *Broker) peerAdmin(op string, args json.RawMessage) (any, *proto.Error) 
 		if a.Origin == b.origin {
 			return nil, proto.Errf("bad_args", "that is this node")
 		}
-		if _, _, err := net.SplitHostPort(a.Addr); err != nil {
-			return nil, proto.Errf("bad_args", "addr is host:port, got %q", a.Addr)
+		uri, _, err := peer.ParseAddr(a.Addr)
+		if err != nil {
+			return nil, proto.Errf("bad_args", "%v", err)
 		}
-		if err := fed.AddPeer(a.Origin, a.Addr); err != nil {
+		if err := fed.AddPeer(a.Origin, uri); err != nil {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
-		return done("node " + a.Origin + " added (" + a.Addr + "); share chats with it: ccqc peer share <chat> " + a.Origin)
+		return done("node " + a.Origin + " added (" + uri + "); share chats with it: ccqc peer share <chat> " + a.Origin)
 	case "peer_remove":
 		var a proto.PeerRemove
 		if err := json.Unmarshal(args, &a); err != nil {
