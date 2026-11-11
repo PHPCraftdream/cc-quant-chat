@@ -154,7 +154,7 @@ func joinAsMember(chat, nick string) (*client.Conn, func(), error) {
 		return nil, nil, err
 	}
 	var w proto.Welcome
-	if err := c.Call("join", proto.JoinArgs{Token: token, Name: nick, Key: local.NickKey(chatID, nick), Proto: proto.ProtoVersion}, &w); err != nil {
+	if err := c.Call("join", proto.JoinArgs{Token: token, Name: nick, Key: local.NickKey(chatID, nick), Proto: proto.LegacyProto}, &w); err != nil {
 		c.Close()
 		return nil, nil, err
 	}

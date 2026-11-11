@@ -74,13 +74,12 @@ func (b *Broker) challenge(c *conn) (any, *proto.Error) {
 
 // verifyOwner checks the signature a join carries. The nonce is spent whatever the outcome.
 func (b *Broker) verifyOwner(c *conn, chatID, nick, sigB64 string) *proto.Error {
-	nonce, at := c.nonce, c.nonceAt
-	c.nonce = ""
+	nonce, valid := c.takeNonce()
 	bad := func(why string) *proto.Error { return proto.Errf("bad_owner_sig", "%s", why) }
 	if b.ownerPub == nil {
 		return bad("no owner is registered on this broker")
 	}
-	if nonce == "" || time.Since(at) > challengeTTL {
+	if !valid {
 		return bad("no valid challenge on this connection (ask for a new one)")
 	}
 	sig, err := owner.Decode(sigB64)

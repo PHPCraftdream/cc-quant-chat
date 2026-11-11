@@ -121,10 +121,10 @@ func (d *DB) Load(chatID, name string) ([]store.Record, error) {
 		return nil
 	})
 	if err == nil {
-		err = d.each(`SELECT nick, key_hash, seen, pinned_role FROM nicks WHERE chat_id = ?`, chatID, func(rows *sql.Rows) error {
+		err = d.each(`SELECT nick, key_hash, seen, pinned_role, pubkey FROM nicks WHERE chat_id = ?`, chatID, func(rows *sql.Rows) error {
 			r := store.Record{T: "nick"}
 			var pinned string
-			if err := rows.Scan(&r.Nick, &r.Hash, &r.ID, &pinned); err != nil {
+			if err := rows.Scan(&r.Nick, &r.Hash, &r.ID, &pinned, &r.Pub); err != nil {
 				return err
 			}
 			recs = append(recs, r)
@@ -160,12 +160,12 @@ func (d *DB) Load(chatID, name string) ([]store.Record, error) {
 				break
 			}
 			first := len(msgs)
-			err = d.eachArgs(`SELECT id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, owner
+			err = d.eachArgs(`SELECT id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, owner, author_pub, sig, payload
 				FROM messages WHERE chat_id = ? AND thread = ? ORDER BY id DESC LIMIT ?`,
 				[]any{chatID, th, store.ThreadWindow}, func(rows *sql.Rows) error {
 					var m proto.Message
 					r := store.Record{T: "msg", Msg: &m}
-					if err := rows.Scan(&m.ID, &r.Key, &m.Room, &m.From, &m.FromRole, &m.To, &m.Text, &m.ReplyTo, &m.TS, &m.Owner); err != nil {
+					if err := rows.Scan(&m.ID, &r.Key, &m.Room, &m.From, &m.FromRole, &m.To, &m.Text, &m.ReplyTo, &m.TS, &m.Owner, &r.AuthorPub, &r.Sig, &r.Payload); err != nil {
 						return err
 					}
 					msgs = append(msgs, r)
@@ -223,8 +223,8 @@ func (d *DB) Append(chatID string, r store.Record) error {
 		// Plain INSERT: an existing nick keeps its key; a clash is an error, never an overwrite.
 		// The nick and its place in @common are written together.
 		err = d.inTx(func(tx *sql.Tx) error {
-			if _, err := tx.Exec(`INSERT INTO nicks (chat_id, nick, key_hash, seen) VALUES (?, ?, ?, ?)`,
-				chatID, r.Nick, r.Hash, r.ID); err != nil {
+			if _, err := tx.Exec(`INSERT INTO nicks (chat_id, nick, key_hash, seen, pubkey) VALUES (?, ?, ?, ?, ?)`,
+				chatID, r.Nick, r.Hash, r.ID, r.Pub); err != nil {
 				return err
 			}
 			_, err := tx.Exec(`INSERT OR IGNORE INTO room_members (chat_id, room, nick) VALUES (?, ?, ?)`,
@@ -233,8 +233,8 @@ func (d *DB) Append(chatID string, r store.Record) error {
 		})
 	case "pin":
 		_, err = d.db.Exec(`UPDATE nicks SET pinned_role = ? WHERE chat_id = ? AND nick = ?`, r.Role, chatID, r.Nick)
-	case "nick_key": // reset (empty hash) or rebinding of a reset nick
-		_, err = d.db.Exec(`UPDATE nicks SET key_hash = ? WHERE chat_id = ? AND nick = ?`, r.Hash, chatID, r.Nick)
+	case "nick_key": // the nick's credentials as they are now: reset (both empty), rebound, or bound anew
+		_, err = d.db.Exec(`UPDATE nicks SET key_hash = ?, pubkey = ? WHERE chat_id = ? AND nick = ?`, r.Hash, r.Pub, chatID, r.Nick)
 	case "seen":
 		_, err = d.db.Exec(`UPDATE nicks SET seen = ? WHERE chat_id = ? AND nick = ? AND seen < ?`, r.ID, chatID, r.Nick, r.ID)
 	case "room":
@@ -258,9 +258,10 @@ func (d *DB) Append(chatID string, r store.Record) error {
 			if err := tx.QueryRow(`SELECT lamport FROM chats WHERE id = ?`, chatID).Scan(&lamport); err != nil {
 				return err
 			}
-			_, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner, r.Origin, lamport)
+			_, err := tx.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner, origin, lamport, author_pub, sig, payload)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner, r.Origin, lamport,
+				r.AuthorPub, r.Sig, r.Payload)
 			return err
 		})
 		if err != nil && r.ClientID != "" {

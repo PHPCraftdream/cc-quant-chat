@@ -38,6 +38,9 @@ type DocVersion struct {
 	Deleted     bool
 	Origin      string
 	Lamport     int64
+	AuthorPub   string
+	Sig         string
+	Payload     string
 }
 
 // DocsTx is the document tree of one chat inside a transaction.

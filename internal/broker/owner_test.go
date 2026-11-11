@@ -34,7 +34,8 @@ func register(t *testing.T, b *Broker, k ed25519.PrivateKey) string {
 	return pub
 }
 
-// ownerJoin joins under nick the way `ccqc owner say` does: challenge, sign, join.
+// ownerJoin joins under nick the way `ccqc owner say` of the previous level does: challenge, sign,
+// join; it doesn't sign its writes.
 func ownerJoin(t *testing.T, b *Broker, k ed25519.PrivateKey, tok, nick string, key ...string) (*client, string) {
 	t.Helper()
 	c := b.connect(t)
@@ -48,7 +49,7 @@ func ownerJoin(t *testing.T, b *Broker, k ed25519.PrivateKey, tok, nick string, 
 		c.key = key[0]
 	}
 	var w proto.Welcome
-	code := c.call("join", proto.JoinArgs{Token: tok, Name: nick, Key: c.key, Proto: proto.ProtoVersion, OwnerSig: sig}, &w)
+	code := c.call("join", proto.JoinArgs{Token: tok, Name: nick, Key: c.key, Proto: proto.LegacyProto, OwnerSig: sig}, &w)
 	if code == "" && w.Key != "" {
 		c.key = w.Key
 	}

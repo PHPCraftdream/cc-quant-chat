@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log"
@@ -19,9 +20,11 @@ type chatConn struct {
 	local string
 	token string
 	name  string
-	key   string // nick key
+	key   string // the nick's old secret (a legacy nick moves to its key with it)
+	priv  ed25519.PrivateKey
 
 	mu      sync.Mutex
+	signer  *client.Signer // nil while the broker doesn't sign (older than proto 4)
 	conn    *client.Conn
 	role    string
 	excl    bool
@@ -45,6 +48,23 @@ func (cc *chatConn) call(op string, args, out any) error {
 		return errors.New("reconnecting to broker, retry in a few seconds")
 	}
 	return conn.Call(op, args, out)
+}
+
+func (cc *chatConn) chatID() string {
+	_, id, _ := proto.ParseToken(cc.token)
+	return id
+}
+
+// write sends a change signed by this nick, as its author (an unsigned one while the broker is
+// older than proto 4).
+func (cc *chatConn) write(op, kind string, args proto.Stamper, out any) error {
+	cc.mu.Lock()
+	sg := cc.signer
+	cc.mu.Unlock()
+	if sg == nil {
+		return cc.call(op, args, out)
+	}
+	return sg.Write(cc.call, op, kind, args, out)
 }
 
 func (cc *chatConn) setRoom(room string, in bool) {
@@ -110,7 +130,8 @@ func (cc *chatConn) reconnect() *client.Conn {
 			continue
 		}
 		var w proto.Welcome
-		if err := conn.Call("join", proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key, Proto: proto.ProtoVersion}, &w); err != nil {
+		signer, err := client.JoinSigned(conn.Call, proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}, cc.priv, cc.chatID(), &w)
+		if err != nil {
 			conn.Close()
 			log.Printf("rejoin /%s: %v", cc.local, err)
 			if permanentJoinError(err) {
@@ -126,7 +147,7 @@ func (cc *chatConn) reconnect() *client.Conn {
 			conn.Close()
 			return nil
 		}
-		cc.conn = conn
+		cc.conn, cc.signer = conn, signer
 		cc.mu.Unlock()
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)

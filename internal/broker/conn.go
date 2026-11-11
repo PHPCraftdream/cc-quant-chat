@@ -61,7 +61,7 @@ func (c *conn) push(f proto.Frame) {
 func (c *conn) reply(id int64, data any, perr *proto.Error) {
 	f := proto.Frame{Op: "ok", ID: id}
 	if perr != nil {
-		f.Op, f.Code, f.Msg = "err", perr.Code, perr.Msg
+		f.Op, f.Code, f.Msg, f.Data = "err", perr.Code, perr.Msg, perr.Data
 	} else if data != nil {
 		raw, err := json.Marshal(data)
 		if err != nil {

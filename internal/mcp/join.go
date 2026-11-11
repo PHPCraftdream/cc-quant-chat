@@ -45,13 +45,18 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	}
 	s.mu.Unlock()
 
-	key := local.NickKey(chatID, name)
+	key := local.NickKey(chatID, name) // the nick's old secret: moves a legacy nick to its key
+	priv, err := local.NickPrivateKey(chatID, name)
+	if err != nil {
+		return "", fmt.Errorf("the nick key could not be read or saved: %w", err)
+	}
 	conn, err := client.Connect()
 	if err != nil {
 		return "", err
 	}
 	var w proto.Welcome
-	if err := conn.Call("join", proto.JoinArgs{Token: token, Name: name, Key: key, Proto: proto.ProtoVersion}, &w); err != nil {
+	signer, err := client.JoinSigned(conn.Call, proto.JoinArgs{Token: token, Name: name, Key: key}, priv, chatID, &w)
+	if err != nil {
 		conn.Close()
 		return "", err
 	}
@@ -66,9 +71,9 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	}
 	brokerNote := ""
 	if w.Proto < proto.ProtoVersion {
-		brokerNote = "the broker runs an older ccqc without delivery confirmations: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
+		brokerNote = "the broker runs an older ccqc that does not sign events: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
 	}
-	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, conn: conn,
+	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, priv: priv, signer: signer, conn: conn,
 		role: w.State.MyRole, rooms: set(w.State.MyRooms)}
 
 	s.mu.Lock()

@@ -8,10 +8,10 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// Record kinds: msg, room, in (joined room), out (left room), nick (registered), pin (a role pinned
-// to a nick),
-// nick_key (new key hash; empty = reset), seen, and maxid (Load only: newest message id
-// of the chat, which may lie outside the returned window).
+// Record kinds: msg, room, in (joined room), out (left room), nick (registered), pin (a role
+// pinned to a nick), nick_key (the nick's credentials now, Hash and Pub; both empty = reset),
+// seen, and maxid (Load only: newest message id of the chat, which may lie outside the returned
+// window).
 type Record struct {
 	T     string         `json:"t"`
 	Key   string         `json:"k,omitempty"` // thread key of a msg
@@ -27,6 +27,27 @@ type Record struct {
 	Origin string `json:"origin,omitempty"`
 	// Role: for "pin", the role pinned to Nick ("" unpins).
 	Role string `json:"role,omitempty"`
+	// Pub: the base64 Ed25519 key of a nick ("nick", "nick_key"; "" = none). For a "msg":
+	// AuthorPub, Sig and Payload, the author's signature of the event and what was signed (all
+	// empty for an unsigned client).
+	Pub       string `json:"pub,omitempty"`
+	AuthorPub string `json:"author_pub,omitempty"`
+	Sig       string `json:"sig,omitempty"`
+	Payload   string `json:"payload,omitempty"`
+}
+
+// EventSig is the author's signature on an event, kept with every row the event writes.
+// Payload is the canonical JSON that was signed (the request without sig and lamport).
+type EventSig struct {
+	Pub     string
+	Sig     string
+	Payload string
+}
+
+// Clock is the optional part of a backend that knows a chat's logical clock (the value of the
+// last write); a signed write must carry Lamport(chat)+1.
+type Clock interface {
+	Lamport(chatID string) (int64, error)
 }
 
 // AdminEntry is one attempt of an administrator operation.

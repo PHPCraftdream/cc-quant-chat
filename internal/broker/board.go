@@ -14,23 +14,20 @@ import (
 
 const boardLimit = 60 // board changes per minute per nick
 
-// changesBoard: the board ops that write; a stopping broker refuses them like other changes.
-var changesBoard = map[string]bool{
-	"task.create": true, "task.update": true, "task.move": true, "task.delete": true, "task.comment": true,
-	"sprint.create": true, "sprint.update": true, "sprint.start": true, "sprint.close": true,
-	"board.revert": true, "board.workflow_set": true,
-}
-
 // boardOp serves one request of the board. Any member of the chat sees all of it and may change
 // it; every change and its journal entry are written in one transaction.
-func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs) (any, *proto.Error) {
+func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs, raw json.RawMessage) (any, *proto.Error) {
 	bs, ok := b.store.(store.Board)
 	if !ok {
 		return nil, proto.Errf("board_unavailable", "the task board needs the SQLite store (the broker runs with CCQC_STORE=memory)")
 	}
-	if changesBoard[a.Op] {
+	if proto.BoardWrite(a.Op) {
 		if b.stopping.Load() {
 			return nil, proto.Errf("restarting", "the broker is restarting; repeat in a moment")
+		}
+		sg, e := b.verifyWrite(ch, m, a.Op, raw)
+		if e != nil {
+			return nil, e
 		}
 		if !b.allow(ch, m.name, "board", boardLimit) {
 			return nil, proto.Errf("rate_limited", "max %d board changes per minute", boardLimit)
@@ -46,7 +43,7 @@ func (b *Broker) boardOp(ch *chat, m *member, a proto.BoardArgs) (any, *proto.Er
 				return err
 			}
 			var err error
-			change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Grant: who.grant, Origin: b.origin, Now: time.Now()}, a)
+			change, err = applyBoard(board.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Grant: who.grant, Origin: b.origin, Sig: sg, Now: time.Now()}, a)
 			return err
 		})
 		if err != nil {

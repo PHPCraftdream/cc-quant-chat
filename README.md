@@ -399,9 +399,48 @@ The broker has an identity of its own: an Ed25519 key in `<CCQC_HOME>/broker.key
 outside the database, no password because the broker starts without a person; it names this node
 against other nodes, it is no protection from processes of your own user). `node:` in
 `ccqc broker status` is the first 16 bytes of SHA-256 of the public key (hex), written as `origin`
-on journal rows (`messages`, `board_log`, `board_comments`) together with `lamport`, a
-logical clock per chat. Nothing is signed or synchronized yet; this is groundwork for merging
+on journal rows (`messages`, `board_log`, `board_comments`, `doc_versions`) together with
+`lamport`, a logical clock per chat. Nothing is synchronized yet; this is groundwork for merging
 databases of several brokers later (see `docs/design-federation.md`).
+
+## Nick keys and signed events (protocol 4)
+
+A nick is an Ed25519 key pair. The private key lives in `nick-keys.json` next to the nick's old
+secret (`<chat id>/<nick>/ed25519`); the broker stores the public key (`nicks.pubkey`). Joining
+is a challenge and a signature (`challenge`, then `join` with `pub` and `nick_sig`), like the
+owner's, so a session proves it holds the key without sending it.
+
+**Existing nicks move to a key at their next join**: the client presents its old secret and the
+new public key, the broker checks the secret and binds the key. From then on the secret alone no
+longer opens that nick (`name_taken`), so a replayed old secret is refused; `ccqc nick reset`
+frees the nick (key and secret) as before. A client of an earlier level (proto 3) keeps joining by
+its secret for as long as its nick has no key, and its events are stored unsigned: such nicks are
+marked `[unsigned: no signing key]` in the chat state. No action is needed: the first session that
+runs this version binds the key.
+
+**Author-signed events.** A message, a board change (with its journal entry, comment or revert)
+and a document version are signed by their author over `chat id`, the broker's `origin`
+(`Welcome.origin`; a request addressed to another node is refused `wrong_origin`: the numbers in
+it, a task id or a version, are that node's own), the kind (`msg`, a board op such as
+`task.create`, `doc.put`), the canonical JSON of the request, and `lamport`, the chat's clock.
+The broker checks the signature before it writes and keeps `author_pub`, `sig` and the signed
+`payload` on the rows the event creates (`messages`, `board_log`, `board_comments`,
+`doc_versions`), so each row can be verified on its own; an event that does not verify is not
+stored (`bad_signature`). `lamport` comes from the broker (op `clock`) and must be exactly the
+chat's next value: when another write took it first the broker answers `stale_clock` with the
+current value and the client signs again (up to 5 times). A client that has a key but sends no
+signature is refused (`unsigned`).
+
+`ccqc owner say` signs with the owner key, so the `OWNER` marker of a message can be checked
+against the message itself. `ccqc doc` and `ccqc nick reset` stay unsigned (the `doc` command
+joins at the previous level, with its nick's secret).
+
+Compatibility: a proto 3 client against this broker, and this client against an older broker
+(it falls back to the secret and does not sign), work both ways. Migration `0009_signatures.sql`
+only adds columns. **Rollback** to an older broker: nicks that moved to a key keep their old
+secret and join with it as before (their events are stored unsigned again). A nick that was
+first registered with a key has no secret, and an older broker sees it as free: the first join
+under that name would take it over. Roll back only with the chats' members away, or not at all.
 
 ## Cards in the transcript (`quant-ui`)
 

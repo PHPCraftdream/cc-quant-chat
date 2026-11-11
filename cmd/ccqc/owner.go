@@ -301,7 +301,15 @@ func ownerSay(args []string) error {
 	id := make([]byte, 16)
 	_, _ = rand.Read(id)
 	var r proto.SendResult
-	if err := c.Call("send", proto.SendArgs{Room: a.Room, To: a.Member, Text: text, ClientMsgID: hex.EncodeToString(id)}, &r); err != nil {
+	sa := proto.SendArgs{Room: a.Room, To: a.Member, Text: text, ClientMsgID: hex.EncodeToString(id)}
+	if w.Proto >= proto.ProtoVersion && w.Origin != "" {
+		// The owner key is the author's: the OWNER marker can be checked against the message itself.
+		sg := &client.Signer{Priv: priv, ChatID: chatID, Origin: w.Origin}
+		err = sg.Write(c.Call, "send", "msg", &sa, &r)
+	} else {
+		err = c.Call("send", sa, &r)
+	}
+	if err != nil {
 		return err
 	}
 	fmt.Printf("sent #%d to %s as OWNER @%s\n", r.ID, a, nick)

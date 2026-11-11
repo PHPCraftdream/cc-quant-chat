@@ -79,6 +79,16 @@ func (b *Broker) connect(t *testing.T) *client {
 // call sends a request and returns the data and the error code ("" on success).
 func (c *client) call(op string, args, out any) string {
 	c.t.Helper()
+	var pe *proto.Error
+	if errors.As(c.callE(op, args, out), &pe) {
+		return pe.Code
+	}
+	return ""
+}
+
+// callE is call returning the broker's error whole, with its data.
+func (c *client) callE(op string, args, out any) error {
+	c.t.Helper()
 	c.id++
 	raw, _ := json.Marshal(args)
 	f, _ := json.Marshal(proto.Frame{Op: op, ID: c.id, Args: raw})
@@ -88,18 +98,18 @@ func (c *client) call(op string, args, out any) string {
 	select {
 	case r := <-c.replies:
 		if r.Op == "err" {
-			return r.Code
+			return &proto.Error{Code: r.Code, Msg: r.Msg, Data: r.Data}
 		}
 		if out != nil && len(r.Data) > 0 {
 			if err := json.Unmarshal(r.Data, out); err != nil {
 				c.t.Fatalf("%s reply: %v", op, err)
 			}
 		}
-		return ""
+		return nil
 	case <-time.After(5 * time.Second):
 		c.t.Fatalf("%s: no reply", op)
 	}
-	return ""
+	return nil
 }
 
 func (c *client) join(token, name string, level int) (proto.Welcome, string) {

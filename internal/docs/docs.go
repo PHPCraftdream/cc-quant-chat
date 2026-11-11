@@ -30,6 +30,7 @@ type Ctx struct {
 	Actor  string
 	Owner  bool
 	Origin string
+	Sig    store.EventSig // the author's signature of the request, written on every version it creates
 	Now    time.Time
 }
 
@@ -97,12 +98,19 @@ func save(c Ctx, cur store.Doc, path, title, body, note string, deleted bool) (s
 	if err != nil {
 		return store.DocVersion{}, err
 	}
+	return saveAt(c, lamport, cur, path, title, body, note, deleted)
+}
+
+// saveAt writes a version with the given logical clock value; a move writes two versions of one
+// event, which share it.
+func saveAt(c Ctx, lamport int64, cur store.Doc, path, title, body, note string, deleted bool) (store.DocVersion, error) {
 	v := store.DocVersion{Path: path, Version: cur.Version + 1, TS: c.ts(), Author: c.Actor, AuthorOwner: c.Owner,
-		Title: title, Body: body, Note: note, Deleted: deleted, Origin: c.Origin, Lamport: lamport}
+		Title: title, Body: body, Note: note, Deleted: deleted, Origin: c.Origin, Lamport: lamport,
+		AuthorPub: c.Sig.Pub, Sig: c.Sig.Sig, Payload: c.Sig.Payload}
 	if err := c.Tx.AddVersion(v); err != nil {
 		return v, err
 	}
-	err = c.Tx.PutDoc(store.Doc{Path: path, Title: title, Body: body, Version: v.Version, Author: c.Actor,
+	err := c.Tx.PutDoc(store.Doc{Path: path, Title: title, Body: body, Version: v.Version, Author: c.Actor,
 		AuthorOwner: c.Owner, TS: v.TS, Deleted: deleted})
 	return v, err
 }
@@ -239,11 +247,15 @@ func Move(c Ctx, path, to string) (Result, error) {
 	if dstLive {
 		return Result{}, proto.Errf("exists", "%s exists already; move onto it is not allowed", to)
 	}
-	v, err := save(c, dst, to, cur.Title, cur.Body, "moved from "+path, false)
+	lamport, err := c.Tx.NextLamport()
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := save(c, cur, path, cur.Title, cur.Body, "moved to "+to, true); err != nil {
+	v, err := saveAt(c, lamport, dst, to, cur.Title, cur.Body, "moved from "+path, false)
+	if err != nil {
+		return Result{}, err
+	}
+	if _, err := saveAt(c, lamport, cur, path, cur.Title, cur.Body, "moved to "+to, true); err != nil {
 		return Result{}, err
 	}
 	return Result{Text: fmt.Sprintf("%s → %s (%s v%d)", path, to, to, v.Version), Path: to, Version: v.Version, Changed: true}, nil

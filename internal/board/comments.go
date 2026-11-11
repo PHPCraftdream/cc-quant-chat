@@ -43,7 +43,7 @@ func CommentTask(c Ctx, taskID int64, text string) (Change, error) {
 		return Change{}, err
 	}
 	if err := c.Tx.PutComment(store.Comment{ID: id, TaskID: taskID, TS: c.ts(), Author: c.Actor, AuthorOwner: c.Owner,
-		Text: text, Origin: c.Origin, Lamport: lamport}); err != nil {
+		Text: text, Origin: c.Origin, Lamport: lamport, AuthorPub: c.Sig.Pub, Sig: c.Sig.Sig}); err != nil {
 		return Change{}, err
 	}
 	ch := Change{Text: fmt.Sprintf("%s commented (comment #%d, log #%d)", TaskRef(taskID), id, logID), LogID: logID, Task: t, Fields: []string{"comment"}}

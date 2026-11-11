@@ -224,13 +224,13 @@ func (b *boardTx) PutWorkflow(w store.Workflow, ts string) error {
 	return err
 }
 
-const logCols = `id, ts, actor, actor_owner, kind, entity, entity_id, before_json, after_json, reverts, note, origin, lamport, actor_grant`
+const logCols = `id, ts, actor, actor_owner, kind, entity, entity_id, before_json, after_json, reverts, note, origin, lamport, actor_grant, author_pub, sig, payload`
 
 func scanLog(row interface{ Scan(...any) error }) (store.LogEntry, error) {
 	var e store.LogEntry
 	var owner int
 	var before, after string
-	if err := row.Scan(&e.ID, &e.TS, &e.Actor, &owner, &e.Kind, &e.Entity, &e.EntityID, &before, &after, &e.Reverts, &e.Note, &e.Origin, &e.Lamport, &e.ActorGrant); err != nil {
+	if err := row.Scan(&e.ID, &e.TS, &e.Actor, &owner, &e.Kind, &e.Entity, &e.EntityID, &before, &after, &e.Reverts, &e.Note, &e.Origin, &e.Lamport, &e.ActorGrant, &e.AuthorPub, &e.Sig, &e.Payload); err != nil {
 		return e, err
 	}
 	e.ActorOwner = owner != 0
@@ -252,9 +252,9 @@ func (b *boardTx) AppendLog(e store.LogEntry) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.tx.Exec(`INSERT INTO board_log (chat_id, `+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = b.tx.Exec(`INSERT INTO board_log (chat_id, `+logCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.chat, e.ID, e.TS, e.Actor, boolInt(e.ActorOwner), e.Kind, e.Entity, e.EntityID, string(before), string(after), e.Reverts, e.Note,
-		e.Origin, e.Lamport, e.ActorGrant)
+		e.Origin, e.Lamport, e.ActorGrant, e.AuthorPub, e.Sig, e.Payload)
 	return err
 }
 
@@ -323,19 +323,19 @@ func (b *boardTx) NextLamport() (int64, error) {
 
 func (b *boardTx) NextCommentID() (int64, error) { return b.nextID("board_comments") }
 
-const commentCols = `id, task_id, ts, author, author_owner, text, deleted, origin, lamport`
+const commentCols = `id, task_id, ts, author, author_owner, text, deleted, origin, lamport, author_pub, sig`
 
 func scanComment(row interface{ Scan(...any) error }) (store.Comment, error) {
 	var c store.Comment
 	var owner, del int
-	err := row.Scan(&c.ID, &c.TaskID, &c.TS, &c.Author, &owner, &c.Text, &del, &c.Origin, &c.Lamport)
+	err := row.Scan(&c.ID, &c.TaskID, &c.TS, &c.Author, &owner, &c.Text, &del, &c.Origin, &c.Lamport, &c.AuthorPub, &c.Sig)
 	c.AuthorOwner, c.Deleted = owner != 0, del != 0
 	return c, err
 }
 
 func (b *boardTx) PutComment(c store.Comment) error {
-	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (chat_id, `+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.chat, c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport)
+	_, err := b.tx.Exec(`INSERT OR REPLACE INTO board_comments (chat_id, `+commentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.chat, c.ID, c.TaskID, c.TS, c.Author, boolInt(c.AuthorOwner), c.Text, boolInt(c.Deleted), c.Origin, c.Lamport, c.AuthorPub, c.Sig)
 	return err
 }
 

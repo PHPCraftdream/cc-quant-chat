@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -79,8 +80,19 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	}
 
 	var issued string
+	var pub ed25519.PublicKey
 	nk := ch.nicks[a.Name]
 	switch {
+	case a.Pub != "": // proto 4: the nick is its Ed25519 key
+		var e *proto.Error
+		if pub, e = b.verifyNick(c, id, a); e != nil {
+			return nil, e
+		}
+		if nk, e = b.bindPub(ch, a, nk); e != nil {
+			return nil, e
+		}
+	case nk != nil && nk.pub != "":
+		return nil, proto.Errf("name_taken", "nick @%s joins with a signing key and this client has none: update ccqc (the secret alone no longer opens it)", a.Name)
 	case nk == nil || nk.hash == "": // new nick, or one freed by `ccqc nick reset`
 		// Bind it to the presented key, else a fresh one.
 		key := a.Key
@@ -117,10 +129,10 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	backlog, total := ch.unread(a.Name, nk.seen)
 	acks := a.Proto >= 2
 	if m != nil {
-		m.conn, m.offline, m.acks, m.proto, m.owner = c, time.Time{}, acks, a.Proto, signed
+		m.conn, m.offline, m.acks, m.proto, m.owner, m.pub = c, time.Time{}, acks, a.Proto, signed, pub
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
-		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto, owner: signed}
+		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto, owner: signed, pub: pub}
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}
@@ -129,7 +141,37 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		b.holdRole(ch, m, nk.pinned)
 	}
 	c.ch, c.m = ch, m
-	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion}, nil
+	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
+}
+
+// bindPub binds the key a client proved to hold to its nick. A new nick is registered with it; a
+// legacy nick (or one freed by `ccqc nick reset`) moves to it once, a legacy nick only for the
+// holder of its old secret; a nick that has a key takes only that key.
+func (b *Broker) bindPub(ch *chat, a proto.JoinArgs, nk *nick) (*nick, *proto.Error) {
+	taken := func(why string) *proto.Error {
+		return proto.Errf("name_taken", "nick @%s is registered in this chat %s; pick another nick (or, if it is yours and its key was lost, `ccqc nick reset - %s` (token on stdin))", a.Name, why, a.Name)
+	}
+	switch {
+	case nk == nil:
+		fresh := &nick{pub: a.Pub, seen: ch.nextID} // nothing is "unread" for a new nick
+		if e := ch.save(store.Record{T: "nick", Nick: a.Name, Pub: a.Pub, ID: fresh.seen}); e != nil {
+			return nil, e
+		}
+		ch.nicks[a.Name] = fresh
+		ch.rooms[proto.RoomCommon].members[a.Name] = true
+		return fresh, nil
+	case nk.pub == a.Pub:
+		return nk, nil
+	case nk.pub != "":
+		return nil, taken("under another key")
+	case nk.hash != "" && !nk.check(a.Key):
+		return nil, taken("by another session (moving it to a key takes its old secret)")
+	}
+	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: nk.hash, Pub: a.Pub}); e != nil {
+		return nil, e
+	}
+	nk.pub = a.Pub
+	return nk, nil
 }
 
 // nickReset frees a registered nick whose key is lost: the next join binds a new key, and the
@@ -157,10 +199,10 @@ func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
 	if ch.members[a.Name] != nil {
 		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", a.Name)
 	}
-	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: ""}); e != nil {
+	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name}); e != nil {
 		return nil, e
 	}
-	nk.hash = ""
+	nk.hash, nk.pub = "", ""
 	b.presence(ch, nil, "", "the key of @"+a.Name+" was reset: the next join under this nick takes it over")
 	return nil, nil
 }

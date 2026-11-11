@@ -38,7 +38,10 @@ type Ctx struct {
 	Owner  bool   // the actor is the verified owner
 	Grant  string // reserved: a grant the actor holds (empty for now)
 	Origin string // this node, written on every journal row
-	Now    time.Time
+	// Sig is the author's signature of the request, written on every row it creates (empty for an
+	// unsigned client).
+	Sig store.EventSig
+	Now time.Time
 }
 
 func (c Ctx) ts() string { return c.Now.UTC().Format(time.RFC3339) }
@@ -117,7 +120,8 @@ func (c Ctx) logL(kind, entity string, id int64, before, after map[string]json.R
 	}
 	err = c.Tx.AppendLog(store.LogEntry{ID: n, TS: c.ts(), Actor: c.Actor, ActorOwner: c.Owner, Kind: kind,
 		Entity: entity, EntityID: id, Before: before, After: after, Reverts: reverts,
-		Origin: c.Origin, Lamport: lamport, ActorGrant: c.Grant})
+		Origin: c.Origin, Lamport: lamport, ActorGrant: c.Grant,
+		AuthorPub: c.Sig.Pub, Sig: c.Sig.Sig, Payload: c.Sig.Payload})
 	return n, lamport, err
 }
 

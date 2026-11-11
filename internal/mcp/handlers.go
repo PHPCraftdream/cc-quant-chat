@@ -21,7 +21,7 @@ func (s *Session) send(to, text string, replyTo int64) (string, error) {
 	}
 	var r proto.SendResult
 	args := proto.SendArgs{Room: a.Room, To: a.Member, Text: text, ReplyTo: replyTo, ClientMsgID: newClientMsgID()}
-	if err := withRetry(func() error { return cc.call("send", args, &r) }, sendWindow, sendDelay); err != nil {
+	if err := withRetry(func() error { return cc.write("send", "msg", &args, &r) }, sendWindow, sendDelay); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("sent #%d to %s", r.ID, a), nil

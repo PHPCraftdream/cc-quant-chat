@@ -40,6 +40,7 @@ type Frame struct {
 type Error struct {
 	Code string
 	Msg  string
+	Data json.RawMessage // optional detail, e.g. ClockReply for stale_clock
 }
 
 func (e *Error) Error() string {
@@ -99,6 +100,11 @@ type JoinArgs struct {
 	// key, over a nonce from "challenge" on this connection. Valid: the broker marks the member
 	// as the owner. Invalid, or no owner registered: the join is refused (bad_owner_sig).
 	OwnerSig string `json:"owner_sig,omitempty"`
+	// Pub: base64 Ed25519 public key of the nick (proto 4+); NickSig proves the client holds it
+	// (a signature over NickJoinMessage with a nonce from "challenge"). A new nick is registered
+	// with Pub; a legacy nick is rebound once, presenting its old secret in Key as well.
+	Pub     string `json:"pub,omitempty"`
+	NickSig string `json:"nick_sig,omitempty"`
 }
 
 // Challenge: reply to "challenge": a one-time nonce (base64url) for OwnerSig, valid 30 s on the
@@ -202,7 +208,11 @@ type ConfigList struct {
 const OwnerNick = "owner"
 
 // ProtoVersion is the protocol level this build speaks.
-const ProtoVersion = 3
+const ProtoVersion = 4
+
+// LegacyProto is the last level whose clients do not sign: they join by their secret and their
+// events are stored unsigned.
+const LegacyProto = 3
 
 // NickResetArgs: free a registered nick whose key is lost, so the next join binds a new key.
 type NickResetArgs struct {
@@ -230,6 +240,11 @@ type SendArgs struct {
 	// ClientMsgID makes a send idempotent: repeating it (after a lost reply or a broker
 	// restart) returns the id of the stored message and delivers nothing again.
 	ClientMsgID string `json:"client_msg_id,omitempty"`
+	// Origin, Lamport and Sig: the broker's origin (Welcome.Origin), the clock value from "clock"
+	// and the author's signature (see EventMessage).
+	Origin  string `json:"origin,omitempty"`
+	Lamport int64  `json:"lamport,omitempty"`
+	Sig     string `json:"sig,omitempty"`
 }
 
 type HistoryArgs struct {
@@ -324,6 +339,9 @@ type BoardArgs struct {
 	Mine           bool            `json:"mine,omitempty"`
 	Done           bool            `json:"done,omitempty"`
 	Workflow       json.RawMessage `json:"workflow,omitempty"`
+	Origin         string          `json:"origin,omitempty"`
+	Lamport        int64           `json:"lamport,omitempty"`
+	Sig            string          `json:"sig,omitempty"`
 }
 
 // DocArgs is the one request of the document tree; Op says what to do:
@@ -346,6 +364,9 @@ type DocArgs struct {
 	Before  int64   `json:"before,omitempty"`
 	All     bool    `json:"all,omitempty"`  // tree: also return every page path
 	Full    bool    `json:"full,omitempty"` // get: the whole page whatever its size (people, not models)
+	Origin  string  `json:"origin,omitempty"`
+	Lamport int64   `json:"lamport,omitempty"`
+	Sig     string  `json:"sig,omitempty"`
 }
 
 // DocReply: Text is for people and models; Body is a page alone (get); Paths every live page of a
@@ -377,7 +398,8 @@ type MemberInfo struct {
 	Role          string `json:"role,omitempty"`
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
-	Owner         bool   `json:"owner,omitempty"` // an owner-verified connection
+	Unsigned      bool   `json:"unsigned,omitempty"` // present without a signing key (older client)
+	Owner         bool   `json:"owner,omitempty"`    // an owner-verified connection
 	RolePinned    bool   `json:"role_pinned,omitempty"`
 	// Status of a present member (not stored; see StatusArgs). Activity is "busy", "free" or ""
 	// when the member's client does not report it.
@@ -427,6 +449,7 @@ type Welcome struct {
 	Key         string  `json:"key,omitempty"`          // set once, when the nick is registered
 	Warning     string  `json:"warning,omitempty"`      // e.g. history is not being saved
 	Proto       int     `json:"proto,omitempty"`        // protocol level of the broker; 0 = older than levels
+	Origin      string  `json:"origin,omitempty"`       // the broker's identity, for signed writes (proto 4)
 }
 
 // BrokerInfo: reply to "ping"; shown by `ccqc broker status`.

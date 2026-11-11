@@ -58,7 +58,7 @@ func rebuildComment(comments map[int64]store.Comment, e store.LogEntry) {
 	cm := comments[id]
 	if e.Kind == "task.comment" {
 		cm = store.Comment{ID: id, TaskID: e.EntityID, TS: e.TS, Author: e.Actor, AuthorOwner: e.ActorOwner,
-			Origin: e.Origin, Lamport: e.Lamport}
+			Origin: e.Origin, Lamport: e.Lamport, AuthorPub: e.AuthorPub, Sig: e.Sig}
 		_ = json.Unmarshal(e.After["text"], &cm.Text)
 	}
 	if v, has := e.After["hidden"]; has {

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -103,18 +104,20 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 		return nil, ch.ack(m.name, a.ID)
 	case "state":
 		return ch.state(m), nil
+	case "clock":
+		return b.clock(ch)
 	case "doc":
 		var a proto.DocArgs
 		if e := decode(f.Args, &a); e != nil {
 			return nil, e
 		}
-		return b.docOp(ch, m, a)
+		return b.docOp(ch, m, a, f.Args)
 	case "board":
 		var a proto.BoardArgs
 		if e := decode(f.Args, &a); e != nil {
 			return nil, e
 		}
-		return b.boardOp(ch, m, a)
+		return b.boardOp(ch, m, a, f.Args)
 	case "status":
 		var a proto.StatusArgs
 		if e := decode(f.Args, &a); e != nil {
@@ -126,7 +129,7 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 		if e := decode(f.Args, &a); e != nil {
 			return nil, e
 		}
-		return b.send(ch, m, a)
+		return b.send(ch, m, a, f.Args)
 	case "history":
 		var a proto.HistoryArgs
 		if e := decode(f.Args, &a); e != nil {
@@ -175,7 +178,7 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 	return nil, proto.Errf("unknown_op", "%s", f.Op)
 }
 
-func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error) {
+func (b *Broker) send(ch *chat, m *member, a proto.SendArgs, raw json.RawMessage) (any, *proto.Error) {
 	if len(a.ClientMsgID) > maxClientID {
 		return nil, proto.Errf("bad_args", "client_msg_id is longer than %d bytes", maxClientID)
 	}
@@ -187,6 +190,10 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 	}
 	if len(a.Text) > proto.MaxText {
 		return nil, proto.Errf("too_large", "text is %d bytes, max %d", len(a.Text), proto.MaxText)
+	}
+	sg, e := b.verifyWrite(ch, m, "msg", raw)
+	if e != nil {
+		return nil, e
 	}
 	now := time.Now()
 	if limit := b.msgLimit(); !b.allow(ch, m.name, "msg", limit) {
@@ -230,7 +237,8 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 	}
 	msg.ID = ch.nextID + 1
 	var dup *store.DuplicateError
-	if e := ch.saveMsg(store.Record{T: "msg", Key: key, Msg: &msg, ClientID: a.ClientMsgID, Origin: b.origin}, &dup); e != nil {
+	if e := ch.saveMsg(store.Record{T: "msg", Key: key, Msg: &msg, ClientID: a.ClientMsgID, Origin: b.origin,
+		AuthorPub: sg.Pub, Sig: sg.Sig, Payload: sg.Payload}, &dup); e != nil {
 		return nil, e // not stored: no id taken, nothing delivered
 	}
 	if dup != nil { // stored by an earlier attempt (the database knows, e.g. across a broker restart)
@@ -239,6 +247,7 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 		return proto.SendResult{ID: dup.ID, Dup: true}, nil
 	}
 	ch.rememberSent(m.name, a.ClientMsgID, msg.ID)
+	ch.wrote()
 	ch.nextID = msg.ID
 	ch.keep(key, msg)
 	for _, name := range recipients {

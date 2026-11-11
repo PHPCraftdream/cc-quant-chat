@@ -71,11 +71,13 @@ type chat struct {
 	where    map[int64]string // msg id → thread key: "r:<room>" | "d:<a>|<b>"
 	sent     map[string]int64 // "<nick>|<client_msg_id>" → msg id: recent idempotent sends
 	sentOrd  []string         // insertion order of sent, to cap it
+	memClock int64            // logical clock when the store keeps none (memory store)
 	store    store.Backend
 }
 
 type nick struct {
-	hash string // SHA-256 of the nick key
+	hash string // SHA-256 of the nick's secret (a legacy nick; kept after the nick moves to a key)
+	pub  string // the nick's Ed25519 key, base64; "" while the nick still joins by its secret
 	seen int64  // last message id delivered live before going offline
 	// pinned: a role the owner pinned to this nick; the member holds it, can't change it and
 	// nobody else can claim the name.
@@ -87,9 +89,10 @@ type member struct {
 	role    string
 	conn    *conn
 	offline time.Time
-	owner   bool // joined with a valid owner signature; set by the broker only
-	acks    bool // the client confirms delivery with "ack" (proto 2+)
-	proto   int  // protocol level the client announced in join
+	owner   bool              // joined with a valid owner signature; set by the broker only
+	pub     ed25519.PublicKey // the nick's key, proven at join; nil for a client that joined by its secret
+	acks    bool              // the client confirms delivery with "ack" (proto 2+)
+	proto   int               // protocol level the client announced in join
 	status  memberStatus
 }
 
@@ -314,7 +317,7 @@ func (b *Broker) loadChat(id, name string) (*chat, error) {
 func (ch *chat) replay(r store.Record) {
 	switch r.T {
 	case "nick":
-		ch.nicks[r.Nick] = &nick{hash: r.Hash, seen: r.ID}
+		ch.nicks[r.Nick] = &nick{hash: r.Hash, pub: r.Pub, seen: r.ID}
 		ch.rooms[proto.RoomCommon].members[r.Nick] = true // registering a nick puts it in @common
 	case "seen":
 		if n := ch.nicks[r.Nick]; n != nil {
@@ -328,7 +331,7 @@ func (ch *chat) replay(r store.Record) {
 		}
 	case "nick_key":
 		if n := ch.nicks[r.Nick]; n != nil {
-			n.hash = r.Hash
+			n.hash, n.pub = r.Hash, r.Pub
 		}
 	case "room":
 		if ch.rooms[r.Room] == nil {

@@ -79,7 +79,11 @@ func (s *Session) docTool(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	var r proto.DocReply
-	if err := cc.call("doc", args, &r); err != nil {
+	call := func() error { return cc.call("doc", &args, &r) }
+	if proto.DocWrite(args.Op) {
+		call = func() error { return cc.write("doc", "doc."+args.Op, &args, &r) }
+	}
+	if err := call(); err != nil {
 		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
 			return "", fmt.Errorf("the running broker is older and has no document tree: run `ccqc broker restart`")
 		}

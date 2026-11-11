@@ -65,6 +65,9 @@ type LogEntry struct {
 	Origin     string // the node that wrote the entry
 	Lamport    int64  // the chat's logical clock at that write
 	ActorGrant string // reserved: a grant the actor held (empty for now)
+	AuthorPub  string // the author's key and signature, empty for an unsigned client
+	Sig        string
+	Payload    string // the signed canonical JSON of the request
 }
 
 // Comment is a note on a task. Append-only: Deleted hides it.
@@ -78,6 +81,8 @@ type Comment struct {
 	Deleted     bool
 	Origin      string
 	Lamport     int64
+	AuthorPub   string
+	Sig         string
 }
 
 // TaskFilter selects tasks for a listing. Sprint: -1 any, 0 backlog, n that sprint.

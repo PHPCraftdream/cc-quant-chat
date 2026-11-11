@@ -107,19 +107,20 @@ func (t *docsTx) ListDocBodies(prefix string) ([]store.Doc, error) {
 	return out, rows.Err()
 }
 
-const versionCols = `path, version, ts, author, author_owner, title, body, note, deleted, origin, lamport`
+const versionCols = `path, version, ts, author, author_owner, title, body, note, deleted, origin, lamport, author_pub, sig, payload`
 
 func scanVersion(row interface{ Scan(...any) error }) (store.DocVersion, error) {
 	var v store.DocVersion
 	var owner, del int
-	err := row.Scan(&v.Path, &v.Version, &v.TS, &v.Author, &owner, &v.Title, &v.Body, &v.Note, &del, &v.Origin, &v.Lamport)
+	err := row.Scan(&v.Path, &v.Version, &v.TS, &v.Author, &owner, &v.Title, &v.Body, &v.Note, &del, &v.Origin, &v.Lamport, &v.AuthorPub, &v.Sig, &v.Payload)
 	v.AuthorOwner, v.Deleted = owner != 0, del != 0
 	return v, err
 }
 
 func (t *docsTx) AddVersion(v store.DocVersion) error {
-	_, err := t.tx.Exec(`INSERT INTO doc_versions (chat_id, `+versionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.chat, v.Path, v.Version, v.TS, v.Author, boolInt(v.AuthorOwner), v.Title, v.Body, v.Note, boolInt(v.Deleted), v.Origin, v.Lamport)
+	_, err := t.tx.Exec(`INSERT INTO doc_versions (chat_id, `+versionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.chat, v.Path, v.Version, v.TS, v.Author, boolInt(v.AuthorOwner), v.Title, v.Body, v.Note, boolInt(v.Deleted), v.Origin, v.Lamport,
+		v.AuthorPub, v.Sig, v.Payload)
 	return err
 }
 

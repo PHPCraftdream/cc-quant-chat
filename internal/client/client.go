@@ -159,7 +159,7 @@ func (c *Conn) Call(op string, args, out any) error {
 	select {
 	case r := <-ch:
 		if r.Op == "err" {
-			return &proto.Error{Code: r.Code, Msg: r.Msg}
+			return &proto.Error{Code: r.Code, Msg: r.Msg, Data: r.Data}
 		}
 		if out != nil && len(r.Data) > 0 {
 			return json.Unmarshal(r.Data, out)

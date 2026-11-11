@@ -83,7 +83,11 @@ func (b *Broker) warnFor(clientProto int) string {
 		if w != "" {
 			w += "; "
 		}
-		w += "this session runs an older ccqc: restart Claude Code so delivery is confirmed and messages aren't lost or repeated across a broker restart"
+		if clientProto < 2 {
+			w += "this session runs an older ccqc: restart Claude Code so delivery is confirmed and messages aren't lost or repeated across a broker restart"
+		} else {
+			w += "this session runs an older ccqc: restart Claude Code so your events are signed with your nick key"
+		}
 	}
 	return w
 }

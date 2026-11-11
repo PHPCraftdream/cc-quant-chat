@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,9 +10,6 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-// changesDocs: the doc ops that write.
-var changesDocs = map[string]bool{"put": true, "append": true, "move": true, "delete": true, "revert": true}
-
 var docVerbs = map[string]string{"put": "updated", "append": "appended to", "move": "moved", "delete": "deleted", "revert": "reverted"}
 
 // canDocs is the one place that decides whether an actor may do a document operation. Every
@@ -19,7 +17,7 @@ var docVerbs = map[string]string{"put": "updated", "append": "appended to", "mov
 func (b *Broker) canDocs(who actor, op, path string) *proto.Error { return nil }
 
 // docOp serves one request of the chat's document tree. Writes share the board's limit.
-func (b *Broker) docOp(ch *chat, m *member, a proto.DocArgs) (any, *proto.Error) {
+func (b *Broker) docOp(ch *chat, m *member, a proto.DocArgs, raw json.RawMessage) (any, *proto.Error) {
 	ds, ok := b.store.(store.Docs)
 	if !ok {
 		return nil, proto.Errf("docs_unavailable", "the document tree needs the SQLite store (the broker runs with CCQC_STORE=memory)")
@@ -28,9 +26,13 @@ func (b *Broker) docOp(ch *chat, m *member, a proto.DocArgs) (any, *proto.Error)
 	if e := b.canDocs(who, a.Op, a.Path); e != nil {
 		return nil, e
 	}
-	if changesDocs[a.Op] {
+	if proto.DocWrite(a.Op) {
 		if b.stopping.Load() {
 			return nil, proto.Errf("restarting", "the broker is restarting; repeat in a moment")
+		}
+		sg, e := b.verifyWrite(ch, m, "doc."+a.Op, raw)
+		if e != nil {
+			return nil, e
 		}
 		if !b.allow(ch, m.name, "board", boardLimit) {
 			return nil, proto.Errf("rate_limited", "max %d board and document changes per minute", boardLimit)
@@ -38,7 +40,7 @@ func (b *Broker) docOp(ch *chat, m *member, a proto.DocArgs) (any, *proto.Error)
 		var res docs.Result
 		err := ds.DoDocs(ch.id, func(tx store.DocsTx) error {
 			var err error
-			res, err = applyDoc(docs.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Origin: b.origin, Now: time.Now()}, a)
+			res, err = applyDoc(docs.Ctx{Tx: tx, Actor: m.name, Owner: m.owner, Origin: b.origin, Sig: sg, Now: time.Now()}, a)
 			return err
 		})
 		if err != nil {
