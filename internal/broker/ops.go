@@ -86,6 +86,12 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 		return nil, ch.ack(m.name, a.ID)
 	case "state":
 		return ch.state(m), nil
+	case "board":
+		var a proto.BoardArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.boardOp(ch, m, a)
 	case "status":
 		var a proto.StatusArgs
 		if e := decode(f.Args, &a); e != nil {

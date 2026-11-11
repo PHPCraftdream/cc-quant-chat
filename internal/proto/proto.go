@@ -236,9 +236,47 @@ type Message struct {
 	Owner bool `json:"owner,omitempty"`
 }
 
-// Event kinds: "msg", "presence".
+// BoardArgs is the one request of the task board; Op says what to do. Pointer fields are
+// "leave alone" when nil (partial updates).
+//
+//	task.create task.update task.move task.delete task.get task.list
+//	sprint.create sprint.update sprint.start sprint.close sprint.list
+//	board.log board.revert board.workflow_get board.workflow_set
+type BoardArgs struct {
+	Op          string  `json:"op"`
+	ID          int64   `json:"id,omitempty"` // task or sprint, by Op
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Assignee    *string `json:"assignee,omitempty"`
+	Name        *string `json:"name,omitempty"` // sprint
+	Goal        *string `json:"goal,omitempty"` // sprint
+	Priority    *int    `json:"priority,omitempty"`
+	Sprint      *int64  `json:"sprint,omitempty"`
+	Status      string  `json:"status,omitempty"`
+	Carry       int64   `json:"carry,omitempty"` // sprint.close: where unfinished tasks go (0: backlog)
+	LogID       int64   `json:"log_id,omitempty"`
+	Force       bool    `json:"force,omitempty"`
+	Limit       int     `json:"limit,omitempty"`
+	Before      int64   `json:"before,omitempty"`
+	Entity      string  `json:"entity,omitempty"` // board.log: "" the board, "task" or "sprint" (with ID)
+	// task.list filters
+	SprintFilter   string          `json:"sprint_filter,omitempty"` // "", active, backlog, all, or a number
+	AssigneeFilter string          `json:"assignee_filter,omitempty"`
+	Mine           bool            `json:"mine,omitempty"`
+	Done           bool            `json:"done,omitempty"`
+	Workflow       json.RawMessage `json:"workflow,omitempty"`
+}
+
+// BoardReply: the board's answer is text, short by design.
+type BoardReply struct {
+	Text string `json:"text"`
+}
+
+// Event kinds: "msg", "presence", "board" (a change of a task assigned to you; Wake says whether
+// it should wake the session).
 type Event struct {
 	Kind string   `json:"kind"`
+	Wake bool     `json:"wake,omitempty"`
 	Msg  *Message `json:"msg,omitempty"`
 	ToMe bool     `json:"to_me,omitempty"`
 	Text string   `json:"text,omitempty"`
