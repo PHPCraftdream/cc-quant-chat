@@ -82,6 +82,9 @@ func (s *Session) join(token, name, alias string, remember, auto bool) (string, 
 	}
 	if auto {
 		cc.presence(fmt.Sprintf("auto-joined /%s as @%s", lname, name))
+		if w.Warning != "" {
+			cc.presence("warning: " + w.Warning)
+		}
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
 		}
@@ -89,6 +92,9 @@ func (s *Session) join(token, name, alias string, remember, auto bool) (string, 
 	}
 
 	var b strings.Builder
+	if w.Warning != "" {
+		b.WriteString("warning: " + w.Warning + "\n\n")
+	}
 	b.WriteString(renderState(lname, &w.State))
 	if w.UnreadTotal > 0 {
 		fmt.Fprintf(&b, "\nunread since you were last here: %d", w.UnreadTotal)

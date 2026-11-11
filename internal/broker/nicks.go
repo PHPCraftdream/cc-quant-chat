@@ -64,7 +64,7 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		nk = &nick{hash: hashNickKey(key), seen: ch.nextID} // nothing is "unread" for a new nick
 		ch.nicks[a.Name] = nk
 		ch.rooms[proto.RoomCommon].members[a.Name] = true
-		ch.save(store.Record{T: "nick", Nick: a.Name, Hash: nk.hash})
+		ch.save(store.Record{T: "nick", Nick: a.Name, Hash: nk.hash, ID: nk.seen})
 		ch.save(store.Record{T: "in", Nick: a.Name, Room: proto.RoomCommon})
 	case !nk.check(a.Key):
 		return nil, proto.Errf("name_taken", "nick @%s is registered in this chat by another session; pick another nick", a.Name)
@@ -84,7 +84,7 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}
 	c.ch, c.m = ch, m
-	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued}, nil
+	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warning}, nil
 }
 
 // unread: messages visible to the nick, newer than seen and not its own; newest unreadCap of them.

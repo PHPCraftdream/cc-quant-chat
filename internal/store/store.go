@@ -1,5 +1,5 @@
-// Package store: persistence seam of the broker. Today nothing is persisted (Memory);
-// a SQLite (WAL) backend is planned behind the same interface.
+// Package store: persistence seam of the broker: Memory (nothing persisted) or
+// the SQLite backend in store/sqlite.
 package store
 
 import "github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -17,13 +17,14 @@ type Record struct {
 }
 
 // Backend stores chat records; the broker replays Load on first use of a chat.
+// Load also registers the chat (name is for humans; the id is SHA-256 of the token).
 type Backend interface {
-	Load(chatID string) ([]Record, error)
+	Load(chatID, name string) ([]Record, error)
 	Append(chatID string, r Record) error
 }
 
 // Memory keeps nothing beyond the broker's own memory.
 type Memory struct{}
 
-func (Memory) Load(string) ([]Record, error) { return nil, nil }
-func (Memory) Append(string, Record) error   { return nil }
+func (Memory) Load(string, string) ([]Record, error) { return nil, nil }
+func (Memory) Append(string, Record) error           { return nil }

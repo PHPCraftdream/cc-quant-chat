@@ -22,6 +22,8 @@ usage:
                           make the current folder join a chat automatically
   ccqc broker             run the broker (normally auto-started)
   ccqc token new <chat>   print a new chat token: <chat>.<secret>
+  ccqc db path|status|migrate
+                          chat database (SQLite, WAL): location, migration status, apply migrations
   ccqc session            show the parent process chain and session key (hook troubleshooting)
   ccqc version`
 
@@ -55,6 +57,8 @@ func main() {
 		}
 	case "session":
 		err = printSession()
+	case "db":
+		err = runDB(os.Args[2:])
 	case "token":
 		if len(os.Args) != 4 || os.Args[2] != "new" {
 			fmt.Fprintln(os.Stderr, usage)

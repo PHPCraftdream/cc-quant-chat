@@ -1,6 +1,6 @@
 // Package broker: long-lived local process holding chats. One IPC connection = one member
 // in one chat. Chat key = SHA-256(token); the token is not stored. Nicks, room membership and
-// messages go through store.Backend (today: memory only); presence, roles and connections don't.
+// messages go through store.Backend (SQLite by default); presence, roles and connections don't.
 package broker
 
 import (
@@ -15,6 +15,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/ipc"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
 const (
@@ -30,6 +31,7 @@ const (
 type Broker struct {
 	mu       sync.Mutex
 	store    store.Backend
+	warning  string // set when history can't be saved; shown to every joiner
 	chats    map[string]*chat
 	active   int
 	idleAt   time.Time
@@ -80,12 +82,12 @@ func Run() error {
 		return fmt.Errorf("listen %s: %w", ipc.Path(), err)
 	}
 	b := &Broker{
-		store:  store.Memory{},
 		chats:  map[string]*chat{},
 		idleAt: time.Now(),
 		idle:   envDur("CCQC_BROKER_IDLE", 30*time.Minute),
 		grace:  envDur("CCQC_GRACE", 60*time.Second),
 	}
+	b.openStore()
 	log.Printf("broker: listening on %s (pid %d)", ipc.Path(), os.Getpid())
 	go b.janitor(ln)
 	for {
@@ -93,6 +95,9 @@ func Run() error {
 		if err != nil {
 			if b.stopping.Load() {
 				log.Printf("broker: stopped (idle)")
+				if c, ok := b.store.(interface{ Close() error }); ok {
+					_ = c.Close()
+				}
 				return nil
 			}
 			log.Printf("broker: accept: %v", err)
@@ -101,6 +106,26 @@ func Run() error {
 		}
 		go b.serve(nc)
 	}
+}
+
+// openStore: SQLite at sqlite.DefaultPath(), or memory with CCQC_STORE=memory.
+// If the database can't be opened the broker still runs, in memory, and warns every joiner.
+func (b *Broker) openStore() {
+	if os.Getenv("CCQC_STORE") == "memory" {
+		b.store = store.Memory{}
+		log.Printf("broker: store: memory (CCQC_STORE=memory)")
+		return
+	}
+	path := sqlite.DefaultPath()
+	db, err := sqlite.Open(path)
+	if err != nil {
+		b.store = store.Memory{}
+		b.warning = fmt.Sprintf("chat history is not saved: database %s: %v", path, err)
+		log.Printf("broker: %s", b.warning)
+		return
+	}
+	b.store = db
+	log.Printf("broker: store: sqlite %s", path)
 }
 
 func envDur(key string, def time.Duration) time.Duration {
@@ -154,7 +179,7 @@ func newChat(id, name string) *chat {
 func (b *Broker) loadChat(id, name string) *chat {
 	ch := newChat(id, name)
 	ch.store = b.store
-	recs, err := b.store.Load(id)
+	recs, err := b.store.Load(id, name)
 	if err != nil {
 		log.Printf("broker: chat %s#%s: load: %v", name, id[:8], err)
 	}
@@ -167,7 +192,7 @@ func (b *Broker) loadChat(id, name string) *chat {
 func (ch *chat) replay(r store.Record) {
 	switch r.T {
 	case "nick":
-		ch.nicks[r.Nick] = &nick{hash: r.Hash}
+		ch.nicks[r.Nick] = &nick{hash: r.Hash, seen: r.ID}
 	case "seen":
 		if n := ch.nicks[r.Nick]; n != nil {
 			n.seen = r.ID

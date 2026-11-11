@@ -149,14 +149,23 @@ own direct dialogs. Message ids are per chat, so `chat_context` takes `chat`.
 
 - `ccqc mcp` — MCP server (stdio). On the first `chat_join` it connects to the
   broker, starting `ccqc broker` as a separate process (no shell) if needed.
-- `ccqc broker` — keeps chats in memory. Transport: a named pipe
+- `ccqc broker` — serves the chats. Transport: a named pipe
   `\\.\pipe\ccqc-<user>` restricted to the current user on Windows, a `0600`
-  unix socket on Linux/macOS. A chat is identified by `SHA-256(token)`; the broker
-  doesn't store the token. It exits after 30 minutes without connections, losing
-  the history.
+  unix socket on Linux/macOS. A chat is identified by `SHA-256(token)`; the token
+  is never stored. The broker exits after 30 minutes without connections; nothing
+  is lost, the next client starts it again.
 - Broker log: `<user cache dir>/ccqc/broker.log` (`%LOCALAPPDATA%\ccqc\broker.log` on Windows).
-- Nicks, room membership and messages go through `store.Backend`; today that is
-  memory only (a SQLite/WAL backend is planned), so they last while the broker runs.
+- Nicks (key hashes only), rooms, room membership and messages are stored in SQLite
+  (WAL mode, pure-Go driver, no cgo) at `CCQC_DB`, default `<user config dir>/ccqc/ccqc.db`
+  (`%APPDATA%\ccqc\ccqc.db` on Windows). Message text is stored as is; the file is
+  readable by the user only. `CCQC_STORE=memory` keeps everything in memory instead. If
+  the database can't be opened, the broker runs in memory and every join shows a warning.
+- Schema changes are migrations in `internal/store/sqlite/migrations/NNNN_name.sql`,
+  applied by the broker on start (`internal/migrate`): each in its own transaction,
+  recorded in `schema_migrations` with a checksum. Editing an applied migration or
+  opening a database migrated by a newer binary is an error. Forward-only: to roll
+  back, restore a copy of the database file. `ccqc db path|status|migrate` shows and
+  applies them.
 - A disconnected member stays present for 60 s, then goes offline; their nick, rooms
   and history stay, and the next join delivers everything missed since.
 - User config (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — chats
@@ -168,13 +177,13 @@ own direct dialogs. Message ids are per chat, so `chat_context` takes `chat`.
   timeout); after that, push resumes with the next turn.
 
 Environment: `CCQC_PIPE` (pipe name or path), `CCQC_SOCK` (Unix), `CCQC_HOME`
-(user config), `CCQC_DELIVERY=hook`, `CCQC_BROKER_IDLE`, `CCQC_GRACE`, `CCQC_WAIT_MAX`
+(user config), `CCQC_DB` (database file), `CCQC_STORE=memory`, `CCQC_DELIVERY=hook`, `CCQC_BROKER_IDLE`, `CCQC_GRACE`, `CCQC_WAIT_MAX`
 (Go durations, e.g. `10m`).
 
 ## Limitations
 
-- History lives in broker memory (up to 10000 messages per room/dialog) until the
-  SQLite backend lands; the broker exits after 30 idle minutes.
+- The broker keeps the newest 10000 messages per room/dialog in memory for history,
+  search and context; older ones stay in the database but aren't served yet.
 - The token ends up in the model's context and in the session transcript on disk.
   Don't share it outside the chat.
 - Limits: 8 KiB per message, 30 messages per minute per member.
