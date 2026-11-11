@@ -38,7 +38,14 @@ const (
 )
 
 type Broker struct {
+	// mu protects what is shared by every chat: the map of chats, the connections, the owner state
+	// below, the counters of the stop and idle logic. A chat's operations run under its own lock
+	// (chat.mu); mu is taken before a chat's lock, never after it. hitsMu, setMu and ownerMu guard
+	// single values that chat operations read; nothing is taken while one of them is held.
 	mu        sync.Mutex
+	hitsMu    sync.Mutex
+	setMu     sync.RWMutex
+	ownerMu   sync.RWMutex
 	store     store.Backend
 	storeDesc string
 	warning   string // set when history can't be saved; shown to every joiner
@@ -62,6 +69,8 @@ type Broker struct {
 }
 
 type chat struct {
+	mu       sync.Mutex // everything below; taken after the broker's mu, never before it
+	dead     bool       // unloaded: out of the map of chats, its store released
 	id, name string
 	nextID   int64
 	nicks    map[string]*nick   // registered nicks (durable)
@@ -211,12 +220,16 @@ func (b *Broker) info() proto.BrokerInfo {
 	clients := 0
 	byProto := map[string]int{}
 	for _, ch := range b.chats {
+		if !ch.mu.TryLock() { // a chat in the middle of a slow write: the status does not wait for it
+			continue
+		}
 		for _, m := range ch.members {
 			if m.conn != nil {
 				clients++
 				byProto[strconv.Itoa(m.proto)]++
 			}
 		}
+		ch.mu.Unlock()
 	}
 	ownerFP := ""
 	if b.ownerPub != nil {
@@ -244,7 +257,7 @@ func (b *Broker) openStore() error {
 	if err != nil {
 		return fmt.Errorf("database %s: %w (set CCQC_STORE=memory to run without saving anything)", path, err)
 	}
-	b.store, b.storeDesc = db, "sqlite "+path
+	b.store, b.storeDesc = db, "sqlite, data directory "+db.Dir()+" (node.db, chats/<id>.db)"
 	log.Printf("broker: store: %s", b.storeDesc)
 	return nil
 }
@@ -265,23 +278,32 @@ func (b *Broker) janitor() {
 		if b.stopping.Load() {
 			return
 		}
-		b.mu.Lock()
-		now := time.Now()
-		for _, ch := range b.chats {
-			for _, m := range ch.members {
-				if m.conn == nil && !m.offline.IsZero() && now.Sub(m.offline) > b.graceFor() {
-					b.removeMember(ch, m, m.name+" went offline")
-				}
-			}
-		}
-		b.pruneHits(now)
-		stop := b.active == 0 && now.Sub(b.idleAt) > b.idleFor()
-		b.mu.Unlock()
-		if stop {
+		if b.sweep() {
 			b.shutdown("idle")
 			return
 		}
 	}
+}
+
+// sweep is one round of the janitor: members who stayed away past the grace period are removed,
+// chats nobody is in are let go, old counters dropped. It reports whether the broker has been idle
+// long enough to stop.
+func (b *Broker) sweep() (stop bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	for _, ch := range b.chats {
+		ch.mu.Lock()
+		for _, m := range ch.members {
+			if m.conn == nil && !m.offline.IsZero() && now.Sub(m.offline) > b.graceFor() {
+				b.removeMember(ch, m, m.name+" went offline")
+			}
+		}
+		b.unloadLocked(ch)
+		ch.mu.Unlock()
+	}
+	b.pruneHits(now)
+	return b.active == 0 && now.Sub(b.idleAt) > b.idleFor()
 }
 
 func newChat(id, name string) *chat {
@@ -320,10 +342,12 @@ func (b *Broker) loadChat(id, name string) (*chat, error) {
 			return nil, err
 		}
 		if len(m) > 0 {
+			b.setMu.Lock()
 			if b.settings == nil {
 				b.settings = map[string]map[string]string{}
 			}
 			b.settings[id] = m
+			b.setMu.Unlock()
 		}
 	}
 	return ch, nil

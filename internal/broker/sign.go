@@ -49,7 +49,7 @@ func (b *Broker) authorKey(m *member) ed25519.PublicKey {
 		return m.pub
 	}
 	if m.owner {
-		return b.ownerPub
+		return b.ownerKey()
 	}
 	return nil
 }

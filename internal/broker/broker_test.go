@@ -29,6 +29,7 @@ type client struct {
 	events  chan proto.Event
 	replies chan proto.Frame
 	key     string
+	lax     bool // a refused or lost connection is an answer ("closed", "timeout"), not a failure of the test
 	gateMu  sync.Mutex
 	gate    chan struct{} // while set and open, the reader takes no more frames
 	ended   chan struct{} // closed when the connection is over
@@ -93,6 +94,9 @@ func (c *client) callE(op string, args, out any) error {
 	raw, _ := json.Marshal(args)
 	f, _ := json.Marshal(proto.Frame{Op: op, ID: c.id, Args: raw})
 	if _, err := c.nc.Write(append(f, '\n')); err != nil {
+		if c.lax {
+			return &proto.Error{Code: "closed"}
+		}
 		c.t.Fatalf("write %s: %v", op, err)
 	}
 	select {
@@ -106,7 +110,15 @@ func (c *client) callE(op string, args, out any) error {
 			}
 		}
 		return nil
+	case <-c.ended:
+		if c.lax {
+			return &proto.Error{Code: "closed"}
+		}
+		c.t.Fatalf("%s: connection ended", op)
 	case <-time.After(5 * time.Second):
+		if c.lax {
+			return &proto.Error{Code: "timeout"}
+		}
 		c.t.Fatalf("%s: no reply", op)
 	}
 	return nil
@@ -155,10 +167,10 @@ func (c *client) msgs() []int64 {
 func (b *Broker) waitOffline(t *testing.T, ch *chat, nick string) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
-		b.mu.Lock()
+		ch.mu.Lock()
 		m := ch.members[nick]
 		off := m == nil || m.conn == nil
-		b.mu.Unlock()
+		ch.mu.Unlock()
 		if off {
 			return
 		}
@@ -184,6 +196,20 @@ func (b *Broker) chatOf(id string) *chat {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.chats[id]
+}
+
+// inChat runs fn with the broker's lock and the chat's held (ch is nil if the chat is not loaded).
+func (b *Broker) inChat(id string, fn func(ch *chat)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ch := b.chats[id]
+	if ch == nil {
+		fn(nil)
+		return
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	fn(ch)
 }
 
 func TestJoinRefusedWhenHistoryCannotBeRead(t *testing.T) {
@@ -347,12 +373,11 @@ func TestRoomLimits(t *testing.T) {
 	if code := a.call("room_create", proto.RoomArgs{Room: "wide", Topic: string(long)}, nil); code != "too_large" {
 		t.Fatalf("long topic: %q", code)
 	}
-	b.mu.Lock()
-	ch := b.chats[mustID(t, tok)]
-	for i := 0; i < maxRooms; i++ {
-		ch.rooms["filler"+string(rune('a'+i%26))+string(rune('a'+i/26))] = &room{members: map[string]bool{}}
-	}
-	b.mu.Unlock()
+	b.inChat(mustID(t, tok), func(ch *chat) {
+		for i := 0; i < maxRooms; i++ {
+			ch.rooms["filler"+string(rune('a'+i%26))+string(rune('a'+i/26))] = &room{members: map[string]bool{}}
+		}
+	})
 	if code := a.call("room_create", proto.RoomArgs{Room: "one-more"}, nil); code != "too_many_rooms" {
 		t.Fatalf("room beyond the limit: %q", code)
 	}
@@ -388,9 +413,7 @@ func TestNickReset(t *testing.T) {
 	}
 	c.close()
 	b.waitOffline(t, b.chatOf(id), "bob")
-	b.mu.Lock()
-	delete(b.chats[id].members, "bob") // grace period over
-	b.mu.Unlock()
+	b.inChat(id, func(ch *chat) { delete(ch.members, "bob") }) // grace period over
 	if code := op.call("nick_reset", proto.NickResetArgs{Token: tok, Name: "bob"}, nil); code != "" {
 		t.Fatalf("reset: %q", code)
 	}

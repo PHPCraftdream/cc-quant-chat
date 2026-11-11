@@ -74,6 +74,8 @@ func (b *Broker) runAdmin(op string, args json.RawMessage) (any, *proto.Error) {
 		if e != nil {
 			return nil, e
 		}
+		ch.mu.Lock()
+		defer ch.mu.Unlock()
 		if op == "role_give" {
 			return b.pinRole(ch, r.Nick, r.Role)
 		}
@@ -82,6 +84,14 @@ func (b *Broker) runAdmin(op string, args json.RawMessage) (any, *proto.Error) {
 		var c proto.AdminConfig
 		if err := json.Unmarshal(args, &c); err != nil {
 			return nil, proto.Errf("bad_args", "%v", err)
+		}
+		if c.Chat != "" { // the chat is locked while its setting is stored: it is not released under the write
+			ch, e := b.chatByID(c.Chat)
+			if e != nil {
+				return nil, e
+			}
+			ch.mu.Lock()
+			defer ch.mu.Unlock()
 		}
 		v, e := b.setConfig(c.Chat, c.Key, c.Value)
 		if e != nil {
@@ -208,6 +218,8 @@ func (b *Broker) resetNick(chatID, nickName string) (any, *proto.Error) {
 	if e != nil {
 		return nil, e
 	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	nk := ch.nicks[nickName]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", nickName)

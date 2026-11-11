@@ -27,9 +27,8 @@ func TestNewNickIsRegisteredWithItsKeyAndNoSecretIsIssued(t *testing.T) {
 	if a.w.Key != "" {
 		t.Fatalf("a keyed nick was handed a secret %q", a.w.Key)
 	}
-	b.mu.Lock()
-	nk := b.chats[id].nicks["alice"]
-	b.mu.Unlock()
+	var nk *nick
+	b.inChat(id, func(ch *chat) { nk = ch.nicks["alice"] })
 	if nk == nil || nk.pub != pubOf(k) {
 		t.Fatalf("stored nick: %+v", nk)
 	}

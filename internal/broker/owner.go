@@ -65,15 +65,21 @@ func (b *Broker) initNode() error {
 	return nil
 }
 
+// ownerKey is the owner's public key (nil if none) for the operations of a chat, which do not hold
+// the broker's lock.
+func (b *Broker) ownerKey() ed25519.PublicKey {
+	b.ownerMu.RLock()
+	defer b.ownerMu.RUnlock()
+	return b.ownerPub
+}
+
 // announce tells every present member of every loaded chat, loudly: a change of who the owner
-// is must not pass quietly.
+// is must not pass quietly. The caller holds the broker's lock.
 func (b *Broker) announce(text string) {
 	for _, ch := range b.chats {
-		for name, m := range ch.members {
-			if m.conn != nil {
-				b.deliver(ch, name, proto.Event{Kind: "notice", Text: text, Wake: true})
-			}
-		}
+		ch.mu.Lock()
+		b.announceChat(ch, text)
+		ch.mu.Unlock()
 	}
 }
 
@@ -145,7 +151,9 @@ func (b *Broker) ownerRegister(a proto.OwnerRegisterArgs) (any, *proto.Error) {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
 	}
+	b.ownerMu.Lock()
 	b.ownerPub, b.ownerAt = pub, time.Now().UTC().Format(time.RFC3339)
+	b.ownerMu.Unlock()
 	log.Printf("broker: owner key registered (%s)", owner.Fingerprint(pub))
 	b.announce("owner key registered: " + owner.Fingerprint(pub))
 	return proto.OwnerInfo{Registered: true, Fingerprint: owner.Fingerprint(pub), Since: b.ownerAt}, nil
@@ -174,11 +182,15 @@ func (b *Broker) ownerRotate(a proto.OwnerRotateArgs) (any, *proto.Error) {
 			return nil, proto.Errf("store_failed", "%v", err)
 		}
 	}
+	b.ownerMu.Lock()
 	b.ownerPub, b.ownerAt = pub, time.Now().UTC().Format(time.RFC3339)
+	b.ownerMu.Unlock()
 	for _, ch := range b.chats { // connections verified with the old key no longer count
+		ch.mu.Lock()
 		for _, m := range ch.members {
 			m.owner = false
 		}
+		ch.mu.Unlock()
 	}
 	log.Printf("broker: owner key replaced (%s)", owner.Fingerprint(pub))
 	b.announce("owner key replaced: " + owner.Fingerprint(pub))

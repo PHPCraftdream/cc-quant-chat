@@ -40,7 +40,7 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	if perr != nil { // a chat loaded for a join that failed must not stay cached without members
 		if _, id, err := proto.ParseToken(a.Token); err == nil {
 			if ch := b.chats[id]; ch != nil {
-				b.unloadIfEmpty(ch)
+				b.unloadHeld(ch)
 			}
 		}
 	}
@@ -78,6 +78,15 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		ch = loaded
 		b.chats[id] = ch
 	}
+	// The chat's lock is taken under the broker's and stays until the reply is out (dispatch), so
+	// no event of this chat can reach the new member ahead of the reply to its join.
+	ch.mu.Lock()
+	keep := false
+	defer func() {
+		if !keep {
+			ch.mu.Unlock()
+		}
+	}()
 
 	var issued string
 	var pub ed25519.PublicKey
@@ -141,6 +150,7 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 		b.holdRole(ch, m, nk.pinned)
 	}
 	c.ch, c.m = ch, m
+	keep, c.hold = true, ch
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
 }
 
@@ -190,8 +200,10 @@ func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
 		}
 		ch = loaded
 		b.chats[id] = ch
-		defer b.unloadIfEmpty(ch)
+		defer b.unloadHeld(ch)
 	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	nk := ch.nicks[a.Name]
 	if nk == nil {
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", a.Name)

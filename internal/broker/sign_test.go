@@ -188,9 +188,8 @@ func TestTamperedOrMisaddressedEventsAreRefusedAndNotStored(t *testing.T) {
 	if n := len(msgRecords(be, id)); n != 0 {
 		t.Fatalf("%d refused events were stored", n)
 	}
-	b.mu.Lock()
-	clock := b.chats[id].memClock
-	b.mu.Unlock()
+	var clock int64
+	b.inChat(id, func(ch *chat) { clock = ch.memClock })
 	if clock != 0 {
 		t.Fatalf("a refused event moved the clock to %d", clock)
 	}

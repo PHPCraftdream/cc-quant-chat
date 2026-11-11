@@ -46,6 +46,8 @@ func findKey(name string) (configKey, bool) {
 
 // setting returns a stored value ("" scope: broker-wide).
 func (b *Broker) setting(scope, key string) (string, bool) {
+	b.setMu.RLock()
+	defer b.setMu.RUnlock()
 	v, ok := b.settings[scope][key]
 	return v, ok
 }
@@ -85,6 +87,8 @@ func (b *Broker) managerRole(chatID string) string {
 
 // loadSettings reads the stored settings at start.
 func (b *Broker) loadSettings() error {
+	b.setMu.Lock()
+	defer b.setMu.Unlock()
 	b.settings = map[string]map[string]string{}
 	as, ok := b.store.(store.AdminStore)
 	if !ok {
@@ -149,6 +153,8 @@ func (b *Broker) setConfig(chatID, key, value string) (string, *proto.Error) {
 			return "", proto.Errf("store_failed", "%v", err)
 		}
 	}
+	b.setMu.Lock()
+	defer b.setMu.Unlock()
 	if b.settings == nil {
 		b.settings = map[string]map[string]string{}
 	}

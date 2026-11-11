@@ -10,6 +10,8 @@ import (
 // not in the member, so leaving and joining again doesn't reset them. An allowed attempt is
 // counted when it starts: one that then fails validation still uses its quota.
 func (b *Broker) allow(ch *chat, nick, class string, limit int) bool {
+	b.hitsMu.Lock()
+	defer b.hitsMu.Unlock()
 	key := ch.id + "/" + nick + "/" + class
 	now := time.Now()
 	kept := recent(b.hits[key], now)
@@ -33,6 +35,8 @@ func recent(ts []time.Time, now time.Time) []time.Time {
 
 // pruneHits drops counters with nothing recent left (the janitor calls it).
 func (b *Broker) pruneHits(now time.Time) {
+	b.hitsMu.Lock()
+	defer b.hitsMu.Unlock()
 	for k, ts := range b.hits {
 		if kept := recent(ts, now); len(kept) == 0 {
 			delete(b.hits, k)
@@ -44,6 +48,8 @@ func (b *Broker) pruneHits(now time.Time) {
 
 // refund takes back the newest counted action (a send that turned out to be a repeat).
 func (b *Broker) refund(ch *chat, nick, class string) {
+	b.hitsMu.Lock()
+	defer b.hitsMu.Unlock()
 	key := ch.id + "/" + nick + "/" + class
 	if ts := b.hits[key]; len(ts) > 0 {
 		b.hits[key] = ts[:len(ts)-1]

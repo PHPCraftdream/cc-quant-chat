@@ -21,6 +21,7 @@ type conn struct {
 	once sync.Once
 	ch   *chat
 	m    *member
+	hold *chat // a chat a join keeps locked until its reply is sent (see dispatch)
 	// A pending owner challenge (see Broker.challenge); only touched under Broker.mu.
 	nonce   string
 	nonceAt time.Time
@@ -125,11 +126,8 @@ func (b *Broker) serve(nc net.Conn) {
 			c.reply(0, nil, proto.Errf("bad_frame", "%v", err))
 			continue
 		}
-		b.mu.Lock()
-		data, perr := b.handle(c, &f)
-		c.reply(f.ID, data, perr) // under lock: reply precedes later events
+		perr := b.dispatch(c, &f) // the reply is sent under the lock: it precedes later events
 		joined := c.m != nil
-		b.mu.Unlock()
 		if joined && f.Op == "join" {
 			_ = nc.SetReadDeadline(time.Time{})
 		}
@@ -138,19 +136,24 @@ func (b *Broker) serve(nc net.Conn) {
 		}
 	}
 
+	if c.m != nil { // c.m and c.ch belong to this goroutine; the member's state to the chat's lock
+		ch, m := c.ch, c.m
+		ch.mu.Lock()
+		if m.conn == c {
+			m.conn = nil
+			m.offline = time.Now()
+			if !m.acks {
+				ch.markSeen(m.name)
+			}
+			b.presence(ch, nil, m.name, m.name+" disconnected")
+		}
+		ch.mu.Unlock()
+	}
 	b.mu.Lock()
 	b.active--
 	delete(b.conns, c)
 	if b.active == 0 {
 		b.idleAt = time.Now()
-	}
-	if c.m != nil && c.m.conn == c {
-		c.m.conn = nil
-		c.m.offline = time.Now()
-		if !c.m.acks {
-			c.ch.markSeen(c.m.name)
-		}
-		b.presence(c.ch, nil, c.m.name, c.m.name+" disconnected")
 	}
 	b.mu.Unlock()
 

@@ -266,9 +266,7 @@ func TestNickResetBecomesAnAdministratorOperationOnceThereIsAnOwner(t *testing.T
 	bob.join(tok, "bob", proto.ProtoVersion)
 	bob.close()
 	b.waitOffline(t, b.chatOf(id), "bob")
-	b.mu.Lock()
-	delete(b.chats[id].members, "bob")
-	b.mu.Unlock()
+	b.inChat(id, func(ch *chat) { delete(ch.members, "bob") })
 
 	token := func() string {
 		c := b.connect(t)
