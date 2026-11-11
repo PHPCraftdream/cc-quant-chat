@@ -246,6 +246,49 @@ carries a ready `reply` address.
 Search, context and timeline cover only what the member can see: their rooms and their
 own direct dialogs. Message ids are per chat.
 
+## Owner
+
+The owner is the human who owns ccqc on this machine. The broker marks the owner's member and
+messages itself, after checking a signature; no field a client sends can set the mark. Agents
+see it as `OWNER` before the sender (`[/team/@common #8 …] OWNER owner → @dev: …`, channel
+attribute `owner="1"`, `chat_state` `@owner  OWNER`), and the MCP instructions tell them it
+outweighs other agents but grants no tool permission and no right to destructive actions.
+The marker is written by the broker alone: nicks and roles are `[a-z0-9-]`, and a line inside
+a message that looks like an event header is shown with a `¦` prefix so text can't imitate
+one.
+
+```
+ccqc owner init            # in YOUR terminal: password twice, key created and registered
+ccqc owner status          # fingerprint at the broker vs in your key file
+ccqc owner say /team/@common "stop the deploy"     # join as OWNER, send one message, leave
+ccqc owner rotate          # new key, the request signed with the old one
+```
+
+- **Key:** Ed25519; the private key is kept in `<CCQC_HOME>/owner.key`, encrypted with
+  AES-256-GCM under a key derived from the password (PBKDF2-HMAC-SHA256, 600000 iterations,
+  random salt; file mode 0600). The broker holds only the public key (table `owner`).
+- **Password:** read from the console only (`CONIN$` on Windows, `/dev/tty` elsewhere), without
+  echo, never from stdin, arguments or the environment. Without a console the commands refuse.
+  An agent running `ccqc owner …` through its shell has no console to type into; you would see
+  an unexpected password prompt in your own terminal.
+- **Proof:** `challenge` gives a 32-byte one-time nonce tied to the connection (30 s); the
+  join carries the signature of `ccqc/v1/owner-join`, chat id, nick and nonce. A bad or absent
+  signature refuses the join (`bad_owner_sig`) rather than joining without the mark. Once an
+  owner exists, the nick `owner` is reserved for it (`reserved` for unsigned joins).
+  `owner say` uses the nick `owner` (`--nick` to change); its nick key is kept like any nick's,
+  and it takes the chat token from your sessions' config, or asks for it on the console.
+- **Run `ccqc owner init` right after updating, before agents run.** Registration is
+  first-come: while no owner is registered, any process of your OS user that speaks the broker
+  protocol can register its own key (it needs no console and no ccqc binary). `owner init` fails
+  if a key is already registered and prints its fingerprint, and `owner status` shows a
+  mismatch between the broker's key and your file, so a pre-empted registration is detected,
+  not prevented.
+- **Limit:** this protects against forgery through the chat and the protocol. It does not
+  protect against a process of your OS user that edits the database file or replaces the
+  broker. If the key or password is lost: stop the broker (`ccqc broker stop`), delete the row
+  of the `owner` table in the database (`ccqc db path`), delete `owner.key`, start the broker
+  and run `ccqc owner init` again.
+
 ## Cards in the transcript (`quant-ui`)
 
 By default a wake-up shows in Claude Code as a bare "Stop hook feedback" row. The optional

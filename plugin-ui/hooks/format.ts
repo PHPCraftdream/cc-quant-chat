@@ -18,6 +18,7 @@ export type Msg = {
   text: string
   reply?: string // address to answer on (batches and chat_inbox only)
   hit?: boolean // chat_context marks the messages it was asked about
+  owner?: boolean // sent over a connection the broker verified as the owner's (marker OWNER)
 }
 export type Presence = { type: 'presence'; chat: string; lines: string[] }
 export type Notice = { type: 'notice'; chat: string; text: string }
@@ -35,7 +36,7 @@ export type Batch = {
 const BATCH_HEAD = /ccqc: (\d+) new chat event\(s\)\. [^\n]*\n/
 const OMITTED = /^\((\d+) older events omitted: call chat_inbox\)$/
 const MSG_HEAD =
-  /^( {2}| {3}| » )?\[\/([a-z0-9-]+)\/@([a-z0-9-]+) #(\d+) ([^\s\]]+)(?: ↩#(\d+))?\] ([a-z0-9-]+)(?:\(([^)\n]*)\))?(?: → @([a-z0-9-]+))?: ?(.*)$/
+  /^( {2}| {3}| » )?\[\/([a-z0-9-]+)\/@([a-z0-9-]+) #(\d+) ([^\s\]]+)(?: ↩#(\d+))?\] (?:(OWNER) )?([a-z0-9-]+)(?:\(([^)\n]*)\))?(?: → @([a-z0-9-]+))?: ?(.*)$/
 const PRESENCE = /^\[\/([a-z0-9-]+) presence\] (.*)$/
 const NOTICE = /^\[\/([a-z0-9-]+)\] (.*)$/
 const REPLY = / {3}\(reply: (\/[a-z0-9-]+\/@[a-z0-9-]+(?:\/@[a-z0-9-]+)?)\)$/
@@ -120,12 +121,13 @@ function msgFrom(g: RegExpExecArray): Msg {
     room: at(g, 3),
     id: Number(at(g, 4)),
     ts: at(g, 5),
-    from: at(g, 7),
-    text: at(g, 10),
+    from: at(g, 8),
+    text: at(g, 11),
   }
   if (at(g, 6)) m.replyTo = Number(at(g, 6))
-  if (at(g, 8)) m.role = at(g, 8)
-  if (at(g, 9)) m.to = at(g, 9)
+  if (at(g, 7)) m.owner = true // the broker's mark, before the sender; a text can't make it
+  if (at(g, 9)) m.role = at(g, 9)
+  if (at(g, 10)) m.to = at(g, 10)
   if (at(g, 1) === ' » ') m.hit = true
   return m
 }

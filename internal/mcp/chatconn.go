@@ -229,6 +229,9 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 		if ev.ToMe {
 			meta["to_me"] = "1"
 		}
+		if m.Owner {
+			meta["owner"] = "1"
+		}
 		if m.ReplyTo > 0 {
 			meta["reply_to"] = strconv.FormatInt(m.ReplyTo, 10)
 		}

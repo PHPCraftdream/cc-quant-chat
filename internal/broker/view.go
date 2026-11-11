@@ -42,6 +42,7 @@ func (ch *chat) state(me *member) proto.State {
 		if m := ch.members[n]; m != nil {
 			mi.Role, mi.Online = m.role, m.conn != nil
 			m.fill(&mi)
+			mi.Owner = m.owner
 			if r := ch.roles[m.role]; r != nil {
 				mi.RoleExclusive = r.exclusive
 			}

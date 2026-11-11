@@ -60,6 +60,8 @@ function MsgRow(ui: UI, p: CardProps, m: Msg, i: number) {
     <Box flexDirection="column">
       <Button key={`${p.key}:h:${k}`} plain onPress={() => p.onToggle(k)}>
         <Text color={color}>{isOpen ? '▾' : '▸'} {MARK[f]} </Text>
+        {m.owner ? <Text bold inverse color="red"> OWNER </Text> : null}
+        {m.owner ? <Text> </Text> : null}
         <Text bold color={color}>{clean(who)}</Text>
         <Text dimColor> {meta}</Text>
       </Button>

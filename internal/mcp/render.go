@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,7 +33,27 @@ func fmtMsg(local string, m *proto.Message) string {
 	if m.ReplyTo > 0 {
 		re = fmt.Sprintf(" ↩#%d", m.ReplyTo)
 	}
-	return fmt.Sprintf("[/%s/@%s #%d %s%s] %s%s: %s", local, m.Room, m.ID, m.TS, re, from, to, m.Text)
+	if m.Owner {
+		// Set by the broker after checking the owner's signature. Capitals: nicks and roles are
+		// [a-z0-9-], so no sender can write this marker as a name.
+		from = ownerMarker + " " + from
+	}
+	return fmt.Sprintf("[/%s/@%s #%d %s%s] %s%s: %s", local, m.Room, m.ID, m.TS, re, from, to, neutralize(m.Text))
+}
+
+const ownerMarker = "OWNER"
+
+// A line of a message that looks like the start of an event would read as a message nobody sent
+// (the plugin-ui cards and the model both read these lines). Such lines, after the first, get a
+// visible prefix.
+var headerLike = regexp.MustCompile(`(?m)^([ »]*)\[/`)
+
+func neutralize(text string) string {
+	first, rest, ok := strings.Cut(text, "\n")
+	if !ok {
+		return text
+	}
+	return first + "\n" + headerLike.ReplaceAllString(rest, "${1}¦ [/")
 }
 
 // eventLine is one message event as the wake-up batch and chat_inbox list it.
@@ -111,7 +132,11 @@ func renderState(local string, st *proto.State) string {
 		if m.Name == st.Me {
 			you = " (you)"
 		}
-		fmt.Fprintf(&b, "  @%s%s  role: %s  %s\n", m.Name, you, r, status)
+		mark := ""
+		if m.Owner {
+			mark = "  " + ownerMarker
+		}
+		fmt.Fprintf(&b, "  @%s%s%s  role: %s  %s\n", m.Name, you, mark, r, status)
 	}
 	mine := set(st.MyRooms)
 	b.WriteString("rooms:\n")

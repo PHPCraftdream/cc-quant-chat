@@ -94,7 +94,54 @@ type JoinArgs struct {
 	// Proto: protocol level of the client. 2+ confirms delivery with "ack"; the broker then
 	// advances the nick's read cursor only on ack, not when the connection ends.
 	Proto int `json:"proto,omitempty"`
+	// OwnerSig: base64 Ed25519 signature of OwnerJoinMessage(chat id, nick, nonce) with the owner's
+	// key, over a nonce from "challenge" on this connection. Valid: the broker marks the member
+	// as the owner. Invalid, or no owner registered: the join is refused (bad_owner_sig).
+	OwnerSig string `json:"owner_sig,omitempty"`
 }
+
+// Challenge: reply to "challenge": a one-time nonce (base64url) for OwnerSig, valid 30 s on the
+// connection it was issued to.
+type Challenge struct {
+	Nonce string `json:"nonce"`
+}
+
+// Owner messages. The strings are signed, so both sides build them with these functions.
+func OwnerJoinMessage(chatID, nick, nonce string) []byte {
+	return []byte(strings.Join([]string{"ccqc/v1/owner-join", chatID, nick, nonce}, "\n"))
+}
+
+func OwnerRegisterMessage(pub string) []byte {
+	return []byte(strings.Join([]string{"ccqc/v1/owner-register", pub}, "\n"))
+}
+
+func OwnerRotateMessage(oldPub, newPub string) []byte {
+	return []byte(strings.Join([]string{"ccqc/v1/owner-rotate", oldPub, newPub}, "\n"))
+}
+
+// OwnerRegisterArgs: pub is the base64 public key, sig its signature of OwnerRegisterMessage(pub)
+// (proof of holding the private key).
+type OwnerRegisterArgs struct {
+	Pub string `json:"pub"`
+	Sig string `json:"sig"`
+}
+
+// OwnerRotateArgs: replace the owner key. OldSig is made with the current key over
+// OwnerRotateMessage(old, new); NewSig with the new key over the same bytes.
+type OwnerRotateArgs struct {
+	Pub    string `json:"pub"`
+	OldSig string `json:"old_sig"`
+	NewSig string `json:"new_sig"`
+}
+
+// OwnerInfo: reply to "owner_info".
+type OwnerInfo struct {
+	Registered  bool   `json:"registered"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+// OwnerNick is reserved for the owner once one is registered.
+const OwnerNick = "owner"
 
 // ProtoVersion is the protocol level this build speaks.
 const ProtoVersion = 3
@@ -184,6 +231,9 @@ type Message struct {
 	To       string `json:"to,omitempty"`
 	Text     string `json:"text"`
 	ReplyTo  int64  `json:"reply_to,omitempty"`
+	// Owner: set by the broker, never by a client, on messages of a connection that proved it
+	// holds the owner key; stored with the message.
+	Owner bool `json:"owner,omitempty"`
 }
 
 // Event kinds: "msg", "presence".
@@ -199,6 +249,7 @@ type MemberInfo struct {
 	Role          string `json:"role,omitempty"`
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
+	Owner         bool   `json:"owner,omitempty"` // an owner-verified connection
 	// Status of a present member (not stored; see StatusArgs). Activity is "busy", "free" or ""
 	// when the member's client does not report it.
 	Activity  string `json:"activity,omitempty"`

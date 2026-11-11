@@ -2,7 +2,11 @@
 // the SQLite backend in store/sqlite.
 package store
 
-import "github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+import (
+	"errors"
+
+	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+)
 
 // Record kinds: msg, room, in (joined room), out (left room), nick (registered),
 // nick_key (new key hash; empty = reset), seen, and maxid (Load only: newest message id
@@ -35,6 +39,22 @@ type Backend interface {
 	Load(chatID, name string) ([]Record, error)
 	Append(chatID string, r Record) error
 }
+
+// OwnerStore is the optional part of a backend that keeps the owner's public key (one per
+// broker). A backend without it keeps the key in the broker's memory only.
+type OwnerStore interface {
+	Owner() (pub []byte, found bool, err error)
+	// SetOwner registers the first owner key; ErrOwnerExists when there is one already.
+	SetOwner(pub []byte) error
+	// ReplaceOwner swaps the key if the stored one is old (compare-and-set).
+	ReplaceOwner(old, pub []byte) error
+}
+
+// ErrOwnerExists: an owner is registered already.
+var ErrOwnerExists = errors.New("an owner is already registered")
+
+// ErrOwnerChanged: the stored owner key is not the one the caller expected.
+var ErrOwnerChanged = errors.New("the owner key changed meanwhile")
 
 // Memory keeps nothing beyond the broker's own memory.
 type Memory struct{}

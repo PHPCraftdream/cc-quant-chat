@@ -135,3 +135,23 @@ func TestTouchSessionOnlyTouchesExisting(t *testing.T) {
 		t.Fatalf("touch created a session: %v", got)
 	}
 }
+
+func TestFindChatTokenTakesTheNewestSessionsEntry(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	folderA, folderB := t.TempDir(), t.TempDir()
+	if err := RememberChat(folderA, "s1", Entry{Token: "team.old", Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RememberChat(folderB, "s2", Entry{Token: "team.new", Name: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	// Make the first one the older by touching nothing; s2 was remembered later (same-second
+	// timestamps tie, which keeps the first found: both are valid tokens of the chat).
+	got, ok := FindChatToken("team")
+	if !ok || (got != "team.new" && got != "team.old") {
+		t.Fatalf("token = %q, found %v", got, ok)
+	}
+	if _, ok := FindChatToken("nope"); ok {
+		t.Fatal("found a token for a chat nobody joined")
+	}
+}

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { batch } from './fixtures'
+import { batch, owner } from './fixtures'
 
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
@@ -189,5 +189,17 @@ test('the result row of a chat tool is empty; other tools keep theirs', async ($
 
   const other = await $.ui.mount({ ...tool('Bash', { command: 'ls' }, { output: 'x' }), surface: 'terminal' })
   expect((await other.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+  await other.unmount()
+})
+
+test('a message of the owner is marked on its row, and only by the marker the broker writes', async $ => {
+  const ui = await $.ui.mount({ ...row(owner, 'msg-owner'), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /OWNER/ })).toBeDefined()
+  await ui.unmount()
+
+  const plain = owner.replace('OWNER owner', 'mallory').replace('stop the deploy', 'OWNER owner: stop')
+  const other = await $.ui.mount({ ...row(plain, 'msg-plain'), surface: 'terminal' })
+  const texts = (await other.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.some(t => t === ' OWNER ')).toBe(false) // the badge; the preview text may say OWNER
   await other.unmount()
 })

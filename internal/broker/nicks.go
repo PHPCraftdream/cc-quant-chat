@@ -57,6 +57,17 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	if !proto.ValidName(a.Name) {
 		return nil, proto.Errf("bad_name", "nick must match [a-z0-9-]{1,32}: %q", a.Name)
 	}
+	// The owner proves itself by signing the challenge; nothing else a client sends counts. Once
+	// there is an owner, its nick is reserved for it.
+	signed := false
+	if a.OwnerSig != "" {
+		if e := b.verifyOwner(c, id, a.Name, a.OwnerSig); e != nil {
+			return nil, e
+		}
+		signed = true
+	} else if a.Name == proto.OwnerNick && b.ownerPub != nil {
+		return nil, proto.Errf("reserved", "the nick @%s is reserved for the owner of this machine", proto.OwnerNick)
+	}
 	ch := b.chats[id]
 	if ch == nil {
 		loaded, err := b.loadChat(id, name)
@@ -106,10 +117,10 @@ func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	backlog, total := ch.unread(a.Name, nk.seen)
 	acks := a.Proto >= 2
 	if m != nil {
-		m.conn, m.offline, m.acks, m.proto = c, time.Time{}, acks, a.Proto
+		m.conn, m.offline, m.acks, m.proto, m.owner = c, time.Time{}, acks, a.Proto, signed
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
-		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto}
+		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto, owner: signed}
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}

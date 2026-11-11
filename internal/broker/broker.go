@@ -4,6 +4,7 @@
 package broker
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log"
@@ -43,6 +44,7 @@ type Broker struct {
 	chats     map[string]*chat
 	conns     map[*conn]bool
 	hits      map[string][]time.Time // rate limiter: chat/nick/class → recent actions
+	ownerPub  ed25519.PublicKey      // the registered owner key, nil if none
 	active    int
 	idleAt    time.Time
 	idle      time.Duration
@@ -78,6 +80,7 @@ type member struct {
 	role    string
 	conn    *conn
 	offline time.Time
+	owner   bool // joined with a valid owner signature; set by the broker only
 	acks    bool // the client confirms delivery with "ack" (proto 2+)
 	proto   int  // protocol level the client announced in join
 	status  memberStatus
@@ -106,6 +109,10 @@ func Run() error {
 	}
 	if err := b.openStore(); err != nil {
 		return err
+	}
+	if err := b.loadOwner(); err != nil {
+		b.closeStore()
+		return fmt.Errorf("owner key: %w", err)
 	}
 	ln, err := ipc.Listen()
 	if err != nil {

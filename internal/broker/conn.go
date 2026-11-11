@@ -21,6 +21,9 @@ type conn struct {
 	once sync.Once
 	ch   *chat
 	m    *member
+	// A pending owner challenge (see Broker.challenge); only touched under Broker.mu.
+	nonce   string
+	nonceAt time.Time
 }
 
 func (c *conn) close() {

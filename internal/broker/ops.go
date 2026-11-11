@@ -14,7 +14,7 @@ import (
 // against the next broker.
 var changes = map[string]bool{
 	"join": true, "send": true, "room_create": true, "room_join": true, "room_leave": true,
-	"role_claim": true, "role_release": true, "nick_reset": true,
+	"role_claim": true, "role_release": true, "nick_reset": true, "owner_register": true, "owner_rotate": true,
 }
 
 func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
@@ -37,6 +37,22 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 			return nil, e
 		}
 		return b.join(c, a)
+	case "challenge":
+		return b.challenge(c)
+	case "owner_info":
+		return b.ownerInfo(), nil
+	case "owner_register":
+		var a proto.OwnerRegisterArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.ownerRegister(a)
+	case "owner_rotate":
+		var a proto.OwnerRotateArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.ownerRotate(a)
 	case "nick_reset":
 		var a proto.NickResetArgs
 		if e := decode(f.Args, &a); e != nil {
@@ -149,7 +165,7 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 	}
 	msg := proto.Message{
 		Room: a.Room, From: m.name, FromRole: m.role, To: a.To,
-		Text: a.Text, ReplyTo: a.ReplyTo, TS: now.UTC().Format(time.RFC3339),
+		Text: a.Text, ReplyTo: a.ReplyTo, TS: now.UTC().Format(time.RFC3339), Owner: m.owner,
 	}
 	var key string
 	var recipients []string

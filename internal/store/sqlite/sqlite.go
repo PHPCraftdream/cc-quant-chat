@@ -156,12 +156,12 @@ func (d *DB) Load(chatID, name string) ([]store.Record, error) {
 				break
 			}
 			first := len(msgs)
-			err = d.eachArgs(`SELECT id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts
+			err = d.eachArgs(`SELECT id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, owner
 				FROM messages WHERE chat_id = ? AND thread = ? ORDER BY id DESC LIMIT ?`,
 				[]any{chatID, th, store.ThreadWindow}, func(rows *sql.Rows) error {
 					var m proto.Message
 					r := store.Record{T: "msg", Msg: &m}
-					if err := rows.Scan(&m.ID, &r.Key, &m.Room, &m.From, &m.FromRole, &m.To, &m.Text, &m.ReplyTo, &m.TS); err != nil {
+					if err := rows.Scan(&m.ID, &r.Key, &m.Room, &m.From, &m.FromRole, &m.To, &m.Text, &m.ReplyTo, &m.TS, &m.Owner); err != nil {
 						return err
 					}
 					msgs = append(msgs, r)
@@ -243,9 +243,9 @@ func (d *DB) Append(chatID string, r store.Record) error {
 			return fmt.Errorf("sqlite: msg record without message")
 		}
 		m := r.Msg
-		_, err = d.db.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID)
+		_, err = d.db.Exec(`INSERT INTO messages (chat_id, id, thread, room, from_nick, from_role, to_nick, text, reply_to, ts, client_msg_id, owner)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chatID, m.ID, r.Key, m.Room, m.From, m.FromRole, m.To, m.Text, m.ReplyTo, m.TS, r.ClientID, m.Owner)
 		if err != nil && r.ClientID != "" {
 			// A repeat of an earlier send? Then the earlier message is the answer.
 			var id int64

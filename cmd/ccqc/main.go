@@ -19,6 +19,13 @@ Setup:
   ccqc version              print the version
   ccqc help                 this help
 
+Owner (the human who owns ccqc on this machine; needs your own console, the password is read from it only):
+  ccqc owner init           create the owner key (password twice) and register its public key
+  ccqc owner status         fingerprints at the broker and in your key file; do they match
+  ccqc owner say [--nick N] <address> [text|-]
+                            join as OWNER, send one message, leave
+  ccqc owner rotate         replace the key; the request is signed with the old one
+
 Nicks:
   ccqc nick reset - <nick>  free an offline nick whose key was lost on this machine (the token is
                             read from stdin; avoid putting it in the arguments); the next join binds
@@ -71,6 +78,8 @@ func main() {
 		err = runDB(os.Args[2:])
 	case "nick":
 		err = runNick(os.Args[2:])
+	case "owner":
+		err = runOwner(os.Args[2:])
 	case "token":
 		if len(os.Args) != 4 || os.Args[2] != "new" {
 			fmt.Fprintln(os.Stderr, usage)

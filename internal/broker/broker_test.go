@@ -20,6 +20,7 @@ type memStore struct {
 	recs      map[string][]store.Record
 	loadErr   error
 	appendErr error
+	owner     []byte
 }
 
 func newMemStore() *memStore { return &memStore{recs: map[string][]store.Record{}} }
@@ -47,6 +48,33 @@ func (s *memStore) Append(id string, r store.Record) error {
 		}
 	}
 	s.recs[id] = append(s.recs[id], r)
+	return nil
+}
+
+// The owner key, as the database keeps it.
+func (s *memStore) Owner() ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owner, s.owner != nil, nil
+}
+
+func (s *memStore) SetOwner(pub []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.owner != nil {
+		return store.ErrOwnerExists
+	}
+	s.owner = append([]byte(nil), pub...)
+	return nil
+}
+
+func (s *memStore) ReplaceOwner(old, pub []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if string(s.owner) != string(old) {
+		return store.ErrOwnerChanged
+	}
+	s.owner = append([]byte(nil), pub...)
 	return nil
 }
 
