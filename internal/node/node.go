@@ -31,6 +31,15 @@ func Origin(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(h[:16])
 }
 
+// Short is the first four characters of an origin: what follows the name of a member of another
+// node (nick@abcd).
+func Short(origin string) string {
+	if len(origin) < 4 {
+		return origin
+	}
+	return origin[:4]
+}
+
 // Load reads the key at path, creating it (mode 0600) on the first run.
 func Load(path string) (ed25519.PrivateKey, error) {
 	raw, err := os.ReadFile(path)

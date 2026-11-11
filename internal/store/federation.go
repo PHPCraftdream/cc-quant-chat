@@ -50,10 +50,12 @@ type Federation interface {
 	Vector(chatID string) (map[string]int64, error) // highest seq held per origin
 	// EventsAfter: events of one origin with seq > after, in order, as stored (whole or redacted).
 	EventsAfter(chatID, origin string, after int64, limit int) ([]events.Event, error)
-	// AcceptEvent stores an event that came from another node as the next one of its origin: the
-	// caller has checked its signatures; the chain is checked here, atomically. It returns
-	// ErrGap, ErrChain, ErrDuplicate or *ForkError.
-	AcceptEvent(chatID string, e events.Event) error
+	// AcceptEvent stores an event that came from another node as the next one of its origin and
+	// applies it to the projections, in one transaction: the caller has checked its signatures; the
+	// chain and the rules of application are checked here. It returns what the broker has to learn
+	// of (records in the numbers of this node), or ErrGap, ErrChain, ErrDuplicate, *ForkError, or
+	// an error of the rules (the event is then not stored).
+	AcceptEvent(chatID string, e events.Event) ([]Record, error)
 	MaxLamport(chatID string) (int64, error) // the highest clock value the chat has seen
 	// OnEvents sets a function called, after the change is committed, with the id of a chat that
 	// has new events. It runs on the goroutine that wrote them, possibly with locks held: it must

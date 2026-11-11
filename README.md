@@ -556,10 +556,18 @@ shared is not transferred, and a node that was not added cannot connect.
   and the snapshots of a pre-journal database (`import.*`, so the board and pages of a chat that
   was laid out from an old database are not transferred). Who a nick is (name, key) goes whole;
   the hash of its secret and its read cursor are node state and never leave.
-- **Not supported yet:** direct messages between members of different nodes
-  (they will be refused with an explicit error), and
-  applying the arrived events to the chat's messages, board and pages (the next step: for now
-  the journals are exchanged and verified, the projections follow).
+- What arrives is applied to the chat: messages, who the members of the other node are, and its
+  rooms. A member of another node is shown as `nick@abcd` (abcd: the first characters of its node's
+  origin; your own members have no suffix), in the member list, in rooms and as the sender of a
+  message. Address one like any member: `/chat/@room/@nick@abcd` reaches it and wakes it on its
+  node. Message numbers (`#184`) are each node's own; a reply between nodes finds the message it
+  answers by its name that is the same everywhere. A message of a member who signs must be signed
+  by the key its node registered for the nick. Two nodes that made one room end with one: the
+  earlier (clock, origin) creation stands.
+- **Not supported yet:** direct messages between members of different nodes (they are refused:
+  "the member is on another node; direct messages between nodes are not supported yet"), and
+  applying the board and the documents of the other node (the journals carry them; the
+  projections follow in the next step).
 - `ccqc peer` needs the SQLite store (not `CCQC_STORE=memory`).
 
 ## Cards in the transcript (`quant-ui`)

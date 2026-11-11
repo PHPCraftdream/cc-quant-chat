@@ -250,6 +250,9 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs, raw json.RawMessage
 		if a.To == "" {
 			return nil, proto.Errf("member_required", "@direct needs a nick")
 		}
+		if strings.Contains(a.To, "@") { // a member of another node is named nick@abcd
+			return nil, proto.Errf("remote_member", "%s", crossNodeDM)
+		}
 		if a.To == m.name {
 			return nil, proto.Errf("no_such_member", "can't send @direct to yourself")
 		}

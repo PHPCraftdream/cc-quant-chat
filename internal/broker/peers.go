@@ -24,6 +24,7 @@ func (b *Broker) startPeers(priv ed25519.PrivateKey) error {
 		return nil
 	}
 	m := peer.New(fed, b.origin, priv, log.Printf)
+	m.Accept = b.acceptRemote
 	fed.OnEvents(m.Notify)
 	b.peerMgr = m
 	if addr, _ := b.setting("", "peer.listen"); addr != "" {

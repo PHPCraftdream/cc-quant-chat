@@ -129,7 +129,12 @@ func (m *Manager) accept(chat string, e events.Event, pubs map[string]string) er
 	if err := m.check(chat, e, pubs); err != nil {
 		return err
 	}
-	err := m.st.AcceptEvent(chat, e)
+	var err error
+	if m.Accept != nil {
+		err = m.Accept(chat, e)
+	} else {
+		_, err = m.st.AcceptEvent(chat, e)
+	}
 	var fork *store.ForkError
 	if errors.As(err, &fork) {
 		evidence, _ := json.Marshal([]events.Event{fork.Stored, e})

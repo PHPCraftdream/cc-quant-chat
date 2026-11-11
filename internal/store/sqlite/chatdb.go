@@ -35,7 +35,7 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 1 { // a new chat: every change it will have is an event, in the second version of the journal
-		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'done'), (?, ?)`, metaBackfill, metaJournal, journalVersion); err != nil {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'done'), (?, ?), (?, ?)`, metaBackfill, metaJournal, journalVersion, metaRefs, refsDone); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -55,6 +55,10 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 		return nil, err
 	}
 	if err := c.upgradeJournal(d.key); err != nil { // d.mu is held by the caller: read the key without it
+		db.Close()
+		return nil, fmt.Errorf("chat %.8s: %w", id, err)
+	}
+	if err := c.upgradeRefs(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("chat %.8s: %w", id, err)
 	}
@@ -206,6 +210,11 @@ func (c *chatDB) append(r store.Record) error {
 		e, _, err := recordEvent(c.id, r, lamport)
 		if err != nil {
 			return err
+		}
+		if r.T == "msg" && r.Msg.ReplyTo != 0 {
+			if e.Assigned, err = withReplyRef(tx, e.Assigned, r.Msg.ReplyTo); err != nil {
+				return err
+			}
 		}
 		if e, err = c.appendEvent(tx, e); err != nil {
 			return err

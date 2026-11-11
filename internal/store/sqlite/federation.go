@@ -214,13 +214,21 @@ func (d *DB) MaxLamport(chatID string) (int64, error) {
 	return n, err
 }
 
-func (d *DB) AcceptEvent(chatID string, e events.Event) error {
+// AcceptEvent stores an event of another node as the next of its origin and applies it to the
+// projections in the same transaction (remote.go); it returns what the broker has to learn of.
+// An event that the rules of application refuse is not stored.
+func (d *DB) AcceptEvent(chatID string, e events.Event) ([]store.Record, error) {
 	c, err := d.openedChat(chatID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	key := d.nodeKey()
+	if key == nil {
+		return nil, errors.New("this node has no identity: it cannot take events of others")
 	}
 	e.ChatID = chatID
-	return c.inTx(func(tx *sql.Tx) error {
+	var effects []store.Record
+	err = c.inTx(func(tx *sql.Tx) error {
 		seq, tailID, err := c.chainTail(tx, e.Origin)
 		if err != nil {
 			return err
@@ -243,8 +251,18 @@ func (d *DB) AcceptEvent(chatID string, e events.Event) error {
 		if err := putEvent(tx, e); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(`UPDATE events SET remote = 1 WHERE origin = ? AND seq = ?`, e.Origin, e.Seq); err != nil {
+			return err
+		}
 		// This node's clock never falls behind the events it holds.
-		_, err = tx.Exec(`UPDATE chat SET lamport = MAX(lamport, ?)`, e.Lamport)
+		if _, err := tx.Exec(`UPDATE chat SET lamport = MAX(lamport, ?)`, e.Lamport); err != nil {
+			return err
+		}
+		effects, err = applyRemote(tx, e, key.origin)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+	return effects, nil
 }

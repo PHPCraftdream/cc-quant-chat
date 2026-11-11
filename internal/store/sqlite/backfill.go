@@ -89,6 +89,9 @@ func (c *chatDB) backfillEvents(key *nodeKey) (int, error) {
 	if err := c.backfillSnapshots(w); err != nil {
 		return 0, err
 	}
+	if err := derivedRefs(tx); err != nil {
+		return 0, err
+	}
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done'), (?, ?)`, metaBackfill, metaJournal, journalVersion); err != nil {
 		return 0, err
 	}

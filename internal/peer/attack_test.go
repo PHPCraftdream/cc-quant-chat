@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -70,6 +71,9 @@ func (r *rogue) connect(target *tnode, chat string) error {
 func (r *rogue) event(chat string, seq int64, prev string, lamport int64, kind, payload string) events.Event {
 	e := events.Event{ChatID: chat, Origin: r.origin, Seq: seq, Prev: prev, Lamport: lamport, Kind: kind, Payload: payload,
 		Assigned: "{}", TS: time.Now().UTC().Format(time.RFC3339)}
+	if kind == "msg" { // a message says who wrote it, as the node that took it recorded
+		e.Assigned = fmt.Sprintf(`{"from":"rogue","id":%d,"thread":"r:common"}`, seq)
+	}
 	e.Sign(r.priv)
 	return e
 }

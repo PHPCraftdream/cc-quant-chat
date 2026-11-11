@@ -146,6 +146,9 @@ type msgAssigned struct {
 	From     string `json:"from"`
 	FromRole string `json:"from_role,omitempty"`
 	Owner    bool   `json:"owner,omitempty"`
+	// ReplyRef names the message replied to by the event that made it, the same on every node
+	// (reply_to in the signed request is a number of the author's node).
+	ReplyRef *eventRef `json:"reply_ref,omitempty"`
 }
 
 // recordEvent turns a record into the event it stands for. ok is false for records that are not
@@ -249,6 +252,10 @@ func applyMsg(tx *sql.Tx, e events.Event) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Thread, str(p, "room"), a.From, a.FromRole, str(p, "to"), str(p, "text"), replyTo, e.TS,
 		str(p, "client_msg_id"), a.Owner, e.Origin, e.Lamport, e.AuthorPub, e.Sig, payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT OR REPLACE INTO entity_refs (kind, id, origin, seq) VALUES ('msg', ?, ?, ?)`, a.ID, e.Origin, e.Seq)
 	return err
 }
 
@@ -282,8 +289,7 @@ func applySimple(tx *sql.Tx, e events.Event) error {
 	case "nick.pin":
 		_, err = tx.Exec(`UPDATE nicks SET pinned_role = ? WHERE nick = ?`, str(p, "role"), str(p, "nick"))
 	case "room.create":
-		_, err = tx.Exec(`INSERT OR IGNORE INTO rooms (room, topic, created_by) VALUES (?, ?, ?)`,
-			str(p, "room"), str(p, "topic"), str(p, "created_by"))
+		err = upsertRoom(tx, str(p, "room"), str(p, "topic"), str(p, "created_by"), e.Lamport, e.Origin)
 	case "room.join":
 		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (room, nick) VALUES (?, ?)`, str(p, "room"), str(p, "nick"))
 	case "room.leave":

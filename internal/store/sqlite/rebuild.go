@@ -21,7 +21,7 @@ type projection struct {
 var projections = []projection{
 	{"rooms", nil}, {"room_members", nil}, {"nicks", []string{"seen", "key_hash"}}, {"messages", nil}, {"board_sprints", nil},
 	{"board_tasks", nil}, {"board_workflow", nil}, {"board_log", nil}, {"board_comments", nil},
-	{"docs", nil}, {"doc_versions", nil}, {"settings", nil},
+	{"docs", nil}, {"doc_versions", nil}, {"settings", nil}, {"remote_nicks", nil}, {"entity_refs", nil},
 }
 
 // RebuildReport: what a rebuild found. Diffs counts, per table, the rows that are in only one of
@@ -158,14 +158,19 @@ func (c *chatDB) replayInto(path string) (int, error) {
 	if _, err := tx.Exec(`INSERT INTO rooms (room) VALUES ('common')`); err != nil {
 		return 0, err
 	}
-	rows, err := c.db.Query(`SELECT ` + eventCols + ` FROM events ORDER BY ord`)
+	rows, err := c.db.Query(`SELECT ` + eventCols + `, remote FROM events ORDER BY ord`)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
+	self := ""
+	if key := c.s.nodeKey(); key != nil {
+		self = key.origin
+	}
 	n := 0
 	for rows.Next() {
-		e, err := scanEvent(c.id, rows)
+		var remote bool
+		e, err := scanEvent(c.id, withExtra{rows, &remote})
 		if err != nil {
 			return n, err
 		}
@@ -173,7 +178,12 @@ func (c *chatDB) replayInto(path string) (int, error) {
 			n++
 			continue
 		}
-		if err := applyEvent(tx, e); err != nil {
+		if remote {
+			_, err = applyRemote(tx, e, self)
+		} else {
+			err = applyEvent(tx, e)
+		}
+		if err != nil {
 			return n, fmt.Errorf("event %s#%d (%s): %w", e.Origin, e.Seq, e.Kind, err)
 		}
 		if _, err := tx.Exec(`UPDATE chat SET lamport = MAX(lamport, ?)`, e.Lamport); err != nil {
@@ -186,6 +196,14 @@ func (c *chatDB) replayInto(path string) (int, error) {
 	}
 	return n, tx.Commit()
 }
+
+// withExtra reads one more column after those of an event row.
+type withExtra struct {
+	row   interface{ Scan(...any) error }
+	extra any
+}
+
+func (w withExtra) Scan(dest ...any) error { return w.row.Scan(append(dest, w.extra)...) }
 
 // swapProjections replaces the current projections with the rebuilt ones (attached as "shadow"),
 // keeping the nicks' read cursors, in one transaction.

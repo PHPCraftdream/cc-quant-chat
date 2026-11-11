@@ -28,10 +28,12 @@ type Manager struct {
 	priv   ed25519.PrivateKey
 	logf   func(format string, args ...any)
 
-	// OnAccepted is called after events of a chat have been stored (they came from a peer); the
-	// broker applies them to its projections. It runs on the goroutine of the session and must not
-	// wait for what a session does.
+	// OnAccepted is called after events of a chat have been stored (they came from a peer). It runs
+	// on the goroutine of the session and must not wait for what a session does.
 	OnAccepted func(chatID string, accepted []events.Event)
+	// Accept stores one checked event and applies it; the default is the store's AcceptEvent. The
+	// broker sets its own, which does it under the lock of the chat and tells the chat's members.
+	Accept func(chatID string, e events.Event) error
 
 	ctx    context.Context
 	cancel context.CancelFunc

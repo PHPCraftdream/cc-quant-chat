@@ -45,6 +45,9 @@ func (b *Broker) useChat(id, name string) (*chat, error) {
 			ch.refs.Add(-1)
 			continue
 		}
+		if ch.name == "" && name != "" { // loaded by an event of another node, which does not know the name
+			ch.name = name
+		}
 		return ch, nil
 	}
 }
