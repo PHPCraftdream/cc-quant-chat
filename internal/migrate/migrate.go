@@ -5,6 +5,14 @@
 // leaves no trace. Applied migrations are pinned by checksum: editing one after release is
 // an error, as is a database migrated by a newer binary. There are no down migrations;
 // to roll back, restore a backup of the database file.
+//
+// A migration that must rewrite tables other tables point to (the SQLite "12-step" ALTER)
+// starts with the line "-- ccqc:foreign-keys=off". It then runs with foreign key enforcement
+// off on one pinned connection, and "PRAGMA foreign_key_check" must come back empty before commit.
+//
+// Checksums are taken over the file with CRLF turned into LF, so a checkout with other
+// line endings still matches; the raw and CRLF forms of a file are accepted for databases that
+// recorded them before that.
 package migrate
 
 import (
@@ -12,12 +20,15 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,7 +36,9 @@ type Migration struct {
 	Version int
 	Name    string
 	SQL     string
-	Sum     string // hex SHA-256 of SQL
+	Sum     string   // hex SHA-256 of SQL
+	Alt     []string // other sums accepted for the same file (raw bytes, CRLF form)
+	NoFK    bool     // "-- ccqc:foreign-keys=off"
 }
 
 // Applied: a row of schema_migrations.
@@ -67,11 +80,44 @@ func Load(fsys fs.FS, dir string) ([]Migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256(body)
-		ms = append(ms, Migration{Version: v, Name: m[2], SQL: string(body), Sum: hex.EncodeToString(sum[:])})
+		ms = append(ms, newMigration(v, m[2], body))
 	}
 	sort.Slice(ms, func(i, j int) bool { return ms[i].Version < ms[j].Version })
 	return ms, nil
+}
+
+const (
+	crlf = "\r\n"
+	lfs  = "\n"
+)
+
+func sum(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func newMigration(version int, name string, raw []byte) Migration {
+	lf := strings.ReplaceAll(string(raw), crlf, lfs)
+	m := Migration{Version: version, Name: name, SQL: lf, Sum: sum([]byte(lf))}
+	for _, alt := range []string{string(raw), strings.ReplaceAll(lf, lfs, crlf)} {
+		if a := sum([]byte(alt)); a != m.Sum && !slices.Contains(m.Alt, a) {
+			m.Alt = append(m.Alt, a)
+		}
+	}
+	for _, line := range strings.Split(lf, lfs) {
+		line = strings.TrimSpace(line)
+		if line == "-- ccqc:foreign-keys=off" {
+			m.NoFK = true
+		}
+		if line != "" && !strings.HasPrefix(line, "--") {
+			break // directives live in the leading comment block
+		}
+	}
+	return m
+}
+
+func (m Migration) matches(recorded string) bool {
+	return recorded == m.Sum || slices.Contains(m.Alt, recorded)
 }
 
 const createTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -81,10 +127,15 @@ const createTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
 	applied_at TEXT NOT NULL
 )`
 
-// Status returns applied migrations, oldest first.
+// Status returns applied migrations, oldest first. It only reads: a database without
+// the table yet (fresh file) has none.
 func Status(ctx context.Context, db *sql.DB) ([]Applied, error) {
-	if _, err := db.ExecContext(ctx, createTable); err != nil {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&n); err != nil {
 		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
 	}
 	rows, err := db.QueryContext(ctx, `SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
@@ -114,7 +165,7 @@ func Check(applied []Applied, ms []Migration) ([]Migration, error) {
 		if !ok {
 			return nil, fmt.Errorf("migrate: database has migration %d (%s) unknown to this binary; it was migrated by a newer version", a.Version, a.Name)
 		}
-		if m.Sum != a.Sum {
+		if !m.matches(a.Sum) {
 			return nil, fmt.Errorf("migrate: migration %d (%s) changed after it was applied; add a new migration instead of editing it", a.Version, a.Name)
 		}
 		done[a.Version] = true
@@ -132,6 +183,9 @@ func Check(applied []Applied, ms []Migration) ([]Migration, error) {
 // A migration with a version lower than an applied one is still applied (late merge),
 // since versions only order the files; checksums keep history honest.
 func Up(ctx context.Context, db *sql.DB, ms []Migration) ([]Migration, error) {
+	if _, err := db.ExecContext(ctx, createTable); err != nil {
+		return nil, err
+	}
 	applied, err := Status(ctx, db)
 	if err != nil {
 		return nil, err
@@ -148,8 +202,24 @@ func Up(ctx context.Context, db *sql.DB, ms []Migration) ([]Migration, error) {
 	return pending, nil
 }
 
-func apply(ctx context.Context, db *sql.DB, m Migration) error {
-	tx, err := db.BeginTx(ctx, nil)
+func apply(ctx context.Context, db *sql.DB, m Migration) (err error) {
+	// One connection for the whole migration: PRAGMA foreign_keys is per connection.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if m.NoFK {
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			return err
+		}
+		defer func() {
+			if _, e := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); e != nil && err == nil {
+				err = e
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -164,6 +234,21 @@ func apply(ctx context.Context, db *sql.DB, m Migration) error {
 	}
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		return err
+	}
+	if m.NoFK {
+		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			return err
+		}
+		broken := rows.Next()
+		rowsErr := rows.Err()
+		rows.Close()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		if broken {
+			return errors.New("foreign_key_check failed after the migration")
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)`,

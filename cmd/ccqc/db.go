@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/migrate"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
@@ -37,16 +39,22 @@ func dbStatus(path string) error {
 	if err != nil {
 		return err
 	}
-	db, err := sqlite.OpenRaw(path)
-	if err != nil {
+	var applied []migrate.Applied
+	if _, err := os.Stat(path); err == nil { // a report must not create the database
+		db, err := sqlite.OpenRaw(path)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if applied, err = migrate.Status(context.Background(), db); err != nil {
+			return err
+		}
+		fmt.Println("database:", path)
+	} else if errors.Is(err, fs.ErrNotExist) {
+		fmt.Println("database:", path, "(not created yet; the broker creates it on first use)")
+	} else {
 		return err
 	}
-	defer db.Close()
-	applied, err := migrate.Status(context.Background(), db)
-	if err != nil {
-		return err
-	}
-	fmt.Println("database:", path)
 	for _, a := range applied {
 		fmt.Printf("  applied  %04d_%s  %s\n", a.Version, a.Name, a.AppliedAt)
 	}

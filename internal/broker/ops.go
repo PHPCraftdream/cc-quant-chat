@@ -27,17 +27,37 @@ func (b *Broker) handle(c *conn, f *proto.Frame) (any, *proto.Error) {
 			return nil, e
 		}
 		return b.join(c, a)
+	case "nick_reset":
+		var a proto.NickResetArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.nickReset(a)
 	}
 	if c.m == nil {
 		return nil, proto.Errf("not_joined", "join first")
 	}
 	ch, m := c.ch, c.m
 	switch f.Op {
+	case "room_create", "room_join", "room_leave", "role_claim", "role_release":
+		if !b.allow(ch, m.name, "ctl", ctlLimit) {
+			return nil, proto.Errf("rate_limited", "max %d room/role changes per minute", ctlLimit)
+		}
+	}
+	switch f.Op {
 	case "leave":
-		ch.markSeen(m.name)
+		if !m.acks {
+			ch.markSeen(m.name)
+		}
 		b.removeMember(ch, m, m.name+" left")
 		c.m = nil
 		return nil, nil
+	case "ack":
+		var a proto.AckArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return nil, ch.ack(m.name, a.ID)
 	case "state":
 		return ch.state(m), nil
 	case "send":
@@ -99,14 +119,7 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 		return nil, proto.Errf("too_large", "text is %d bytes, max %d", len(a.Text), proto.MaxText)
 	}
 	now := time.Now()
-	kept := m.sent[:0]
-	for _, t := range m.sent {
-		if now.Sub(t) < time.Minute {
-			kept = append(kept, t)
-		}
-	}
-	m.sent = kept
-	if len(m.sent) >= rateLimit {
+	if !b.allow(ch, m.name, "msg", rateLimit) {
 		return nil, proto.Errf("rate_limited", "max %d messages per minute", rateLimit)
 	}
 	if a.To != "" && ch.nicks[a.To] == nil {
@@ -145,14 +158,15 @@ func (b *Broker) send(ch *chat, m *member, a proto.SendArgs) (any, *proto.Error)
 			}
 		}
 	}
-	ch.nextID++
-	msg.ID = ch.nextID
+	msg.ID = ch.nextID + 1
+	if e := ch.save(store.Record{T: "msg", Key: key, Msg: &msg}); e != nil {
+		return nil, e // not stored: no id taken, nothing delivered
+	}
+	ch.nextID = msg.ID
 	ch.keep(key, msg)
-	ch.save(store.Record{T: "msg", Key: key, Msg: &msg})
 	for _, name := range recipients {
 		b.deliver(ch, name, proto.Event{Kind: "msg", Msg: &msg, ToMe: a.Room == proto.RoomDirect || name == a.To})
 	}
-	m.sent = append(m.sent, now)
 	return proto.SendResult{ID: msg.ID}, nil
 }
 
@@ -172,10 +186,20 @@ func (b *Broker) roomOp(op string, ch *chat, m *member, a proto.RoomArgs) (any, 
 		if r != nil {
 			return nil, proto.Errf("room_exists", "@%s already exists; room_join it", a.Room)
 		}
+		if len(a.Topic) > proto.MaxTopic {
+			return nil, proto.Errf("too_large", "topic is %d bytes, max %d", len(a.Topic), proto.MaxTopic)
+		}
+		if len(ch.rooms) >= maxRooms {
+			return nil, proto.Errf("too_many_rooms", "a chat holds at most %d rooms", maxRooms)
+		}
+		if e := ch.save(store.Record{T: "room", Room: a.Room, Topic: a.Topic, Nick: m.name}); e != nil {
+			return nil, e
+		}
+		if e := ch.save(store.Record{T: "in", Room: a.Room, Nick: m.name}); e != nil {
+			return nil, e
+		}
 		r = &room{name: a.Room, topic: a.Topic, createdBy: m.name, members: map[string]bool{m.name: true}}
 		ch.rooms[a.Room] = r
-		ch.save(store.Record{T: "room", Room: a.Room, Topic: a.Topic, Nick: m.name})
-		ch.save(store.Record{T: "in", Room: a.Room, Nick: m.name})
 		text := fmt.Sprintf("%s created room @%s", m.name, a.Room)
 		if a.Topic != "" {
 			text += " — " + a.Topic
@@ -187,8 +211,10 @@ func (b *Broker) roomOp(op string, ch *chat, m *member, a proto.RoomArgs) (any, 
 			return nil, proto.Errf("no_such_room", "no room @%s", a.Room)
 		}
 		if !r.members[m.name] {
+			if e := ch.save(store.Record{T: "in", Room: a.Room, Nick: m.name}); e != nil {
+				return nil, e
+			}
 			r.members[m.name] = true
-			ch.save(store.Record{T: "in", Room: a.Room, Nick: m.name})
 			b.presence(ch, r, m.name, fmt.Sprintf("%s joined @%s", m.name, a.Room))
 		}
 		return proto.HistoryResult{Messages: tail(r.hist, joinRecent)}, nil
@@ -202,8 +228,10 @@ func (b *Broker) roomOp(op string, ch *chat, m *member, a proto.RoomArgs) (any, 
 		if !r.members[m.name] {
 			return nil, proto.Errf("not_in_room", "you are not in @%s", a.Room)
 		}
+		if e := ch.save(store.Record{T: "out", Room: a.Room, Nick: m.name}); e != nil {
+			return nil, e
+		}
 		delete(r.members, m.name)
-		ch.save(store.Record{T: "out", Room: a.Room, Nick: m.name})
 		b.presence(ch, r, m.name, fmt.Sprintf("%s left @%s", m.name, a.Room))
 		return nil, nil
 	}
@@ -265,6 +293,10 @@ func (b *Broker) removeMember(ch *chat, m *member, text string) {
 	b.release(ch, m)
 	delete(ch.members, m.name)
 	b.presence(ch, nil, m.name, text)
+	b.unloadIfEmpty(ch)
+}
+
+func (b *Broker) unloadIfEmpty(ch *chat) {
 	if len(ch.members) == 0 {
 		if _, memoryOnly := ch.store.(store.Memory); !memoryOnly { // memory-only: unloading would lose history
 			delete(b.chats, ch.id)

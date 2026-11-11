@@ -9,7 +9,7 @@
   Chat data (%APPDATA%\ccqc) is never touched.
 
   Reinstalling over a running broker is safe: the locked ccqc.exe is renamed to
-  ccqc.exe.old, the new one takes its place, and the running broker is restarted on the
+  ccqc.exe.old-<id>, the new one takes its place, and the running broker is restarted on the
   new version (connected sessions reconnect by themselves). -NoRestart leaves it running.
 
 .PARAMETER Version
@@ -77,6 +77,12 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
     [void][Ccqc.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
 }
 
+# Leftovers of earlier updates (ccqc.exe.old, ccqc.exe.old-<id>): removable once nothing runs them.
+function Remove-OldExe {
+    Get-ChildItem -LiteralPath $Dir -Filter 'ccqc.exe.old*' -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+
 function Test-PathEntry([string]$PathValue, [string]$Entry) {
     $want = $Entry.TrimEnd('\')
     return @($PathValue -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ieq $want }).Count -gt 0
@@ -94,16 +100,16 @@ if ($Uninstall) {
             Remove-Item $Exe -Force
         } catch {
             # A running ccqc (session or broker) locks the exe; renaming still works.
-            Move-Item $Exe "$Exe.old" -Force
-            Say 'ccqc.exe is in use (a Claude Code session or the broker); renamed to ccqc.exe.old'
+            Move-Item $Exe ("$Exe.old-" + [guid]::NewGuid().ToString('N').Substring(0, 8)) -Force
+            Say 'ccqc.exe is in use (a Claude Code session or the broker); renamed to ccqc.exe.old-*'
         }
         Say "removed $Exe"
     } else {
         Say "nothing installed at $Exe"
     }
-    Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue
-    if (Test-Path "$Exe.old") {
-        Say "$Exe.old is still used by a running ccqc (a Claude Code session); run -Uninstall again after those sessions end"
+    Remove-OldExe
+    if (Test-Path "$Exe.old*") {
+        Say "$Exe.old* is still used by a running ccqc (a Claude Code session); run -Uninstall again after those sessions end"
     } elseif ((Test-Path $Dir) -and -not (Get-ChildItem $Dir -Force)) {
         Remove-Item $Dir -Force
     }
@@ -147,10 +153,12 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
         } finally { Pop-Location }
     } else {
-        $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+        # A 32-bit PowerShell on a 64-bit Windows reports x86; the real CPU is in PROCESSOR_ARCHITEW6432.
+        $cpu = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+        $arch = switch ($cpu) {
             'AMD64' { 'amd64' }
             'ARM64' { 'arm64' }
-            default { throw "unsupported CPU: $env:PROCESSOR_ARCHITECTURE" }
+            default { throw "unsupported CPU: $cpu" }
         }
         $asset = "ccqc_windows_$arch.exe"
         $base = if ($Version -eq 'latest') { "https://github.com/$Repo/releases/latest/download" }
@@ -170,13 +178,21 @@ try {
     }
 
     New-Item -ItemType Directory -Force $Dir | Out-Null
-    # A running ccqc (the broker) locks its exe, but Windows allows renaming it.
+    # A running ccqc (the broker) locks its exe, but Windows allows renaming it. Each update
+    # uses its own name, so a leftover that is still running can't block the next one.
+    Remove-OldExe
+    $old = $null
     if (Test-Path $Exe) {
-        Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue
-        Move-Item $Exe "$Exe.old" -Force
+        $old = "$Exe.old-" + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        Move-Item $Exe $old -Force
     }
-    Move-Item $new $Exe -Force
-    Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue # still running: removed next time
+    try {
+        Move-Item $new $Exe -Force
+    } catch {
+        if ($old -and -not (Test-Path $Exe)) { Move-Item $old $Exe -Force } # put the previous version back
+        throw
+    }
+    Remove-OldExe # still running: removed next time
     Say "installed $(& $Exe version) to $Exe"
 
     # A running broker keeps the old code: restart it on the new binary.
@@ -187,7 +203,7 @@ try {
             & $Exe broker restart
             if ($LASTEXITCODE -ne 0) { Say "broker restart failed; run 'ccqc broker restart' later" }
             Start-Sleep -Milliseconds 500
-            Remove-Item "$Exe.old" -Force -ErrorAction SilentlyContinue
+            Remove-OldExe
         }
     }
 

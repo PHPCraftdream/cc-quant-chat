@@ -19,6 +19,11 @@ Setup:
   ccqc version              print the version
   ccqc help                 this help
 
+Nicks:
+  ccqc nick reset - <nick>  free an offline nick whose key was lost on this machine (the token is
+                            read from stdin; avoid putting it in the arguments); the next join binds
+                            a new key. Anyone with the token can do this, and the chat is told.
+
 Broker (started automatically; one per user):
   ccqc broker status        is it running: pid, version, uptime, chats, members, store
                             (exit code 3 when it is not running)
@@ -61,6 +66,8 @@ func main() {
 		err = printSession()
 	case "db":
 		err = runDB(os.Args[2:])
+	case "nick":
+		err = runNick(os.Args[2:])
 	case "token":
 		if len(os.Args) != 4 || os.Args[2] != "new" {
 			fmt.Fprintln(os.Stderr, usage)

@@ -35,6 +35,18 @@ func (n *nick) check(key string) bool {
 }
 
 func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
+	res, perr := b.joinChat(c, a)
+	if perr != nil { // a chat loaded for a join that failed must not stay cached without members
+		if _, id, err := proto.ParseToken(a.Token); err == nil {
+			if ch := b.chats[id]; ch != nil {
+				b.unloadIfEmpty(ch)
+			}
+		}
+	}
+	return res, perr
+}
+
+func (b *Broker) joinChat(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	if c.m != nil {
 		return nil, proto.Errf("already_joined", "this connection already joined a chat")
 	}
@@ -47,44 +59,95 @@ func (b *Broker) join(c *conn, a proto.JoinArgs) (any, *proto.Error) {
 	}
 	ch := b.chats[id]
 	if ch == nil {
-		ch = b.loadChat(id, name)
+		loaded, err := b.loadChat(id, name)
+		if err != nil {
+			return nil, proto.Errf("store_unavailable", "chat history can't be read (%v); not joining so nothing gets overwritten. See broker.log", err)
+		}
+		ch = loaded
 		b.chats[id] = ch
 	}
 
 	var issued string
 	nk := ch.nicks[a.Name]
 	switch {
-	case nk == nil:
-		// New nick (or the broker forgot it): bind it to the presented key, else a fresh one.
+	case nk == nil || nk.hash == "": // new nick, or one freed by `ccqc nick reset`
+		// Bind it to the presented key, else a fresh one.
 		key := a.Key
 		if key == "" {
 			key = newNickKey()
+		}
+		hash := hashNickKey(key)
+		if nk == nil {
+			// One record: the store registers the nick and its place in @common atomically.
+			fresh := &nick{hash: hash, seen: ch.nextID} // nothing is "unread" for a new nick
+			if e := ch.save(store.Record{T: "nick", Nick: a.Name, Hash: hash, ID: fresh.seen}); e != nil {
+				return nil, e
+			}
+			nk = fresh
+			ch.nicks[a.Name] = nk
+			ch.rooms[proto.RoomCommon].members[a.Name] = true
+		} else {
+			if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: hash}); e != nil {
+				return nil, e
+			}
+			nk.hash = hash
+		}
+		if a.Key == "" {
 			issued = key
 		}
-		nk = &nick{hash: hashNickKey(key), seen: ch.nextID} // nothing is "unread" for a new nick
-		ch.nicks[a.Name] = nk
-		ch.rooms[proto.RoomCommon].members[a.Name] = true
-		ch.save(store.Record{T: "nick", Nick: a.Name, Hash: nk.hash, ID: nk.seen})
-		ch.save(store.Record{T: "in", Nick: a.Name, Room: proto.RoomCommon})
 	case !nk.check(a.Key):
-		return nil, proto.Errf("name_taken", "nick @%s is registered in this chat by another session; pick another nick", a.Name)
+		return nil, proto.Errf("name_taken", "nick @%s is registered in this chat by another session; pick another nick (or, if it is yours and its key was lost, `ccqc nick reset - %s` (token on stdin))", a.Name, a.Name)
 	}
 
 	m := ch.members[a.Name]
 	if m != nil && m.conn != nil {
-		return nil, proto.Errf("name_taken", "nick @%s is already online in this chat", a.Name)
+		return nil, proto.Errf("name_online", "nick @%s is already online in this chat", a.Name)
 	}
 	backlog, total := ch.unread(a.Name, nk.seen)
+	acks := a.Proto >= 2
 	if m != nil {
-		m.conn, m.offline = c, time.Time{}
+		m.conn, m.offline, m.acks = c, time.Time{}, acks
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
-		m = &member{name: a.Name, conn: c}
+		m = &member{name: a.Name, conn: c, acks: acks}
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}
 	c.ch, c.m = ch, m
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warning}, nil
+}
+
+// nickReset frees a registered nick whose key is lost: the next join binds a new key, and the
+// nick keeps its history and rooms. Needs the chat token; refused while the nick is present.
+// Anyone holding the token can do this to an offline nick, so the chat is told when it happens.
+func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
+	name, id, err := proto.ParseToken(a.Token)
+	if err != nil {
+		return nil, proto.Errf("bad_token", "%v", err)
+	}
+	ch := b.chats[id]
+	if ch == nil {
+		loaded, err := b.loadChat(id, name)
+		if err != nil {
+			return nil, proto.Errf("store_unavailable", "chat history can't be read (%v)", err)
+		}
+		ch = loaded
+		b.chats[id] = ch
+		defer b.unloadIfEmpty(ch)
+	}
+	nk := ch.nicks[a.Name]
+	if nk == nil {
+		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", a.Name)
+	}
+	if ch.members[a.Name] != nil {
+		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", a.Name)
+	}
+	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: ""}); e != nil {
+		return nil, e
+	}
+	nk.hash = ""
+	b.presence(ch, nil, "", "the key of @"+a.Name+" was reset: the next join under this nick takes it over")
+	return nil, nil
 }
 
 // unread: messages visible to the nick, newer than seen and not its own; newest unreadCap of them.

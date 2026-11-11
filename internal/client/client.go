@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -198,7 +199,8 @@ func SpawnBroker() error {
 		}
 		detach(cmd, breakaway)
 		if err = cmd.Start(); err == nil {
-			return cmd.Process.Release()
+			go func() { _ = cmd.Wait() }() // reaps the broker if it exits while we live (no zombie)
+			return nil
 		}
 	}
 	return err
@@ -213,10 +215,13 @@ func installedExe() (string, error) {
 		return "", err
 	}
 	exe = strings.TrimSuffix(exe, " (deleted)")
-	if trimmed := strings.TrimSuffix(exe, ".old"); trimmed != exe {
+	if trimmed := oldSuffix.ReplaceAllString(exe, ""); trimmed != exe {
 		if _, err := os.Stat(trimmed); err == nil {
 			exe = trimmed
 		}
 	}
 	return exe, nil
 }
+
+// oldSuffix: ".old" or ".old-<id>" (what the Windows installer renames a running exe to).
+var oldSuffix = regexp.MustCompile(`\.old(-[0-9a-f]+)?$`)

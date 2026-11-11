@@ -29,6 +29,10 @@ type chatConn struct {
 	leaving bool
 	pres    []string
 	presT   *time.Timer
+
+	last  int64 // newest message id handed to the session (dedupe)
+	done  int64 // newest message id confirmed delivered
+	acked int64 // newest id the broker has acknowledged
 }
 
 func (cc *chatConn) call(op string, args, out any) error {
@@ -104,9 +108,13 @@ func (cc *chatConn) reconnect() *client.Conn {
 			continue
 		}
 		var w proto.Welcome
-		if err := conn.Call("join", proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}, &w); err != nil {
+		if err := conn.Call("join", proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key, Proto: proto.ProtoVersion}, &w); err != nil {
 			conn.Close()
 			log.Printf("rejoin /%s: %v", cc.local, err)
+			if permanentJoinError(err) {
+				cc.giveUp(err)
+				return nil
+			}
 			continue
 		}
 		cc.restore(conn, &w.State)
@@ -121,10 +129,37 @@ func (cc *chatConn) reconnect() *client.Conn {
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
 		}
+		go cc.flushAck() // a confirmation lost with the old connection
 		cc.presence("reconnected to broker")
 		return conn
 	}
 	return nil
+}
+
+// permanentJoinError: retrying can't help. name_online (the old connection is still closing),
+// store errors and a missing broker are transient and keep being retried.
+func permanentJoinError(err error) bool {
+	for _, code := range []string{"bad_token", "bad_name", "name_taken", "already_joined"} {
+		if proto.IsCode(err, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// giveUp ends the membership after a permanent rejoin error and says so loudly.
+func (cc *chatConn) giveUp(err error) {
+	cc.mu.Lock()
+	cc.leaving = true
+	cc.mu.Unlock()
+	cc.s.mu.Lock()
+	if cc.s.chats[cc.local] == cc {
+		delete(cc.s.chats, cc.local)
+	}
+	cc.s.mu.Unlock()
+	msg := fmt.Sprintf("[/%s] you are no longer in this chat: rejoining as @%s failed for good: %v. "+
+		"Tell the user; after fixing it they can join again with /quant-join.", cc.local, cc.name, err)
+	cc.s.emit(msg, map[string]string{"kind": "error", "chat": cc.local}, msg, false, ackRef{})
 }
 
 // restore re-enters rooms and role after the broker lost them (e.g. broker restart).
@@ -166,6 +201,9 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 			return
 		}
 		m := ev.Msg
+		if !cc.fresh(m.ID) {
+			return
+		}
 		kind := "msg"
 		if m.Room == proto.RoomDirect {
 			kind = "dm"
@@ -191,7 +229,7 @@ func (cc *chatConn) onEvent(ev proto.Event) {
 		if m.ReplyTo > 0 {
 			meta["reply_to"] = strconv.FormatInt(m.ReplyTo, 10)
 		}
-		cc.s.emit(m.Text, meta, fmtMsg(cc.local, m)+"   (reply: "+reply+")", false)
+		cc.s.emit(m.Text, meta, fmtMsg(cc.local, m)+"   (reply: "+reply+")", false, ackRef{cc, m.ID})
 	case "presence":
 		cc.presence(ev.Text)
 	}
@@ -216,5 +254,5 @@ func (cc *chatConn) flushPresence() {
 	}
 	cc.s.emit(strings.Join(lines, "\n"),
 		map[string]string{"kind": "presence", "chat": cc.local},
-		"[/"+cc.local+" presence] "+strings.Join(lines, "; "), true)
+		"[/"+cc.local+" presence] "+strings.Join(lines, "; "), true, ackRef{})
 }

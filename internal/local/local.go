@@ -93,6 +93,25 @@ func readJSON(path string, v any) error {
 	return json.Unmarshal(b, v)
 }
 
+// withLock runs fn under an exclusive lock on <home>/.lock: sessions of one user write these
+// files concurrently, and a read-modify-write must not lose another session's update.
+func withLock(fn func() error) error {
+	if err := os.MkdirAll(home(), 0o700); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(filepath.Join(home(), ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if err := lockFile(lf); err != nil {
+		return err
+	}
+	defer unlockFile(lf)
+	return fn()
+}
+
+// writeJSON replaces the file atomically through a private temp file in the same folder.
 func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -101,15 +120,32 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp") // 0600
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	_, err = tmp.Write(append(b, '\n'))
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return err
 }
 
 // update loads the folder file, applies fn and saves it (or removes it when empty).
 func update(folder string, fn func(f *folderFile)) error {
+	return withLock(func() error { return updateLocked(folder, fn) })
+}
+
+func updateLocked(folder string, fn func(f *folderFile)) error {
 	p := folderPath(folder)
 	f := folderFile{}
 	if err := readJSON(p, &f); err != nil {
@@ -150,7 +186,7 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 // SessionChats: chats the session joins automatically.
 func SessionChats(folder, sessionID string) ([]Entry, error) {
 	var f folderFile
-	if err := readJSON(folderPath(folder), &f); err != nil {
+	if err := withLock(func() error { return readJSON(folderPath(folder), &f) }); err != nil {
 		return nil, err
 	}
 	if s := f.Sessions[sessionID]; s != nil {
@@ -174,6 +210,15 @@ func RememberChat(folder, sessionID string, e Entry) error {
 			}
 		}
 		s.Chats, s.Used = append(out, e), now()
+	})
+}
+
+// TouchSession marks the session as used now, so pruning keeps the sessions people come back to.
+func TouchSession(folder, sessionID string) error {
+	return update(folder, func(f *folderFile) {
+		if s := f.Sessions[sessionID]; s != nil {
+			s.Used = now()
+		}
 	})
 }
 
@@ -209,15 +254,17 @@ func keysPath() string { return filepath.Join(home(), "nick-keys.json") }
 // NickKey: key of a nick registered from this machine; "" if unknown.
 func NickKey(chatID, nick string) string {
 	keys := map[string]string{}
-	_ = readJSON(keysPath(), &keys)
+	_ = withLock(func() error { return readJSON(keysPath(), &keys) })
 	return keys[chatID+"/"+nick]
 }
 
 func SetNickKey(chatID, nick, key string) error {
-	keys := map[string]string{}
-	if err := readJSON(keysPath(), &keys); err != nil {
-		return err
-	}
-	keys[chatID+"/"+nick] = key
-	return writeJSON(keysPath(), keys)
+	return withLock(func() error {
+		keys := map[string]string{}
+		if err := readJSON(keysPath(), &keys); err != nil {
+			return err
+		}
+		keys[chatID+"/"+nick] = key
+		return writeJSON(keysPath(), keys)
+	})
 }

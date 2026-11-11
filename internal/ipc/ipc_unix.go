@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -22,18 +23,53 @@ func Path() string {
 	return filepath.Join(baseDir(), "broker.sock")
 }
 
+// baseDir: <user cache dir>/ccqc; without a cache dir, a per-user folder in the temp dir.
+// listen checks that the folder is ours and private before using it.
 func baseDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		dir = os.TempDir()
+		return filepath.Join(os.TempDir(), "ccqc-"+strconv.Itoa(os.Getuid()))
 	}
 	return filepath.Join(dir, "ccqc")
+}
+
+// checkPrivateDir: dir belongs to the current user and nobody else can enter it.
+func checkPrivateDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o077 != 0 {
+		return errors.New(dir + " is not a private folder of the current user (want a directory owned by you with mode 0700)")
+	}
+	return nil
+}
+
+// checkSocketOwner refuses to talk to a socket another user created at our path.
+func checkSocketOwner(p string) error {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if fi.Mode()&os.ModeSocket == 0 || !ok || int(st.Uid) != os.Getuid() {
+		return errors.New(p + " is not a socket of the current user")
+	}
+	return nil
+}
+
+func dial(p string, timeout time.Duration) (net.Conn, error) {
+	if err := checkSocketOwner(p); err != nil {
+		return nil, err
+	}
+	return net.DialTimeout("unix", p, timeout)
 }
 
 func Listen() (net.Listener, error) { return listen(Path()) }
 
 func Dial(timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("unix", Path(), timeout)
+	return dial(Path(), timeout)
 }
 
 // SessionPath: per-Claude-Code-session socket between `ccqc mcp` and `ccqc tail`.
@@ -44,15 +80,21 @@ func SessionPath(key int) string {
 func ListenSession(key int) (net.Listener, error) { return listen(SessionPath(key)) }
 
 func DialSession(key int, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("unix", SessionPath(key), timeout)
+	return dial(SessionPath(key), timeout)
 }
 
 // held keeps listener locks open for the life of the process.
 var held []*os.File
 
 func listen(p string) (net.Listener, error) {
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
+	}
+	if dir == baseDir() {
+		if err := checkPrivateDir(dir); err != nil {
+			return nil, err
+		}
 	}
 	// The lock makes "check, remove stale socket, listen" atomic across processes:
 	// without it two starting brokers could each remove the other's socket.

@@ -25,8 +25,9 @@ type Session struct {
 	inbox  []inboxItem
 	seq    int64
 	read   int64
-	quiet  []string // presence lines held until the next message
-	sid    string   // Claude Code session id, learned from the hooks
+	quiet  []string   // presence lines held until the next message
+	sid    string     // Claude Code session id, learned from the hooks
+	auto   *autoState // auto-join of the current sid
 
 	hookMu sync.Mutex // guards hook
 	hook   hookState  // `ccqc wait` rewake hook
@@ -57,7 +58,8 @@ func (s *Session) shutdown() {
 // emit records an event for chat_inbox and pushes it into the session:
 // via the rewake hook if in use, else as a channel notification.
 // Quiet events (presence) don't wake Claude: they ride along with the next loud one.
-func (s *Session) emit(content string, meta map[string]string, line string, quiet bool) {
+// ack names the message to confirm to the broker once the event has actually reached the session.
+func (s *Session) emit(content string, meta map[string]string, line string, quiet bool, ack ackRef) {
 	s.mu.Lock()
 	s.seq++
 	s.inbox = append(s.inbox, inboxItem{s.seq, line})
@@ -75,13 +77,18 @@ func (s *Session) emit(content string, meta map[string]string, line string, quie
 	held := s.quiet
 	s.quiet = nil
 	s.mu.Unlock()
-	if s.route(append(held, line)) {
+	items := make([]pendItem, 0, len(held)+1)
+	for _, l := range held {
+		items = append(items, pendItem{line: l})
+	}
+	if s.route(append(items, pendItem{line: line, ack: ack})) {
 		return
 	}
 	if len(held) > 0 {
 		meta["presence"] = strings.Join(held, "; ")
 	}
 	s.notify(content, meta)
+	ack.confirm()
 }
 
 func (s *Session) get(chat string) (*chatConn, error) {

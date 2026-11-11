@@ -3,6 +3,7 @@ package local
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -87,5 +88,50 @@ func TestNickKeys(t *testing.T) {
 	}
 	if NickKey("c1", "alice") != "k1" || NickKey("c2", "alice") != "" {
 		t.Fatal("keys must be per chat and nick")
+	}
+}
+
+func TestConcurrentWritersLoseNothing(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	folder := t.TempDir()
+	const n = 24
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*n)
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		go func() { // sessions of one folder remembering chats at the same time
+			defer wg.Done()
+			errs <- RememberChat(folder, fmt.Sprintf("s%d", i), Entry{Token: "dev.x", Name: fmt.Sprintf("n%d", i)})
+		}()
+		go func() { // and nick keys of one user being stored
+			defer wg.Done()
+			errs <- SetNickKey("chat", fmt.Sprintf("n%d", i), fmt.Sprintf("key%d", i))
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		if got := names(t, folder, fmt.Sprintf("s%d", i)); len(got) != 1 {
+			t.Fatalf("session s%d lost its chat: %v", i, got)
+		}
+		if got := NickKey("chat", fmt.Sprintf("n%d", i)); got != fmt.Sprintf("key%d", i) {
+			t.Fatalf("nick key n%d = %q", i, got)
+		}
+	}
+}
+
+func TestTouchSessionOnlyTouchesExisting(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	folder := t.TempDir()
+	if err := TouchSession(folder, "nope"); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(t, folder, "nope"); len(got) != 0 {
+		t.Fatalf("touch created a session: %v", got)
 	}
 }

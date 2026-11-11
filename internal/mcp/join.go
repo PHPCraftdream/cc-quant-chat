@@ -51,14 +51,17 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 		return "", err
 	}
 	var w proto.Welcome
-	if err := conn.Call("join", proto.JoinArgs{Token: token, Name: name, Key: key}, &w); err != nil {
+	if err := conn.Call("join", proto.JoinArgs{Token: token, Name: name, Key: key, Proto: proto.ProtoVersion}, &w); err != nil {
 		conn.Close()
 		return "", err
 	}
+	keyNote := ""
 	if w.Key != "" {
 		key = w.Key
 		if err := local.SetNickKey(chatID, name, key); err != nil {
-			log.Printf("save nick key: %v", err) // nick still works for this session
+			log.Printf("save nick key: %v", err)
+			// The nick works for this session only; after that its key is lost.
+			keyNote = fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that `ccqc nick reset - %s` (token on stdin) is needed to use it again.\n\n", name, err, name)
 		}
 	}
 	cc := &chatConn{s: s, local: lname, token: token, name: name, key: key, conn: conn,
@@ -72,8 +75,8 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 	}
 	s.chats[lname] = cc
 	s.mu.Unlock()
-	go cc.run(conn)
 
+	// The backlog is handled before live events are read, so ids stay in order for the dedupe.
 	remembered := ""
 	if !auto {
 		remembered = s.remember(local.Entry{Token: token, Name: name, Alias: alias})
@@ -86,10 +89,17 @@ func (s *Session) join(token, name, alias string, auto bool) (string, error) {
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
 		}
+		go cc.run(conn)
 		return "", nil
 	}
+	if n := len(w.Backlog); n > 0 && w.Backlog[n-1].Msg != nil { // shown in the result below
+		cc.fresh(w.Backlog[n-1].Msg.ID)
+		defer ackRef{cc, w.Backlog[n-1].Msg.ID}.confirm()
+	}
+	go cc.run(conn)
 
 	var b strings.Builder
+	b.WriteString(keyNote)
 	if w.Warning != "" {
 		b.WriteString("warning: " + w.Warning + "\n\n")
 	}
@@ -127,41 +137,4 @@ func (s *Session) sessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sid
-}
-
-// setSessionID learns the Claude Code session id from a hook. A hook talking to us means the
-// rewake hook is configured: from now on events wait for it instead of going out as channel
-// notifications. The first id starts the auto-join; a later id (after /clear) takes over
-// the remembered chats.
-func (s *Session) setSessionID(sid string) {
-	s.hookMu.Lock()
-	s.hook.used = true
-	s.hookMu.Unlock()
-	s.mu.Lock()
-	old := s.sid
-	s.sid = sid
-	s.mu.Unlock()
-	switch {
-	case old == sid:
-	case old == "":
-		go s.autoJoin(sid)
-	default:
-		if err := local.MoveSession(local.ProjectDir(), old, sid); err != nil {
-			log.Printf("move session chats: %v", err)
-		}
-	}
-}
-
-// autoJoin enters the chats remembered for the session.
-func (s *Session) autoJoin(sid string) {
-	entries, err := local.SessionChats(local.ProjectDir(), sid)
-	if err != nil {
-		log.Printf("auto-join: %v", err)
-		return
-	}
-	for _, e := range entries {
-		if _, err := s.join(e.Token, e.Name, e.Alias, true); err != nil {
-			s.emit("", nil, fmt.Sprintf("[/%s] auto-join as @%s failed: %v", e.Local(), e.Name, err), true)
-		}
-	}
 }

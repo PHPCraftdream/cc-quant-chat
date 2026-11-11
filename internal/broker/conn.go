@@ -11,6 +11,9 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
+// unjoinedWait: how long a connection may stay without joining a chat.
+const unjoinedWait = 30 * time.Second
+
 type conn struct {
 	nc   net.Conn
 	out  chan []byte
@@ -86,10 +89,17 @@ func (b *Broker) serve(nc net.Conn) {
 	defer b.serving.Done()
 	c := &conn{nc: nc, out: make(chan []byte, outQueue), done: make(chan struct{})}
 	b.mu.Lock()
+	if b.stopping.Load() { // shutdown already collected its connections: don't outlive it
+		b.mu.Unlock()
+		nc.Close()
+		return
+	}
 	b.active++
 	b.conns[c] = true
 	b.mu.Unlock()
 	go c.writer()
+	// A connection that never joins (and never pings) must not hold a slot forever.
+	_ = nc.SetReadDeadline(time.Now().Add(unjoinedWait))
 
 	sc := bufio.NewScanner(nc)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -102,7 +112,11 @@ func (b *Broker) serve(nc net.Conn) {
 		b.mu.Lock()
 		data, perr := b.handle(c, &f)
 		c.reply(f.ID, data, perr) // under lock: reply precedes later events
+		joined := c.m != nil
 		b.mu.Unlock()
+		if joined && f.Op == "join" {
+			_ = nc.SetReadDeadline(time.Time{})
+		}
 		if f.Op == "leave" && perr == nil {
 			break
 		}
@@ -117,7 +131,9 @@ func (b *Broker) serve(nc net.Conn) {
 	if c.m != nil && c.m.conn == c {
 		c.m.conn = nil
 		c.m.offline = time.Now()
-		c.ch.markSeen(c.m.name)
+		if !c.m.acks {
+			c.ch.markSeen(c.m.name)
+		}
 		b.presence(c.ch, nil, c.m.name, c.m.name+" disconnected")
 	}
 	b.mu.Unlock()

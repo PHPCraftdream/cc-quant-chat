@@ -17,6 +17,7 @@ const (
 	RoomCommon = "common"
 	RoomDirect = "direct"
 	MaxText    = 8192
+	MaxTopic   = 200
 	secretLen  = 32
 )
 
@@ -90,6 +91,23 @@ type JoinArgs struct {
 	Token string `json:"token"`
 	Name  string `json:"name"`
 	Key   string `json:"key,omitempty"` // nick key, required once the nick is registered
+	// Proto: protocol level of the client. 2+ confirms delivery with "ack"; the broker then
+	// advances the nick's read cursor only on ack, not when the connection ends.
+	Proto int `json:"proto,omitempty"`
+}
+
+// ProtoVersion is the protocol level this build speaks.
+const ProtoVersion = 2
+
+// NickResetArgs: free a registered nick whose key is lost, so the next join binds a new key.
+type NickResetArgs struct {
+	Token string `json:"token"`
+	Name  string `json:"name"`
+}
+
+// AckArgs: everything visible to the nick up to message ID was delivered to the session.
+type AckArgs struct {
+	ID int64 `json:"id"`
 }
 
 // TimelineArgs: everything visible to you that was sent by or to Member (default: you).
@@ -207,6 +225,7 @@ type Welcome struct {
 // BrokerInfo: reply to "ping"; shown by `ccqc broker status`.
 type BrokerInfo struct {
 	Version string `json:"version"`
+	Proto   int    `json:"proto,omitempty"` // protocol level; 0 = a broker from before levels existed
 	PID     int    `json:"pid"`
 	Started string `json:"started"`
 	Chats   int    `json:"chats"`   // loaded chats

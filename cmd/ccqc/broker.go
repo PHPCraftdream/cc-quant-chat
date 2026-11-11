@@ -108,10 +108,15 @@ func stopBroker() error {
 	for time.Now().Before(deadline) {
 		probe, err := client.Dial()
 		if err != nil {
-			fmt.Printf("broker pid %d stopped\n", info.PID)
-			return nil
+			// The endpoint is gone, but the process still closes the database (and on Unix holds
+			// the lock file); the next broker can't take over before it exits.
+			if info.PID == 0 || !pidAlive(info.PID) {
+				fmt.Printf("broker pid %d stopped\n", info.PID)
+				return nil
+			}
+		} else {
+			probe.Close()
 		}
-		probe.Close()
 		time.Sleep(150 * time.Millisecond)
 	}
 	return fmt.Errorf("broker pid %d did not stop within 10s", info.PID)

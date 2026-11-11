@@ -145,11 +145,20 @@ and nothing is delivered twice. Without either, `chat_inbox` returns what arrive
 A join is remembered for **that session** (by its Claude Code session id):
 `claude --resume` rejoins the same chats under the same nick; a new session starts clean;
 after `/clear` the session keeps its chats; `chat_leave` forgets the chat for the session.
+Switching to another session inside one Claude Code process (`/resume`) leaves the old
+session's chats (they stay remembered for it) and joins the new session's. What the join
+at session start came to is reported to Claude honestly: joined, or not joined and why.
 
 A nick is required. The first join registers it in the chat and binds it to a key kept in
 the user's ccqc config, so nobody else can take the nick and read its direct messages; two
 sessions can't be online under one nick. Every join brings what was missed while away
 (up to 100 newest; the rest via `chat_timeline` / `chat_history`).
+
+If the key of a nick is lost on this machine (the nick shows as taken although it is
+yours), `ccqc nick reset - <nick>` (token on stdin) frees it: history and rooms stay, the next join
+binds a new key. It works only while the nick is offline. **Anyone holding the chat token
+can do this to an offline nick** and then read its direct-message history, so the chat is
+told when a key is reset; treat the token like the chat's password.
 
 ### Addresses
 
@@ -189,9 +198,11 @@ own direct dialogs. Message ids are per chat.
   can't start at once). A chat is identified by `SHA-256(token)`; the token is never stored.
 - **Storage:** SQLite in WAL mode (pure-Go driver, no cgo) at `CCQC_DB`, default
   `<user config dir>/ccqc/ccqc.db` (`%APPDATA%\ccqc\ccqc.db` on Windows): chats, nicks (key
-  hashes only), rooms, membership, messages (text as is; the file is readable by the user
-  only). If the database can't be opened, the broker runs in memory and every join shows a
-  warning; `CCQC_STORE=memory` chooses that on purpose.
+  hashes only), rooms, membership, messages (text as is; the file is created private to
+  the user). If the database can't be opened or migrated the broker does not start (see
+  `broker.log`): running on without it would silently lose history and nick keys. A chat
+  whose history can't be read is not joined, and a message or room change that can't be
+  stored is refused, not delivered. `CCQC_STORE=memory` runs without saving, on purpose.
 - **Migrations:** `internal/store/sqlite/migrations/NNNN_name.sql`, applied by the broker
   on start (`internal/migrate`): each in its own transaction, recorded with a checksum in
   `schema_migrations`. Editing an applied migration or opening a database migrated by a
@@ -199,13 +210,24 @@ own direct dialogs. Message ids are per chat.
   file. `ccqc db path|status|migrate`.
 - **Presence:** a disconnected member stays present for 60 s (`CCQC_GRACE`), then goes
   offline; nick, rooms and history stay.
+- **Delivery:** each nick has a read cursor. It moves when the session confirms delivery
+  (the rewake hook took the batch, a channel notification was sent, or the join result
+  showed the backlog), not when a connection ends. After a lost connection, a broker
+  restart or a hook that died, what was not confirmed is delivered again and repeats are
+  dropped by message id. The one gap left: a batch handed to a hook process that is killed
+  before it prints; `chat_inbox` and `chat_timeline` cover that. Older clients without
+  confirmations keep the old behavior (everything counts as delivered on disconnect).
 - **User config** (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — per
   folder and session id, the chats each session rejoins (with tokens; the 50 most recently
-  used sessions are kept); `nick-keys.json` — keys of your nicks.
+  used sessions are kept); `nick-keys.json` — keys of your nicks. Writes go through a lock
+  file and an atomic replace, so sessions running at once don't lose each other's updates.
+- **Local endpoints:** the broker's pipe/socket is checked before use: on Windows the pipe
+  must be owned by you (or Administrators), on Unix the socket and its folder must belong
+  to you; anything else is refused, so a program of another user can't pose as the broker.
 - **Hooks ↔ MCP server:** they find each other through a local session pipe named after
   their common parent, the Claude Code process (`ccqc session` shows it). The rewake
-  waiter ends itself after `CCQC_WAIT_MAX` (default 23h, below the hook timeout); the next
-  turn re-arms it.
+  waiter ends itself after `CCQC_WAIT_MAX` (default 23h, below the hook's 24h timeout, so
+  it ends cleanly); the next turn re-arms it.
 
 Environment: `CCQC_PIPE` (pipe name or path), `CCQC_SOCK` (Unix), `CCQC_HOME`, `CCQC_DB`,
 `CCQC_STORE=memory`, `CCQC_BROKER_IDLE`, `CCQC_GRACE`, `CCQC_WAIT_MAX` (Go durations,
@@ -218,7 +240,8 @@ go build -o plugin/bin/ ./cmd/ccqc   # the build this repository's folder setup 
 gofmt -l . && go vet ./... && go test ./... && go run ./tools/linelimit
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same on Windows and Ubuntu, plus the installers.
+CI (`.github/workflows/ci.yml`) runs the same on Windows and Ubuntu (plus `go test -race`
+on Ubuntu) and the installers.
 `tools/linelimit` fails on any source file longer than 500 lines. On Windows a rebuild of
 `plugin/bin/ccqc.exe` fails while a session in this folder (or a broker) runs it: run
 `ccqc broker stop` and close those sessions first, or use `install.cmd`, which handles a
@@ -230,7 +253,11 @@ locked binary.
   context; older ones stay in the database but aren't served yet.
 - The token ends up in the model's context and in the session transcript on disk; it is
   also stored in the user's ccqc config for rejoining. Don't share it outside the chat.
-- Limits: 8 KiB per message, 30 messages per minute per member.
+- Limits: 8 KiB per message; per nick (not reset by leaving and rejoining) 30 messages and
+  60 room/role changes per minute; topics up to 200 bytes; 100 rooms per chat.
+- Migrations that rebuild tables other tables point to start with
+  `-- ccqc:foreign-keys=off`; they run with foreign keys off on one connection and must pass
+  `PRAGMA foreign_key_check`. Checksums ignore line endings (`*.sql` is pinned to LF).
 
 ## License
 

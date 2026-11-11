@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	histCap     = 10000 // messages kept in memory per room/dialog
-	rateLimit   = 30    // messages per minute per member
+	histCap     = store.ThreadWindow // messages kept in memory per room/dialog
+	rateLimit   = 30                 // messages per minute per nick (kept across leave/join)
+	ctlLimit    = 60                 // room and role changes per minute per nick
+	maxRooms    = 100                // rooms per chat
 	outQueue    = 1024
 	joinRecent  = 20
 	historyMax  = 500
@@ -36,6 +38,7 @@ type Broker struct {
 	warning   string // set when history can't be saved; shown to every joiner
 	chats     map[string]*chat
 	conns     map[*conn]bool
+	hits      map[string][]time.Time // rate limiter: chat/nick/class → recent actions
 	active    int
 	idleAt    time.Time
 	idle      time.Duration
@@ -69,7 +72,7 @@ type member struct {
 	role    string
 	conn    *conn
 	offline time.Time
-	sent    []time.Time
+	acks    bool // the client confirms delivery with "ack" (proto 2+)
 }
 
 type role struct {
@@ -84,20 +87,24 @@ type room struct {
 }
 
 func Run() error {
-	ln, err := ipc.Listen()
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", ipc.Path(), err)
-	}
 	b := &Broker{
 		chats:   map[string]*chat{},
 		conns:   map[*conn]bool{},
+		hits:    map[string][]time.Time{},
 		idleAt:  time.Now(),
 		idle:    envDur("CCQC_BROKER_IDLE", 30*time.Minute),
 		grace:   envDur("CCQC_GRACE", 60*time.Second),
 		started: time.Now(),
-		ln:      ln,
 	}
-	b.openStore()
+	if err := b.openStore(); err != nil {
+		return err
+	}
+	ln, err := ipc.Listen()
+	if err != nil {
+		b.closeStore()
+		return fmt.Errorf("listen %s: %w", ipc.Path(), err)
+	}
+	b.ln = ln
 	log.Printf("broker: %s listening on %s (pid %d)", version.Version, ipc.Path(), os.Getpid())
 	go b.janitor()
 	for {
@@ -121,11 +128,15 @@ func Run() error {
 	case <-time.After(5 * time.Second):
 		log.Printf("broker: some connections did not finish in time")
 	}
+	b.closeStore()
+	log.Printf("broker: stopped (%v)", b.reason.Load())
+	return nil
+}
+
+func (b *Broker) closeStore() {
 	if c, ok := b.store.(interface{ Close() error }); ok {
 		_ = c.Close()
 	}
-	log.Printf("broker: stopped (%v)", b.reason.Load())
-	return nil
 }
 
 // shutdown stops accepting and closes every connection; clients reconnect to the next
@@ -158,29 +169,29 @@ func (b *Broker) info() proto.BrokerInfo {
 		}
 	}
 	return proto.BrokerInfo{
-		Version: version.Version, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
+		Version: version.Version, Proto: proto.ProtoVersion, PID: os.Getpid(), Started: b.started.UTC().Format(time.RFC3339),
 		Chats: len(b.chats), Clients: clients, Store: b.storeDesc, Warning: b.warning,
 	}
 }
 
 // openStore: SQLite at sqlite.DefaultPath(), or memory with CCQC_STORE=memory.
-// If the database can't be opened the broker still runs, in memory, and warns every joiner.
-func (b *Broker) openStore() {
+// A database that can't be opened or migrated stops the broker: running on without it would
+// silently lose history and nick keys. Memory is only for those who ask for it.
+func (b *Broker) openStore() error {
 	if os.Getenv("CCQC_STORE") == "memory" {
 		b.store, b.storeDesc = store.Memory{}, "memory (CCQC_STORE=memory)"
+		b.warning = "chat history is not saved: the broker runs with CCQC_STORE=memory"
 		log.Printf("broker: store: %s", b.storeDesc)
-		return
+		return nil
 	}
 	path := sqlite.DefaultPath()
 	db, err := sqlite.Open(path)
 	if err != nil {
-		b.store, b.storeDesc = store.Memory{}, "memory (database failed)"
-		b.warning = fmt.Sprintf("chat history is not saved: database %s: %v", path, err)
-		log.Printf("broker: %s", b.warning)
-		return
+		return fmt.Errorf("database %s: %w (set CCQC_STORE=memory to run without saving anything)", path, err)
 	}
 	b.store, b.storeDesc = db, "sqlite "+path
 	log.Printf("broker: store: %s", b.storeDesc)
+	return nil
 }
 
 func envDur(key string, def time.Duration) time.Duration {
@@ -208,6 +219,7 @@ func (b *Broker) janitor() {
 				}
 			}
 		}
+		b.pruneHits(now)
 		stop := b.active == 0 && now.Sub(b.idleAt) > b.idle
 		b.mu.Unlock()
 		if stop {
@@ -231,26 +243,36 @@ func newChat(id, name string) *chat {
 }
 
 // loadChat creates the in-memory chat and replays its stored records.
-func (b *Broker) loadChat(id, name string) *chat {
+// A chat whose history can't be read is not served: working from a partial state would hand
+// out nick keys that already exist and reuse message ids.
+func (b *Broker) loadChat(id, name string) (*chat, error) {
 	ch := newChat(id, name)
 	ch.store = b.store
 	recs, err := b.store.Load(id, name)
 	if err != nil {
 		log.Printf("broker: chat %s#%s: load: %v", name, id[:8], err)
+		return nil, err
 	}
 	for _, r := range recs {
 		ch.replay(r)
 	}
-	return ch
+	return ch, nil
 }
 
 func (ch *chat) replay(r store.Record) {
 	switch r.T {
 	case "nick":
 		ch.nicks[r.Nick] = &nick{hash: r.Hash, seen: r.ID}
+		ch.rooms[proto.RoomCommon].members[r.Nick] = true // registering a nick puts it in @common
 	case "seen":
 		if n := ch.nicks[r.Nick]; n != nil {
 			n.seen = r.ID
+		}
+	case "maxid":
+		ch.nextID = max(ch.nextID, r.ID)
+	case "nick_key":
+		if n := ch.nicks[r.Nick]; n != nil {
+			n.hash = r.Hash
 		}
 	case "room":
 		if ch.rooms[r.Room] == nil {
@@ -275,20 +297,38 @@ func (ch *chat) replay(r store.Record) {
 	}
 }
 
-// save hands a record to the store backend.
-func (ch *chat) save(r store.Record) {
+// save hands a record to the store backend. Callers change memory only after it succeeds.
+func (ch *chat) save(r store.Record) *proto.Error {
 	if ch.store == nil {
-		return
+		return nil
 	}
 	if err := ch.store.Append(ch.id, r); err != nil {
 		log.Printf("broker: chat %s#%s: store: %v", ch.name, ch.id[:8], err)
+		return proto.Errf("store_failed", "history could not be saved (%v); nothing was changed, try again", err)
 	}
+	return nil
 }
 
-// markSeen remembers that everything so far was delivered to the nick live.
+// ack moves the nick's read cursor forward: everything up to id reached the session.
+func (ch *chat) ack(name string, id int64) *proto.Error {
+	n := ch.nicks[name]
+	if n == nil || id <= n.seen {
+		return nil
+	}
+	if id > ch.nextID {
+		return proto.Errf("bad_args", "ack %d is beyond the last message %d", id, ch.nextID)
+	}
+	if e := ch.save(store.Record{T: "seen", Nick: name, ID: id}); e != nil {
+		return e
+	}
+	n.seen = id
+	return nil
+}
+
+// markSeen is the cursor for clients that don't ack (older versions): at disconnect,
+// everything sent so far counts as delivered.
 func (ch *chat) markSeen(name string) {
 	if n := ch.nicks[name]; n != nil && n.seen != ch.nextID {
-		n.seen = ch.nextID
-		ch.save(store.Record{T: "seen", Nick: name, ID: n.seen})
+		_ = ch.ack(name, ch.nextID)
 	}
 }

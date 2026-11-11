@@ -26,9 +26,13 @@ if (inside && existsSync(repoExe)) {
   mcpCommand = `./${toSlash(relPath)}`;
   hookCommand = `\${CLAUDE_PROJECT_DIR}/${toSlash(relPath)}`;
   using = `this repository's build (${mcpCommand})`;
-} else if (globalCcqc()) {
+} else if (globalCcqc().path && globalCcqc().onPath) {
   mcpCommand = hookCommand = "ccqc";
-  using = `the installed ccqc (${globalCcqc()})`;
+  using = `the installed ccqc (${globalCcqc().path})`;
+} else if (globalCcqc().path) {
+  // Installed but its folder is not on PATH: a bare name would not start, so the path is written.
+  mcpCommand = hookCommand = toSlash(globalCcqc().path.replace(/\.exe$/i, ""));
+  using = `${mcpCommand} (the installed ccqc is not on PATH; add its folder to PATH to keep machine paths out of .mcp.json)`;
 } else if (existsSync(repoExe)) {
   mcpCommand = hookCommand = toSlash(repoBare);
   using = `${mcpCommand} (install ccqc globally to keep machine paths out of this folder)`;
@@ -40,6 +44,10 @@ if (inside && existsSync(repoExe)) {
 const mcpPath = join(folder, ".mcp.json");
 const mcp = readJSON(mcpPath);
 mcp.mcpServers ??= {};
+const before = mcp.mcpServers.ccqc;
+if (before && (before.command !== mcpCommand || JSON.stringify(before.args) !== JSON.stringify(["mcp"]))) {
+  console.warn(`ccqc: replacing the existing MCP server "ccqc" in .mcp.json: ${JSON.stringify(before)}`);
+}
 mcp.mcpServers.ccqc = { command: mcpCommand, args: ["mcp"] };
 writeJSON(mcpPath, mcp);
 
@@ -65,16 +73,18 @@ console.log(`ccqc: folder ${folder} set up.
 
 // --- helpers ---
 
-// globalCcqc: path of an installed ccqc (on PATH, or in the installers' default place); "" if none.
+// globalCcqc: an installed ccqc: {path, onPath}; path is "" if there is none. Looks on PATH
+// first, then in the installers' default place.
 function globalCcqc() {
   const name = isWin ? "ccqc.exe" : "ccqc";
   const dirs = (process.env.PATH || "").split(isWin ? ";" : ":").filter(Boolean);
+  const pathDirs = dirs.length;
   dirs.push(isWin ? join(process.env.LOCALAPPDATA || "", "Programs", "ccqc") : join(process.env.HOME || "", ".local", "bin"));
-  for (const d of dirs) {
+  for (const [i, d] of dirs.entries()) {
     const p = join(d, name);
-    if (resolve(p) !== resolve(repoExe) && existsSync(p)) return p;
+    if (resolve(p) !== resolve(repoExe) && existsSync(p)) return { path: p, onPath: i < pathDirs };
   }
-  return "";
+  return { path: "", onPath: false };
 }
 
 function fail(msg) {

@@ -17,16 +17,18 @@ import (
 // hookInput: the fields of Claude Code's hook JSON that ccqc uses.
 type hookInput struct {
 	SessionID string `json:"session_id"`
+	Source    string `json:"source"` // SessionStart: startup | resume | clear | compact | fork
 }
 
 // readHookInput reads the hook JSON from stdin; empty on timeout or bad input.
+// The object is handed back as soon as it is decoded; the rest of stdin is drained afterwards.
 func readHookInput() hookInput {
 	ch := make(chan hookInput, 1)
 	go func() {
 		var in hookInput
 		_ = json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&in)
-		_, _ = io.Copy(io.Discard, os.Stdin)
 		ch <- in
+		_, _ = io.Copy(io.Discard, os.Stdin)
 	}()
 	select {
 	case in := <-ch:
@@ -65,24 +67,40 @@ func RunHello() {
 		return
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := fmt.Fprintf(c, "hello %s\n", in.SessionID); err != nil {
+	_ = c.SetDeadline(time.Now().Add(helloWait + 4*time.Second))
+	source := in.Source
+	if source == "" {
+		source = "-"
+	}
+	if _, err := fmt.Fprintf(c, "hello %s %s\n", in.SessionID, source); err != nil {
 		return
 	}
-	var chats []string
+	var joined, failed, pending []string
 	sc := bufio.NewScanner(c)
 	for sc.Scan() {
-		if line := strings.TrimSpace(sc.Text()); line != "" {
-			chats = append(chats, line)
+		kind, rest, _ := strings.Cut(strings.TrimSpace(sc.Text()), " ")
+		switch kind {
+		case "ok":
+			joined = append(joined, rest)
+		case "fail":
+			failed = append(failed, rest)
+		case "pending":
+			pending = append(pending, rest)
 		}
 	}
-	if len(chats) == 0 {
-		return
+	if len(joined) > 0 {
+		fmt.Printf("ccqc chat: this session is in %s (joined automatically). Incoming chat messages wake you by "+
+			"themselves (as \"ccqc: N new chat event(s)\"). Send with chat_send to /<chat>/@common[/@nick], "+
+			"/<chat>/@<room>[/@nick] or /<chat>/@direct/@nick; catch up with chat_timeline, chat_history, chat_search.\n",
+			strings.Join(joined, ", "))
 	}
-	fmt.Printf("ccqc chat: this session is in %s (joined automatically). Incoming chat messages wake you by "+
-		"themselves (as \"ccqc: N new chat event(s)\"). Send with chat_send to /<chat>/@common[/@nick], "+
-		"/<chat>/@<room>[/@nick] or /<chat>/@direct/@nick; catch up with chat_timeline, chat_history, chat_search.\n",
-		strings.Join(chats, ", "))
+	if len(failed) > 0 {
+		fmt.Printf("ccqc chat: NOT joined: %s. Tell the user; they can retry with /quant-join <token> <nick> "+
+			"(the token is not stored in this conversation) or check `ccqc broker status`.\n", strings.Join(failed, "; "))
+	}
+	if len(pending) > 0 {
+		fmt.Println("ccqc chat: joining this session's chats is still in progress (chat_state shows where it stands).")
+	}
 }
 
 // RunWait is the asyncRewake hook: blocks until this session's next chat events,
