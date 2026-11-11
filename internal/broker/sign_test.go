@@ -12,8 +12,8 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-// peer is a proto 4 client: it joins with its nick key and signs its writes.
-type peer struct {
+// signedPeer is a proto 4 client: it joins with its nick key and signs its writes.
+type signedPeer struct {
 	*client
 	priv ed25519.PrivateKey
 	sg   *cl.Signer
@@ -22,17 +22,17 @@ type peer struct {
 
 // keyedJoin joins the way the MCP client does: challenge, signature, join. secret is the nick's
 // old secret, presented to move a legacy nick to the key.
-func (b *Broker) keyedJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey, secret string) (*peer, error) {
+func (b *Broker) keyedJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey, secret string) (*signedPeer, error) {
 	t.Helper()
 	c := b.connect(t)
 	_, id, _ := proto.ParseToken(tok)
-	p := &peer{client: c, priv: priv}
+	p := &signedPeer{client: c, priv: priv}
 	var err error
 	p.sg, err = cl.JoinSigned(c.callE, proto.JoinArgs{Token: tok, Name: nick, Key: secret}, priv, id, &p.w)
 	return p, err
 }
 
-func (b *Broker) mustJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey) *peer {
+func (b *Broker) mustJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey) *signedPeer {
 	t.Helper()
 	p, err := b.keyedJoin(t, tok, nick, priv, "")
 	if err != nil || p.sg == nil {
@@ -42,7 +42,7 @@ func (b *Broker) mustJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKe
 }
 
 // do signs a write at the chat's current clock and sends it; it returns the clock value used.
-func (p *peer) do(op, kind string, args proto.Stamper, out any) (int64, error) {
+func (p *signedPeer) do(op, kind string, args proto.Stamper, out any) (int64, error) {
 	p.t.Helper()
 	var r proto.ClockReply
 	if err := p.callE("clock", nil, &r); err != nil {
@@ -220,7 +220,7 @@ func TestThreeWritersAtOnceAllLandAndTheClockGrowsStrictly(t *testing.T) {
 	b, path := boardBroker(t)
 	tok, id := token(t)
 	names := []string{"alice", "bob", "carol"}
-	var peers []*peer
+	var peers []*signedPeer
 	for _, n := range names {
 		peers = append(peers, b.mustJoin(t, tok, n, newKey(t)))
 	}

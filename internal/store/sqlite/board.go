@@ -25,7 +25,11 @@ func (d *DB) Do(chatID string, fn func(tx store.BoardTx) error) error {
 	if err := fn(&boardTx{tx: tx, rec: recorder{c: c, tx: tx}}); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	d.notify(chatID)
+	return nil
 }
 
 // View runs fn on a consistent snapshot; nothing it does is kept.

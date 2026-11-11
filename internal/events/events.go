@@ -3,9 +3,14 @@
 // Everything else the broker keeps (messages, the board, documents, nicks, rooms) is a projection
 // of the events and can be rebuilt from them.
 //
-// An event has two kinds of content. Payload is what the author sent and signed (canonical JSON
-// of the request); Assigned is what the node added: ids it issued, the rows it wrote. The
-// author's signature covers the payload (see proto.EventMessage); the node's covers everything.
+// An event has two kinds of content. Payload is what the author sent and signed (canonical JSON of
+// the request); Assigned is what the node added: ids it issued, the rows it wrote. The author's
+// signature covers the payload (see proto.EventMessage); the node's covers everything.
+//
+// The node signs a hash in which the four contents (payload, author key, author signature,
+// assigned) enter as hashes of their own. An event can therefore be passed on with those four
+// replaced by their hashes (Redact): its chain and its node signature still verify, and what it
+// says about itself (kind, clock, time) is checked, but the contents are not given away.
 package events
 
 import (
@@ -20,20 +25,29 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
+// Hidden holds the hashes (hex SHA-256) of the contents of a redacted event.
+type Hidden struct {
+	Payload  string `json:"payload"`
+	Author   string `json:"author"`
+	Sig      string `json:"sig"`
+	Assigned string `json:"assigned"`
+}
+
 // Event is one record of the journal of a chat on one node.
 type Event struct {
-	ChatID    string
-	Origin    string // the node that accepted the event
-	Seq       int64  // 1, 2, 3 ... per (chat, origin)
-	Prev      string // ID of the previous event of this (chat, origin); "" for the first
-	Lamport   int64  // the chat's logical clock
-	Kind      string // msg, nick.*, room.*, config.set, a board op, doc.<op>, import.*
-	Payload   string // canonical JSON signed by the author
-	AuthorPub string // base64 Ed25519 key of the author; "" for an unsigned event
-	Sig       string // the author's signature over proto.EventMessage; "" for an unsigned event
-	Assigned  string // canonical JSON of what the node issued or wrote
-	TS        string // RFC 3339
-	NodeSig   string // the node's signature over NodeMessage
+	ChatID    string  `json:"chat"`
+	Origin    string  `json:"origin"`               // the node that accepted the event
+	Seq       int64   `json:"seq"`                  // 1, 2, 3 ... per (chat, origin)
+	Prev      string  `json:"prev"`                 // ID of the previous event of this (chat, origin); "" for the first
+	Lamport   int64   `json:"lamport"`              // the chat's logical clock
+	Kind      string  `json:"kind"`                 // msg, nick.*, room.*, config.set, a board op, doc.<op>, import.*
+	Payload   string  `json:"payload,omitempty"`    // canonical JSON signed by the author
+	AuthorPub string  `json:"author_pub,omitempty"` // base64 Ed25519 key of the author; "" for an unsigned event
+	Sig       string  `json:"sig,omitempty"`        // the author's signature over proto.EventMessage; "" for an unsigned event
+	Assigned  string  `json:"assigned,omitempty"`   // canonical JSON of what the node issued or wrote
+	TS        string  `json:"ts"`                   // RFC 3339
+	NodeSig   string  `json:"node_sig"`             // the node's signature over NodeMessage
+	Hidden    *Hidden `json:"hidden,omitempty"`     // set for a redacted event: hashes of the four contents
 }
 
 func putField(buf []byte, s string) []byte {
@@ -41,20 +55,44 @@ func putField(buf []byte, s string) []byte {
 	return append(buf, s...)
 }
 
+func hashHex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// Redacted reports whether the contents of the event are hidden.
+func (e Event) Redacted() bool { return e.Hidden != nil }
+
+// Redact returns the event with its four contents replaced by their hashes. A node signature made
+// for the whole event verifies the redacted one just the same.
+func (e Event) Redact() Event {
+	if e.Redacted() {
+		return e
+	}
+	r := e
+	r.Hidden = &Hidden{Payload: hashHex(e.Payload), Author: hashHex(e.AuthorPub), Sig: hashHex(e.Sig), Assigned: hashHex(e.Assigned)}
+	r.Payload, r.AuthorPub, r.Sig, r.Assigned = "", "", "", ""
+	return r
+}
+
 // Rest is the hash of every field but origin, seq, prev and the node's signature: those four are
 // signed next to it, so the signature covers all of them.
 func (e Event) Rest() []byte {
+	h := e.Hidden
+	if h == nil {
+		h = &Hidden{Payload: hashHex(e.Payload), Author: hashHex(e.AuthorPub), Sig: hashHex(e.Sig), Assigned: hashHex(e.Assigned)}
+	}
 	var buf []byte
 	buf = putField(buf, e.ChatID)
 	buf = putField(buf, fmt.Sprint(e.Lamport))
 	buf = putField(buf, e.Kind)
-	buf = putField(buf, e.Payload)
-	buf = putField(buf, e.AuthorPub)
-	buf = putField(buf, e.Sig)
-	buf = putField(buf, e.Assigned)
 	buf = putField(buf, e.TS)
-	h := sha256.Sum256(buf)
-	return h[:]
+	buf = putField(buf, h.Payload)
+	buf = putField(buf, h.Author)
+	buf = putField(buf, h.Sig)
+	buf = putField(buf, h.Assigned)
+	sum := sha256.Sum256(buf)
+	return sum[:]
 }
 
 // NodeMessage is what a node signs for an event: origin, seq, prev and the hash of the rest.
@@ -89,9 +127,10 @@ func (e Event) VerifyNode(pub ed25519.PublicKey) bool {
 }
 
 // VerifyAuthor checks the author's signature. An event without one (an older client, or an event
-// the node made itself) verifies as unsigned: ok is true, signed false.
+// the node made itself) verifies as unsigned: ok is true, signed false; so does a redacted event,
+// whose author cannot be checked.
 func (e Event) VerifyAuthor() (ok, signed bool) {
-	if e.Sig == "" && e.AuthorPub == "" {
+	if e.Redacted() || (e.Sig == "" && e.AuthorPub == "") {
 		return true, false
 	}
 	pub, err1 := base64.StdEncoding.DecodeString(e.AuthorPub)

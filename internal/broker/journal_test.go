@@ -145,7 +145,7 @@ func runScenario(t *testing.T) (*sqlite.DB, string, string, ed25519.PrivateKey) 
 	steps := []struct {
 		what string
 		a    proto.BoardArgs
-		by   *peer // nil: bob, who signs nothing
+		by   *signedPeer // nil: bob, who signs nothing
 	}{
 		{"sprint.create", proto.BoardArgs{Op: "sprint.create", Name: sp("one"), Goal: sp("ship")}, alice},
 		{"sprint.start", proto.BoardArgs{Op: "sprint.start", ID: 1}, nil},
@@ -175,7 +175,7 @@ func runScenario(t *testing.T) (*sqlite.DB, string, string, ed25519.PrivateKey) 
 	docSteps := []struct {
 		what string
 		a    proto.DocArgs
-		by   *peer
+		by   *signedPeer
 	}{
 		{"put", proto.DocArgs{Op: "put", Path: "/a", Body: "# A\nbody <1>"}, alice},
 		{"append", proto.DocArgs{Op: "append", Path: "/a", Text: "more"}, nil},

@@ -35,6 +35,12 @@ Administrator operations (signed with the owner key; the owner password is typed
                             settings applied without a restart: broker.idle, broker.grace,
                             limits.messages_per_minute, board.manager_role (per chat)
 
+Nodes (other brokers this one exchanges chats with; signed with the owner key; the peer.listen setting
+makes this broker accept nodes; nothing leaves unless a chat is shared):
+  ccqc peer add <host:port> <origin>    a node by the origin shown by its "ccqc broker status"
+  ccqc peer list|remove <origin>
+  ccqc peer share|unshare <chat> <origin>
+
 Documents (the chat's shared page tree, as an ordinary member; token from your sessions' config):
   ccqc doc tree <chat> [prefix]         paths, titles and sizes
   ccqc doc get <chat> <path>            the page to stdout
@@ -100,6 +106,8 @@ func main() {
 		err = runOwner(os.Args[2:])
 	case "role":
 		err = runRole(os.Args[2:])
+	case "peer":
+		err = runPeer(os.Args[2:])
 	case "doc":
 		err = runDoc(os.Args[2:])
 	case "config":

@@ -6,23 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-
-	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 )
 
 // projection is a table the events can rebuild. skip names a column that is the node's own state,
 // not derived from events (the read cursor).
 type projection struct {
 	table string
-	skip  string
+	skip  []string
 }
 
 // In insert order (parents first); a swap deletes in the reverse order.
 var projections = []projection{
-	{"rooms", ""}, {"room_members", ""}, {"nicks", "seen"}, {"messages", ""}, {"board_sprints", ""},
-	{"board_tasks", ""}, {"board_workflow", ""}, {"board_log", ""}, {"board_comments", ""},
-	{"docs", ""}, {"doc_versions", ""}, {"settings", ""},
+	{"rooms", nil}, {"room_members", nil}, {"nicks", []string{"seen", "key_hash"}}, {"messages", nil}, {"board_sprints", nil},
+	{"board_tasks", nil}, {"board_workflow", nil}, {"board_log", nil}, {"board_comments", nil},
+	{"docs", nil}, {"doc_versions", nil}, {"settings", nil},
 }
 
 // RebuildReport: what a rebuild found. Diffs counts, per table, the rows that are in only one of
@@ -54,7 +53,7 @@ func (c *chatDB) complete() (bool, error) {
 	return v == "done", err
 }
 
-func (c *chatDB) columns(schema, table, skip string) ([]string, error) {
+func (c *chatDB) columns(schema, table string, skip []string) ([]string, error) {
 	rows, err := c.db.Query(`SELECT name FROM pragma_table_info(?, ?)`, table, schema)
 	if err != nil {
 		return nil, err
@@ -66,7 +65,7 @@ func (c *chatDB) columns(schema, table, skip string) ([]string, error) {
 		if err := rows.Scan(&n); err != nil {
 			return nil, err
 		}
-		if n != skip {
+		if !slices.Contains(skip, n) {
 			cols = append(cols, n)
 		}
 	}
@@ -159,17 +158,20 @@ func (c *chatDB) replayInto(path string) (int, error) {
 	if _, err := tx.Exec(`INSERT INTO rooms (room) VALUES ('common')`); err != nil {
 		return 0, err
 	}
-	rows, err := c.db.Query(`SELECT origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events
-		ORDER BY lamport, origin, seq`)
+	rows, err := c.db.Query(`SELECT ` + eventCols + ` FROM events ORDER BY ord`)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 	n := 0
 	for rows.Next() {
-		e := events.Event{ChatID: c.id}
-		if err := rows.Scan(&e.Origin, &e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig); err != nil {
+		e, err := scanEvent(c.id, rows)
+		if err != nil {
 			return n, err
+		}
+		if e.Redacted() { // kept for the chain only
+			n++
+			continue
 		}
 		if err := applyEvent(tx, e); err != nil {
 			return n, fmt.Errorf("event %s#%d (%s): %w", e.Origin, e.Seq, e.Kind, err)
@@ -190,14 +192,14 @@ func (c *chatDB) replayInto(path string) (int, error) {
 func (c *chatDB) swapProjections() error {
 	lists := map[string]string{} // read before the transaction: the database has one connection
 	for _, p := range projections {
-		cols, err := c.columns("main", p.table, "")
+		cols, err := c.columns("main", p.table, nil)
 		if err != nil {
 			return err
 		}
 		lists[p.table] = strings.Join(cols, ", ")
 	}
 	return c.inTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`CREATE TEMP TABLE keep_seen AS SELECT nick, seen FROM main.nicks`); err != nil {
+		if _, err := tx.Exec(`CREATE TEMP TABLE keep_seen AS SELECT nick, seen, key_hash FROM main.nicks`); err != nil {
 			return err
 		}
 		for i := len(projections) - 1; i >= 0; i-- {
@@ -210,7 +212,8 @@ func (c *chatDB) swapProjections() error {
 				return fmt.Errorf("write %s: %w", p.table, err)
 			}
 		}
-		if _, err := tx.Exec(`UPDATE main.nicks SET seen = COALESCE((SELECT k.seen FROM keep_seen k WHERE k.nick = main.nicks.nick), seen)`); err != nil {
+		if _, err := tx.Exec(`UPDATE main.nicks SET seen = COALESCE((SELECT k.seen FROM keep_seen k WHERE k.nick = main.nicks.nick), seen),
+			key_hash = COALESCE((SELECT k.key_hash FROM keep_seen k WHERE k.nick = main.nicks.nick), key_hash)`); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE main.chat SET lamport = (SELECT s.lamport FROM shadow.chat s WHERE s.id = main.chat.id)`); err != nil {

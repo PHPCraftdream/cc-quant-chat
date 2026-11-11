@@ -519,6 +519,45 @@ settings are **projections** of the journal; reads still go to them. The read cu
 - **Rollback** to a broker without the journal or without chat files is not supported: copy the
   data directory before updating.
 
+## Exchanging chats with other nodes (`ccqc peer`)
+
+Two brokers can keep the same chat. Nothing leaves a node unless the owner says so:
+
+```
+ccqc config set peer.listen 0.0.0.0:7700     # this broker accepts nodes (default: off; restart to apply)
+ccqc peer add <host:port> <origin>           # a node by the origin its "ccqc broker status" shows
+ccqc peer share <chat> <origin>              # the chat is exchanged with that node (both sides must share it)
+ccqc peer list                               # nodes, what is shared, whether connected or flagged
+ccqc peer unshare <chat> <origin>  /  ccqc peer remove <origin>
+```
+
+All of these except `list` are administrator operations (the owner's password). The chat must exist
+on both nodes (join it on each with the same token) and be shared on both sides; a chat that is not
+shared is not transferred, and a node that was not added cannot connect.
+
+- The link is TLS 1.3 with a self-signed Ed25519 certificate made from `broker.key`; each side
+  checks that the certificate's key is the one its origin was derived from, so a node at the right
+  address with another key is refused.
+- The nodes compare, per chat, the highest `seq` they hold of each origin and send each other what
+  is missing, in the order of the chat's clock, including the events of a third node (a node need
+  not trust the one it hears them from: it checks them itself). New events are pushed at once; a
+  broken connection is made again with a growing pause and catches up.
+- Every event is checked before it is kept: the chain (`prev`), the signature of the node that wrote
+  it, the author's signature, and that the chat's clock does not jump more than 1000 above what is
+  known. A bad event is not stored, the reason goes to the broker's log, and the exchange goes on.
+  Two different events with the same origin and seq (a fork) flag the node: its session ends and
+  it is no longer listened to (`peer list` shows it).
+- What is private goes across **redacted** (a header and hashes: the chain and the node's
+  signature still verify, the content is not readable): direct messages, settings, pinned roles
+  and the snapshots of a pre-journal database (`import.*`, so the board and pages of a chat that
+  was laid out from an old database are not transferred). Who a nick is (name, key) goes whole;
+  the hash of its secret and its read cursor are node state and never leave.
+- **Not supported yet:** direct messages between members of different nodes
+  (they will be refused with an explicit error), and
+  applying the arrived events to the chat's messages, board and pages (the next step: for now
+  the journals are exchanged and verified, the projections follow).
+- `ccqc peer` needs the SQLite store (not `CCQC_STORE=memory`).
+
 ## Cards in the transcript (`quant-ui`)
 
 By default a wake-up shows in Claude Code as a bare "Stop hook feedback" row. The optional

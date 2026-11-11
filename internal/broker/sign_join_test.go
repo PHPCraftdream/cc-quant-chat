@@ -11,7 +11,7 @@ import (
 
 // leaveChat takes the nick out of the chat (the reply comes after it is done), so a join under
 // it is not refused as "online".
-func (p *peer) leaveChat() {
+func (p *signedPeer) leaveChat() {
 	p.t.Helper()
 	if code := p.call("leave", nil, nil); code != "" {
 		p.t.Fatalf("leave: %q", code)

@@ -89,7 +89,7 @@ func (c *chatDB) backfillEvents(key *nodeKey) (int, error) {
 	if err := c.backfillSnapshots(w); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done')`, metaBackfill); err != nil {
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, 'done'), (?, ?)`, metaBackfill, metaJournal, journalVersion); err != nil {
 		return 0, err
 	}
 	return w.count, tx.Commit()
@@ -128,7 +128,7 @@ func (c *chatDB) backfillState(w *chainWriter, ts string) error {
 		return err
 	}
 	for _, n := range nicks {
-		if err := w.simple("nick.register", ts, 0, map[string]any{"nick": n.nick, "pub": n.pub}, map[string]any{"hash": n.hash, "seen": n.seen}); err != nil {
+		if err := w.simple("nick.register", ts, 0, map[string]any{"nick": n.nick, "pub": n.pub}, map[string]any{}); err != nil {
 			return err
 		}
 		if n.role != "" {

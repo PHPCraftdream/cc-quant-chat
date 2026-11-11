@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // registers driver "sqlite"
@@ -84,6 +85,8 @@ type DB struct {
 	key   *nodeKey // signs events; see SetNode
 
 	afterLayoutChat func(i int) error // test hook: called after each chat is laid out
+
+	onEvents atomic.Pointer[func(chatID string)] // see OnEvents
 }
 
 var (

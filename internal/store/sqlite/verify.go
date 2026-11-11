@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
 )
 
 // Issue is one thing Verify found wrong.
@@ -56,7 +54,12 @@ func (d *DB) Verify(chatID string) (VerifyReport, error) {
 }
 
 func (c *chatDB) verify(keys map[string][]byte, rep *VerifyReport) error {
-	rows, err := c.db.Query(`SELECT origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig FROM events ORDER BY origin, seq`)
+	var version string
+	if err := c.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, metaJournal).Scan(&version); err != nil || version != journalVersion {
+		rep.Issues = append(rep.Issues, Issue{Chat: c.id, What: "the journal is in the format of an earlier version: start the broker once, it brings it up to date"})
+		return nil
+	}
+	rows, err := c.db.Query(`SELECT ` + eventCols + ` FROM events ORDER BY origin, seq`)
 	if err != nil {
 		return err
 	}
@@ -64,8 +67,8 @@ func (c *chatDB) verify(keys map[string][]byte, rep *VerifyReport) error {
 	chatEvents := 0
 	lastOrigin, lastSeq, lastID := "", int64(0), ""
 	for rows.Next() {
-		e := events.Event{ChatID: c.id}
-		if err := rows.Scan(&e.Origin, &e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig); err != nil {
+		e, err := scanEvent(c.id, rows)
+		if err != nil {
 			rows.Close()
 			return err
 		}

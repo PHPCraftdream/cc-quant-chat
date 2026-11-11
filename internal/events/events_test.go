@@ -96,3 +96,45 @@ func TestAuthorSignatureIsCheckedOverTheChatOriginKindPayloadAndClock(t *testing
 		t.Error("garbage must not verify")
 	}
 }
+
+func TestARedactedEventKeepsItsIDAndItsNodeSignature(t *testing.T) {
+	pub, priv := keyPair(t)
+	e := sample()
+	e.AuthorPub, e.Sig = "author", "sig"
+	e.Sign(priv)
+	r := e.Redact()
+	if !r.Redacted() || r.Payload != "" || r.AuthorPub != "" || r.Sig != "" || r.Assigned != "" {
+		t.Fatalf("contents are still there: %+v", r)
+	}
+	if r.ID() != e.ID() || !r.VerifyNode(pub) || string(r.Rest()) != string(e.Rest()) {
+		t.Fatal("a redacted event must chain and verify like the whole one")
+	}
+	if ok, signed := r.VerifyAuthor(); !ok || signed {
+		t.Fatalf("the author of a redacted event cannot be checked: ok %v signed %v", ok, signed)
+	}
+	if r.Redact().Hidden != r.Hidden {
+		t.Fatal("redacting twice must change nothing")
+	}
+	// What the event says about itself is still signed.
+	for name, mut := range map[string]func(*Event){
+		"kind": func(e *Event) { e.Kind = "nick.pin" }, "lamport": func(e *Event) { e.Lamport++ }, "ts": func(e *Event) { e.TS = "x" },
+		"seq": func(e *Event) { e.Seq++ }, "prev": func(e *Event) { e.Prev = "z" },
+		"hidden payload": func(e *Event) { h := *e.Hidden; h.Payload = hashHex("other"); e.Hidden = &h },
+	} {
+		c := r
+		mut(&c)
+		if c.VerifyNode(pub) {
+			t.Errorf("a redacted event survives a change of %s", name)
+		}
+	}
+	// A claim about the hidden part is checked when the part is revealed: its hash must be the signed one.
+	whole := r
+	whole.Hidden, whole.Payload, whole.AuthorPub, whole.Sig, whole.Assigned = nil, e.Payload, e.AuthorPub, e.Sig, e.Assigned
+	if !whole.VerifyNode(pub) {
+		t.Fatal("revealing what was hidden must verify")
+	}
+	whole.Payload = "{}"
+	if whole.VerifyNode(pub) {
+		t.Fatal("a revealed payload that is not the hidden one must not verify")
+	}
+}

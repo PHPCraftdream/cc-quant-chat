@@ -44,7 +44,7 @@ func (b *Broker) initNode() error {
 		return err
 	}
 	pub := priv.Public().(ed25519.PublicKey)
-	b.origin = node.Origin(pub)
+	b.origin, b.nodePriv = node.Origin(pub), priv
 	if ns, ok := b.store.(store.NodeStore); ok {
 		if err := ns.RegisterOrigin(b.origin, pub); err != nil {
 			return err

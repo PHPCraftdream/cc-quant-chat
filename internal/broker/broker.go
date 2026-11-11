@@ -17,6 +17,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/ipc"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/peer"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
@@ -47,6 +48,10 @@ type Broker struct {
 	setMu     sync.RWMutex
 	ownerMu   sync.RWMutex
 	ownerOpMu sync.Mutex // one change of the owner at a time
+
+	nodePriv  ed25519.PrivateKey // the node key; with it the broker starts the exchange of chats with other nodes
+	peerMgr   *peer.Manager      // nil without a store that can exchange
+	peerAt    string             // where it accepts other nodes, "" if it does not
 	store     store.Backend
 	storeDesc string
 	warning   string // set when history can't be saved; shown to every joiner
@@ -143,6 +148,10 @@ func Run() error {
 		b.closeStore()
 		return fmt.Errorf("owner key: %w", err)
 	}
+	if err := b.startPeers(b.nodePriv); err != nil {
+		b.closeStore()
+		return fmt.Errorf("exchange with other nodes: %w", err)
+	}
 	ln, err := ipc.Listen()
 	if err != nil {
 		b.closeStore()
@@ -178,6 +187,7 @@ func Run() error {
 }
 
 func (b *Broker) closeStore() {
+	b.stopPeers()
 	if c, ok := b.store.(interface{ Close() error }); ok {
 		_ = c.Close()
 	}

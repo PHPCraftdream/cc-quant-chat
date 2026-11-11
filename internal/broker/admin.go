@@ -104,6 +104,8 @@ func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
 		return b.resetNick(r.Chat, r.Nick, at)
+	case "peer_add", "peer_remove", "peer_share", "peer_unshare":
+		return b.peerAdmin(op, args)
 	}
 	return nil, proto.Errf("unknown_op", "no administrator operation %q", op)
 }

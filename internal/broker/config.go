@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ var configKeys = []configKey{
 	{"broker.idle", false, "stop the broker after this long without connections (duration, e.g. 30m)"},
 	{"broker.grace", false, "how long a disconnected member stays present (duration, e.g. 60s)"},
 	{"limits.messages_per_minute", false, "messages per minute per nick (whole number)"},
+	{"peer.listen", false, "where this broker accepts other nodes of the exchange of chats, host:port; empty: it accepts no one (applies at the next start of the broker)"},
 	{"board.manager_role", true, "pinned role that may move tasks to other states, start/close sprints, change the process and revert; empty: everyone"},
 }
 
@@ -118,6 +120,13 @@ func validateSetting(k configKey, value string) (string, *proto.Error) {
 			return "", proto.Errf("bad_args", "%s wants a whole number 1..10000, got %q", k.name, value)
 		}
 		return strconv.Itoa(n), nil
+	case "peer.listen":
+		if value != "" {
+			if _, _, err := net.SplitHostPort(value); err != nil {
+				return "", proto.Errf("bad_args", "%s wants host:port or empty, got %q", k.name, value)
+			}
+		}
+		return value, nil
 	case "board.manager_role":
 		if value != "" && !proto.ValidName(value) {
 			return "", proto.Errf("bad_args", "%s wants a role name [a-z0-9-]{1,32} or empty, got %q", k.name, value)
@@ -181,6 +190,9 @@ func (b *Broker) configList(chatID string) proto.ConfigList {
 			it.Default, it.Value, it.Source = fmtDur(b.grace), fmtDur(b.graceFor()), b.source(scope, k.name, envSet("CCQC_GRACE"))
 		case "limits.messages_per_minute":
 			it.Default, it.Value, it.Source = strconv.Itoa(rateLimit), strconv.Itoa(b.msgLimit()), b.source(scope, k.name, false)
+		case "peer.listen":
+			v, _ := b.setting("", k.name)
+			it.Default, it.Value, it.Source = "", v, b.source(scope, k.name, false)
 		case "board.manager_role":
 			it.Default, it.Value, it.Source = "", b.managerRole(scope), b.source(scope, k.name, false)
 		}

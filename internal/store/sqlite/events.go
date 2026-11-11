@@ -47,19 +47,45 @@ func jsonText(v any) (string, error) {
 	return string(c), err
 }
 
+// eventCols are the columns of an event row, in the order scanEvent reads them.
+const eventCols = `origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig, hidden`
+
+// scanEvent reads a row selected with eventCols.
+func scanEvent(chatID string, row interface{ Scan(...any) error }) (events.Event, error) {
+	e := events.Event{ChatID: chatID}
+	var hidden string
+	if err := row.Scan(&e.Origin, &e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS, &e.NodeSig, &hidden); err != nil {
+		return e, err
+	}
+	if hidden != "" {
+		var h events.Hidden
+		if err := json.Unmarshal([]byte(hidden), &h); err != nil {
+			return e, fmt.Errorf("event %s#%d: hidden: %w", e.Origin, e.Seq, err)
+		}
+		e.Hidden = &h
+	}
+	return e, nil
+}
+
+// putEvent stores an event as the newest one this node has applied (its ord).
 func putEvent(tx *sql.Tx, e events.Event) error {
-	_, err := tx.Exec(`INSERT INTO events (origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.Origin, e.Seq, e.Prev, e.Lamport, e.Kind, e.Payload, e.AuthorPub, e.Sig, e.Assigned, e.TS, e.NodeSig)
+	hidden := ""
+	if e.Hidden != nil {
+		raw, err := json.Marshal(e.Hidden)
+		if err != nil {
+			return err
+		}
+		hidden = string(raw)
+	}
+	_, err := tx.Exec(`INSERT INTO events (origin, seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts, node_sig, hidden, ord)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(ord), 0) + 1 FROM events))`,
+		e.Origin, e.Seq, e.Prev, e.Lamport, e.Kind, e.Payload, e.AuthorPub, e.Sig, e.Assigned, e.TS, e.NodeSig, hidden)
 	return err
 }
 
 // chainTail: the last event of an origin: its seq and ID (0 and "" for none).
 func (c *chatDB) chainTail(tx *sql.Tx, origin string) (int64, string, error) {
-	e := events.Event{ChatID: c.id, Origin: origin}
-	err := tx.QueryRow(`SELECT seq, prev, lamport, kind, payload, author_pub, sig, assigned, ts FROM events
-		WHERE origin = ? ORDER BY seq DESC LIMIT 1`, origin).
-		Scan(&e.Seq, &e.Prev, &e.Lamport, &e.Kind, &e.Payload, &e.AuthorPub, &e.Sig, &e.Assigned, &e.TS)
+	e, err := scanEvent(c.id, tx.QueryRow(`SELECT `+eventCols+` FROM events WHERE origin = ? ORDER BY seq DESC LIMIT 1`, origin))
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, "", nil
 	}
@@ -128,10 +154,10 @@ func recordEvent(chatID string, r store.Record, lamport int64) (e events.Event, 
 	e = events.Event{ChatID: chatID, Origin: r.Origin, Lamport: lamport, TS: now()}
 	var payload, assigned any
 	switch r.T {
-	case "nick":
-		e.Kind, payload, assigned = "nick.register", map[string]any{"nick": r.Nick, "pub": r.Pub}, map[string]any{"hash": r.Hash, "seen": r.ID}
+	case "nick": // the event says who the nick is (its name and key); the hash of its secret and its read cursor stay with this node
+		e.Kind, payload = "nick.register", map[string]any{"nick": r.Nick, "pub": r.Pub}
 	case "nick_key":
-		e.Kind, payload, assigned = "nick.key", map[string]any{"nick": r.Nick, "pub": r.Pub}, map[string]any{"hash": r.Hash}
+		e.Kind, payload = "nick.key", map[string]any{"nick": r.Nick, "pub": r.Pub}
 		if r.Hash == "" && r.Pub == "" {
 			e.Kind, payload = "nick.reset", map[string]any{"nick": r.Nick}
 		}
@@ -239,7 +265,7 @@ func applySimple(tx *sql.Tx, e events.Event) error {
 	case "nick.register":
 		// Plain INSERT: an existing nick keeps its key; a clash is an error, never an overwrite.
 		// The nick and its place in @common are written together.
-		var seen int64
+		var seen int64 // events written before the journal had a second version carry them
 		if f, ok := a["seen"].(float64); ok {
 			seen = int64(f)
 		}
@@ -249,8 +275,10 @@ func applySimple(tx *sql.Tx, e events.Event) error {
 		}
 		_, err = tx.Exec(`INSERT OR IGNORE INTO room_members (room, nick) VALUES (?, ?)`, proto.RoomCommon, str(p, "nick"))
 		return err
-	case "nick.key", "nick.reset": // the nick's credentials as they are now
-		_, err = tx.Exec(`UPDATE nicks SET key_hash = ?, pubkey = ? WHERE nick = ?`, str(a, "hash"), str(p, "pub"), str(p, "nick"))
+	case "nick.key": // the nick's key as it is now; the hash of its secret is this node's own state
+		_, err = tx.Exec(`UPDATE nicks SET pubkey = ? WHERE nick = ?`, str(p, "pub"), str(p, "nick"))
+	case "nick.reset": // freed: neither key nor secret
+		_, err = tx.Exec(`UPDATE nicks SET key_hash = '', pubkey = '' WHERE nick = ?`, str(p, "nick"))
 	case "nick.pin":
 		_, err = tx.Exec(`UPDATE nicks SET pinned_role = ? WHERE nick = ?`, str(p, "role"), str(p, "nick"))
 	case "room.create":

@@ -23,7 +23,11 @@ func (d *DB) DoDocs(chatID string, fn func(tx store.DocsTx) error) error {
 	if err := fn(&docsTx{tx: tx, rec: recorder{c: c, tx: tx}}); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	d.notify(chatID)
+	return nil
 }
 
 // ViewDocs runs fn on a snapshot; nothing it does is kept.

@@ -34,8 +34,8 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 		db.Close()
 		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n == 1 { // a new chat: every change it will have is an event
-		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'done')`, metaBackfill); err != nil {
+	if n, _ := res.RowsAffected(); n == 1 { // a new chat: every change it will have is an event, in the second version of the journal
+		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'done'), (?, ?)`, metaBackfill, metaJournal, journalVersion); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -53,6 +53,10 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 	if _, err := db.Exec(`INSERT OR IGNORE INTO rooms (room) VALUES (?)`, proto.RoomCommon); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if err := c.upgradeJournal(d.key); err != nil { // d.mu is held by the caller: read the key without it
+		db.Close()
+		return nil, fmt.Errorf("chat %.8s: %w", id, err)
 	}
 	if err := db.QueryRow(`SELECT name, created_at FROM chat WHERE id = 1`).Scan(&name, &created); err != nil {
 		db.Close()
@@ -75,7 +79,11 @@ func (c *chatDB) inTx(fn func(*sql.Tx) error) error {
 	if err := fn(tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	c.s.notify(c.id)
+	return nil
 }
 
 func (c *chatDB) each(query string, args []any, fn func(*sql.Rows) error) error {
@@ -202,7 +210,10 @@ func (c *chatDB) append(r store.Record) error {
 		if e, err = c.appendEvent(tx, e); err != nil {
 			return err
 		}
-		return applyEvent(tx, e)
+		if err := applyEvent(tx, e); err != nil {
+			return err
+		}
+		return applyLocalState(tx, r)
 	})
 	if err != nil && r.T == "msg" && r.ClientID != "" {
 		// A repeat of an earlier send? Then the earlier message is the answer.

@@ -89,6 +89,8 @@ func (b *Broker) handleGlobal(c *conn, f *proto.Frame) (any, *proto.Error) {
 			return nil, e
 		}
 		return b.admin(c, a)
+	case "peer_list":
+		return b.peerList()
 	case "config_list":
 		var a proto.AdminConfig
 		if e := decode(f.Args, &a); e != nil {
