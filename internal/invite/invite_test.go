@@ -52,7 +52,14 @@ func TestAnInvitationSurvivesTheStringAndATypoIsSeenAtOnce(t *testing.T) {
 	if !bytes.Equal(got.Seed, in.Seed) {
 		t.Fatal("the secret did not come through")
 	}
-	for _, bad := range []string{"", "ccqc1.", "ccqc1.abc.def", s[:len(s)-1] + "0", strings.Replace(s, "ccqc1.", "ccqc2.", 1), s[:10] + "X" + s[11:]} {
+	flip := func(s string, i int) string {
+		c := byte('0')
+		if s[i] == c {
+			c = '1'
+		}
+		return s[:i] + string(c) + s[i+1:]
+	}
+	for _, bad := range []string{"", "ccqc1.", "ccqc1.abc.def", flip(s, len(s)-1), strings.Replace(s, "ccqc1.", "ccqc2.", 1), flip(s, 10)} {
 		if _, err := invite.Parse(bad); !errors.Is(err, invite.ErrFormat) {
 			t.Errorf("%q was taken: %v", bad, err)
 		}
