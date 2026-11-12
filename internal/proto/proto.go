@@ -410,7 +410,7 @@ type Welcome struct {
 	Backlog     []Event `json:"backlog,omitempty"`      // unread since the nick was last online
 	UnreadTotal int     `json:"unread_total,omitempty"` // backlog may be cut to the newest
 	Warning     string  `json:"warning,omitempty"`      // e.g. history is not being saved
-	Proto       int     `json:"proto,omitempty"`        // protocol level of the broker; 0 = older than levels
+	Proto       int     `json:"proto,omitempty"`        // protocol level of the broker
 	Origin      string  `json:"origin,omitempty"`       // the broker's identity, for signed writes (proto 4)
 }
 

@@ -52,9 +52,6 @@ func runDoc(args []string) error {
 		} else {
 			err = c.Call("doc", a, &r)
 		}
-		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-			err = errors.New("the running broker is older and has no document tree: run `ccqc broker restart`")
-		}
 		return r, err
 	}
 	switch cmd {

@@ -43,9 +43,6 @@ func fp(pub ed25519.PublicKey) string { return owner.Fingerprint(pub) }
 func brokerOwner(c *client.Conn) (proto.OwnerInfo, error) {
 	var info proto.OwnerInfo
 	err := c.Call("owner_info", nil, &info)
-	if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-		return info, errors.New("the running broker is older and has no owner support: run `ccqc broker restart`")
-	}
 	return info, err
 }
 

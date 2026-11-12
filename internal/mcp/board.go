@@ -198,9 +198,6 @@ func (s *Session) boardTool(tool string, raw json.RawMessage) (string, error) {
 		call = func() error { return cc.write("board", args.Op, &args, &r) }
 	}
 	if err := call(); err != nil {
-		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-			return "", fmt.Errorf("the running broker is older and has no task board: run `ccqc broker restart`")
-		}
 		return "", err
 	}
 	return strings.TrimRight(r.Text, "\n"), nil

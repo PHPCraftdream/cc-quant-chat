@@ -25,7 +25,7 @@ type chatConn struct {
 	auth  ed25519.PrivateKey // for a protected nick: proves the client secret on every connection (nil: a plain key)
 
 	mu      sync.Mutex
-	signer  *client.Signer // nil while the broker doesn't sign (older than proto 4)
+	signer  *client.Signer // signs the writes of the nick
 	conn    *client.Conn
 	role    string
 	excl    bool

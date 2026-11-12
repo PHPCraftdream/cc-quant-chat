@@ -30,9 +30,6 @@ func runPeer(args []string) error {
 	case args[0] == "list" && len(args) == 1:
 		var l proto.PeerList
 		if err := c.Call("peer_list", nil, &l); err != nil {
-			if proto.IsCode(err, "unknown_op") {
-				return errors.New("the running broker is older and has no nodes: run `ccqc broker restart`")
-			}
 			return err
 		}
 		printPeers(l)

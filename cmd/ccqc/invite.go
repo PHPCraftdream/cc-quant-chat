@@ -61,9 +61,6 @@ func findChat(c *client.Conn, what string) (string, error) {
 	name := strings.Trim(what, "/")
 	var r proto.ChatFindReply
 	if err := c.Call("chat_find", proto.ChatFindArgs{Name: name}, &r); err != nil {
-		if proto.IsCode(err, "unknown_op") {
-			return "", errors.New("the running broker is older and has no invitations: run `ccqc broker restart`")
-		}
 		return "", err
 	}
 	switch len(r.Chats) {

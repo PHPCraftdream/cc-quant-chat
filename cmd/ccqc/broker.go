@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -72,10 +71,6 @@ func brokerInfo() (proto.BrokerInfo, error) {
 }
 
 func printInfo(i proto.BrokerInfo) {
-	if i.PID == 0 { // a broker from before `broker status` existed answers ping without details
-		fmt.Printf("broker running (an older version without status details)\n  pipe:  %s\n", ipc.Path())
-		return
-	}
 	up := ""
 	if t, err := time.Parse(time.RFC3339, i.Started); err == nil {
 		up = time.Since(t).Round(time.Second).String()
@@ -91,9 +86,6 @@ func printInfo(i proto.BrokerInfo) {
 		parts := make([]string, len(levels))
 		for k, l := range levels {
 			parts[k] = fmt.Sprintf("proto %s: %d", l, i.ByProto[l])
-			if n, _ := strconv.Atoi(l); n < proto.ProtoVersion {
-				parts[k] += " (older: no confirmations until restarted)"
-			}
 		}
 		fmt.Println("  clients:", strings.Join(parts, "; "))
 	}
@@ -122,11 +114,6 @@ func stopBroker() error {
 	_ = c.Call("ping", nil, &info)
 	err = c.Call("shutdown", nil, nil)
 	c.Close()
-	// Brokers from before `broker stop` existed reject the request (as unknown or "join first").
-	if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-		return errors.New("the running broker is an older version that can't be stopped on request; " +
-			"it stops by itself after 30 idle minutes, then the next session starts the new one")
-	}
 	if err != nil {
 		return fmt.Errorf("stop broker: %w", err)
 	}

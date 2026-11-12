@@ -125,9 +125,6 @@ func runConfig(args []string) error {
 	case "list", "get":
 		var list proto.ConfigList
 		if err := c.Call("config_list", proto.AdminConfig{Chat: id}, &list); err != nil {
-			if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-				return errors.New("the running broker is older and has no settings: run `ccqc broker restart`")
-			}
 			return err
 		}
 		for _, it := range list.Items {

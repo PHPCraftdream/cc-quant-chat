@@ -52,8 +52,8 @@ of each id, the nick, the time and the state (never the secret); `ccqc invite re
 
 There is no entry by a chat token any more: a chat is joined by its id and a nick enters by an invitation, or, once it
 has a key, by that key. A chat that was made with a token before keeps its id (the hash of the token) and its
-nicks: sessions join it by id, and the first read of a folder file in `CCQC_HOME` turns an old entry that holds a
-token into an entry of the chat and erases the token. `ccqc keys revoke` (the owner) frees a protected nick, an
+nicks: sessions join it by id (an entry of a session that still holds a token in `folders/*.json` is ignored: the token is
+not read any more; join again with an invitation). `ccqc keys revoke` (the owner) frees a protected nick, an
 invitation brings it back.
 
 ## Install
