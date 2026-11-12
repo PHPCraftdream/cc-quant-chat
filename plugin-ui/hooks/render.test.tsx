@@ -340,3 +340,48 @@ test('a folded group of calls that holds a chat call is unfolded, so the outgoin
   expect(seenExpanded.includes(true)).toBe(false) // not ours: left as the engine draws it
   await other.unmount()
 })
+
+// The group above is unfolded by our hook, and every row of an unfolded group is a ToolUse with isExpanded true:
+// the card must be drawn then too (the engine's full row would show the raw call and its output).
+test('a chat call is a card whether or not its row is expanded; its result row is empty either way; other tools are left to the engine when expanded', async ($, on) => {
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  const out = 'sent #12 to /team/@common/@alice'
+  for (const isExpanded of [false, true]) {
+    const send = await $.ui.mount({
+      ...tool('mcp__ccqc__chat_send', { to: '/team/@common/@alice', text: 'hi there' }, { output: out, isExpanded }),
+      surface: 'terminal',
+    })
+    const all = (await send.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    expect(all.includes('ccqc out')).toBe(true)
+    expect(all.includes('hi there')).toBe(true)
+    expect(all.includes('engine')).toBe(false)
+    await send.unmount()
+
+    const history = await $.ui.mount({
+      ...tool('mcp__ccqc__chat_history', { target: '/team/@common' }, { output: '[/team/@common #1 2026-11-11T17:01:02Z] bob: hello\n', isExpanded }),
+      surface: 'terminal',
+    })
+    const h = (await history.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    expect(h.includes('ccqc · history')).toBe(true)
+    expect(h.includes('engine')).toBe(false)
+    await history.unmount()
+
+    const result = await $.ui.mount({
+      plugin: 'quant-ui',
+      component: 'ToolResult',
+      requestId: 'tool-1',
+      surface: 'terminal',
+      props: { tool_use_id: 'tool-1', tool: 'mcp__ccqc__chat_history', output: 'raw output', isErrored: false, isExpanded },
+    })
+    expect(await result.find({ type: 'Text' })).toBeUndefined()
+    await result.unmount()
+
+    // Next to them in an unfolded group: the rows of other tools stay the engine's own.
+    const search = await $.ui.mount({ ...tool('Grep', { pattern: 'x' }, { output: 'a.txt', isExpanded }), surface: 'terminal' })
+    expect((await search.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+    await search.unmount()
+  }
+})

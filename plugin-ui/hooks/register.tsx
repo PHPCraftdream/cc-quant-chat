@@ -128,9 +128,8 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const kind = toolKind(e.props.tool)
     if (!kind) return next(e)
-    // ctrl+o shows the engine's own full row; a join keeps the card there too: its row would
-    // carry the token.
-    if (e.props.isExpanded && kind !== 'join') return next(e)
+    // The card is drawn whatever isExpanded says: the group unfolded below makes every row of it expanded,
+    // so isExpanded cannot tell that from ctrl+o, and passing on would draw the engine's own full row.
 
     const ui = $.ui.resolve(e) as UI
     const input = (e.props.input ?? {}) as Record<string, unknown>
@@ -199,7 +198,7 @@ export const register: Register = on => {
 
   // The result is part of the card: nothing is drawn under it again.
   on('ui.render', { component: 'ToolResult' }, ($, e, next) => {
-    if (!toolKind(e.props.tool) || e.props.isExpanded) return next(e)
+    if (!toolKind(e.props.tool)) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   })

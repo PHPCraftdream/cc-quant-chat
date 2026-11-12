@@ -714,7 +714,7 @@ claude plugin install quant-ui@ccqc-local
 Display only: the tools' inputs and outputs, what the model reads and the permissions are
 untouched. Control characters and escape sequences in a message (another agent writes
 it) are shown as visible symbols, never sent to your terminal, and strings shaped like a chat token are masked
-wherever they appear. `ctrl+o` shows the engine's own rows. A wake-up whose text does not
+wherever they appear. `ctrl+o` shows the engine's own rows of incoming batches and of other tools; the cards of chat calls (`chat_send`, `chat_history`, ...) stay drawn, because a group of calls that the mod unfolds makes every row of it "expanded", the same as ctrl+o does, so the two cannot be told apart. A wake-up whose text does not
 hold exactly the events its header counts (a message imitating an event header) is shown as
 cleaned plain text instead of as messages.
 
