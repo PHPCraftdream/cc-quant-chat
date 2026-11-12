@@ -108,8 +108,7 @@ type member struct {
 	conn    *conn
 	offline time.Time
 	owner   bool              // joined with a valid owner signature; set by the broker only
-	pub     ed25519.PublicKey // the nick's key, proven at join; nil for a client that joined by its secret
-	acks    bool              // the client confirms delivery with "ack" (proto 2+)
+	pub     ed25519.PublicKey // the nick's key, proven at join; nil for the owner (signs with the owner key)
 	proto   int               // protocol level the client announced in join
 	status  memberStatus
 }
@@ -427,12 +426,4 @@ func (ch *chat) ack(name string, id int64) *proto.Error {
 	}
 	n.seen = id
 	return nil
-}
-
-// markSeen is the cursor for clients that don't ack (older versions): at disconnect,
-// everything sent so far counts as delivered.
-func (ch *chat) markSeen(name string) {
-	if n := ch.nicks[name]; n != nil && n.seen != ch.nextID {
-		_ = ch.ack(name, ch.nextID)
-	}
 }

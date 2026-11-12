@@ -151,9 +151,6 @@ func (b *Broker) serve(nc net.Conn) {
 		if m.conn == c {
 			m.conn = nil
 			m.offline = time.Now()
-			if !m.acks {
-				ch.markSeen(m.name)
-			}
 			b.presence(ch, nil, m.name, m.name+" disconnected")
 		}
 		ch.mu.Unlock()

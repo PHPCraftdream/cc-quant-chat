@@ -43,7 +43,7 @@ func (b *Broker) verifyNick(c *conn, chatID string, a proto.JoinArgs) (ed25519.P
 }
 
 // authorKey is the key a member's writes are signed with: its nick key, or the owner key for the
-// owner; nil for a client that has none (an older one).
+// owner; nil for a client that has none.
 func (b *Broker) authorKey(m *member) ed25519.PublicKey {
 	if m.pub != nil {
 		return m.pub

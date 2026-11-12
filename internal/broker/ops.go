@@ -137,9 +137,6 @@ func (b *Broker) handleChat(c *conn, f *proto.Frame) (any, *proto.Error) {
 	}
 	switch f.Op {
 	case "leave":
-		if !m.acks {
-			ch.markSeen(m.name)
-		}
 		b.removeMember(ch, m, m.name+" left")
 		c.m = nil
 		return nil, nil

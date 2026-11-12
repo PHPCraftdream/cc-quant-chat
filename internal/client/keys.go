@@ -26,16 +26,13 @@ type SessionIDs struct {
 }
 
 func notProtected(err error) bool {
-	return proto.IsCode(err, "unlock_unknown") || proto.IsCode(err, "unknown_op") || proto.IsCode(err, "keys_unavailable")
+	return proto.IsCode(err, "unlock_unknown") || proto.IsCode(err, "keys_unavailable")
 }
 
 // Unlock proves A for the nick on this connection and returns B. ErrNotProtected: no protected key.
 func Unlock(call Callf, auth ed25519.PrivateKey, chatID, nick string, ids SessionIDs) ([]byte, error) {
 	var ch proto.Challenge
 	if err := call("challenge", nil, &ch); err != nil {
-		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
-			return nil, ErrNotProtected
-		}
 		return nil, err
 	}
 	var rep proto.KeyUnlockReply

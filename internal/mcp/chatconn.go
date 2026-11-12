@@ -53,8 +53,7 @@ func (cc *chatConn) call(op string, args, out any) error {
 
 func (cc *chatConn) chatID() string { return cc.id }
 
-// write sends a change signed by this nick, as its author (an unsigned one while the broker is
-// older than proto 4).
+// write sends a change signed by this nick, as its author.
 func (cc *chatConn) write(op, kind string, args proto.Stamper, out any) error {
 	cc.mu.Lock()
 	sg := cc.signer

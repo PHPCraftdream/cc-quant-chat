@@ -112,10 +112,10 @@ func TestMembersAndMessagesOfTwoNodesMeetAndTheProjectionsAgree(t *testing.T) {
 	eventually(t, "each node knows the member of the other", func() bool {
 		return hasMember(t, alice, bobAtA)() && hasMember(t, bob.client, aliceAtB)()
 	})
-	if m := memberInfo(t, bob.client, aliceAtB); m.Unsigned || m.Online {
+	if m := memberInfo(t, bob.client, aliceAtB); m.Online {
 		t.Fatalf("a member of another node: %+v", m)
 	}
-	if m := memberInfo(t, alice, bobAtA); m.Unsigned || m.Online {
+	if m := memberInfo(t, alice, bobAtA); m.Online {
 		t.Fatalf("a member of another node that signs: %+v", m)
 	}
 
@@ -193,12 +193,12 @@ func TestAForeignMessageTakenWhileTheChatIsNotLoadedDoesNotTakeTheNumberOfTheNex
 		mustCode(t, "alice sends", func() string { _, c := alice.send(proto.RoomCommon, "", text); return c }())
 	}
 	eventually(t, "the messages reach b, where nobody is", func() bool { return textsOf(t, p.bdb, p.id) == "one|three|two|" })
-	p.b.mu.Lock()
-	loaded := len(p.b.chats)
-	p.b.mu.Unlock()
-	if loaded != 0 {
-		t.Fatalf("the chat of b is in memory with nobody present (%d)", loaded)
-	}
+	// The message is stored before the exchange lets go of the chat: wait for it to be unloaded.
+	eventually(t, "the chat of b is not in memory with nobody present", func() bool {
+		p.b.mu.Lock()
+		defer p.b.mu.Unlock()
+		return len(p.b.chats) == 0
+	})
 
 	bob := p.b.connect(t)
 	if _, code := bob.join(p.tok, "bob", proto.ProtoVersion); code != "" {

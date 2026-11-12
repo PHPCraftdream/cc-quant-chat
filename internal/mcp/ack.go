@@ -63,9 +63,7 @@ func (cc *chatConn) flushAck() {
 	}
 	cc.mu.Unlock()
 	err := conn.Call("ack", proto.AckArgs{ID: id}, nil)
-	switch {
-	case err == nil, proto.IsCode(err, "unknown_op"): // an older broker has no acks: it tracks delivery itself
-	default:
+	if err != nil {
 		log.Printf("ack /%s #%d: %v", cc.local, id, err)
 		return
 	}

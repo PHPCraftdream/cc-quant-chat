@@ -39,9 +39,9 @@ func (cc *chatConn) fullStatus() proto.StatusArgs {
 	return proto.StatusArgs{Text: &note, Busy: &busy, Folder: &folder, Branch: &branch}
 }
 
-// pushStatus sends a status update; an older broker without the op is not an error.
+// pushStatus sends a status update.
 func (cc *chatConn) pushStatus(a proto.StatusArgs) {
-	if err := cc.call("status", a, nil); err != nil && !proto.IsCode(err, "unknown_op") {
+	if err := cc.call("status", a, nil); err != nil {
 		log.Printf("status /%s: %v", cc.local, err)
 	}
 }

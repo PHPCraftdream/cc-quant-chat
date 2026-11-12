@@ -113,12 +113,11 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 		return nil, proto.Errf("name_online", "nick @%s is already online in this chat", a.Name)
 	}
 	backlog, total := ch.unread(a.Name, nk.seen)
-	acks := a.Proto >= 2
 	if m != nil {
-		m.conn, m.offline, m.acks, m.proto, m.owner, m.pub = c, time.Time{}, acks, a.Proto, signed, pub
+		m.conn, m.offline, m.proto, m.owner, m.pub = c, time.Time{}, a.Proto, signed, pub
 		b.presence(ch, nil, m.name, m.name+" is back")
 	} else {
-		m = &member{name: a.Name, conn: c, acks: acks, proto: a.Proto, owner: signed, pub: pub}
+		m = &member{name: a.Name, conn: c, proto: a.Proto, owner: signed, pub: pub}
 		ch.members[m.name] = m
 		b.presence(ch, nil, m.name, m.name+" joined")
 	}

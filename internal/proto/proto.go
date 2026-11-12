@@ -361,7 +361,6 @@ type MemberInfo struct {
 	Role          string `json:"role,omitempty"`
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
-	Unsigned      bool   `json:"unsigned,omitempty"`    // present without a signing key (older client)
 	Owner         bool   `json:"owner,omitempty"`       // an owner-verified connection
 	Quarantined   bool   `json:"quarantined,omitempty"` // a member of a node in quarantine
 	RolePinned    bool   `json:"role_pinned,omitempty"`
@@ -425,7 +424,7 @@ type BrokerInfo struct {
 	Clients int    `json:"clients"` // connected members
 	Store   string `json:"store"`
 	Warning string `json:"warning,omitempty"`
-	// ByProto: connected members per protocol level of their client ("0" = no acks).
+	// ByProto: connected members per protocol level of their client .
 	ByProto map[string]int `json:"by_proto,omitempty"`
 	// Node: this broker's identity (origin). Owner: fingerprint of the registered owner key, ""
 	// while no owner is initialized.

@@ -39,16 +39,10 @@ func (ch *chat) state(me *member) proto.State {
 	st := proto.State{Chat: ch.name, Me: me.name, MyRole: me.role, MyRooms: []string{}}
 	for _, n := range sortedKeys(ch.nicks) {
 		mi := proto.MemberInfo{Name: n}
-		if nk := ch.nicks[n]; nk != nil && nk.pub == "" && n != proto.OwnerNick {
-			mi.Unsigned = true // no signing key: its events are stored unsigned
-		}
 		if m := ch.members[n]; m != nil {
 			mi.Role, mi.Online = m.role, m.conn != nil
 			m.fill(&mi)
 			mi.Owner = m.owner
-			if m.owner {
-				mi.Unsigned = false // signs with the owner key
-			}
 			if nkk := ch.nicks[n]; nkk != nil && nkk.pinned != "" && m.role == nkk.pinned {
 				mi.RolePinned = true
 			}

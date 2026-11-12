@@ -139,9 +139,6 @@ func renderState(local string, st *proto.State) string {
 		if m.Owner {
 			mark = "  " + ownerMarker
 		}
-		if m.Unsigned {
-			mark += "  [unsigned: no signing key]"
-		}
 		fmt.Fprintf(&b, "  @%s%s%s  role: %s  %s\n", m.Name, you, mark, r, status)
 	}
 	mine := set(st.MyRooms)

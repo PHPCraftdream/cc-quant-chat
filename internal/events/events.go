@@ -126,8 +126,8 @@ func (e Event) VerifyNode(pub ed25519.PublicKey) bool {
 	return ed25519.Verify(pub, NodeMessage(e.Origin, e.Seq, e.Prev, e.Rest()), sig)
 }
 
-// VerifyAuthor checks the author's signature. An event without one (an older client, or an event
-// the node made itself) verifies as unsigned: ok is true, signed false; so does a redacted event,
+// VerifyAuthor checks the author's signature. An event without one (an event the node
+// made itself, or one written before writes were signed) verifies as unsigned: ok is true, signed false; so does a redacted event,
 // whose author cannot be checked.
 func (e Event) VerifyAuthor() (ok, signed bool) {
 	if e.Redacted() || (e.Sig == "" && e.AuthorPub == "") {
