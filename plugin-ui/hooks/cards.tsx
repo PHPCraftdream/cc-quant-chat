@@ -1,7 +1,7 @@
 // The cards: trees built from the surface's own Box / Text / Button, handed in as `ui`.
 // Only display. Every text from the chat goes through clean() first.
 
-import { address, clean, extraLines, firstLine, flavor } from './format'
+import { address, clean, extraLines, firstLine, flavor, unwrap } from './format'
 import type { Entry, Flavor, Msg } from './format'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,12 +144,13 @@ export function Card(ui: UI, p: CardProps) {
 export function RawCard(ui: UI, p: { key: string; title: string; color: string; text: string; open: Open; onToggle: (k: string) => void }) {
   const { Box, Text, Button } = ui
   const isOpen = isOpenRow(p.open, 'raw')
+  const text = unwrap(p.text) // the hook's wrapper is no part of what is shown
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={p.color} paddingX={1}>
       <Button key={`${p.key}:raw`} plain onPress={() => p.onToggle('raw')}>
         <Text bold color={p.color}>{isOpen ? '▾ ' : '▸ '}{p.title}</Text>
       </Button>
-      {isOpen ? <Text>{clean(p.text)}</Text> : <Text wrap="truncate-end" dimColor>{firstLine(p.text)}</Text>}
+      {isOpen ? <Text>{clean(text)}</Text> : <Text wrap="truncate-end" dimColor>{firstLine(text)}</Text>}
     </Box>
   )
 }

@@ -195,11 +195,25 @@ function splitFooters(entries: Entry[]): Entry[] {
   return out
 }
 
+// Claude Code wraps the text of a hook in <system-reminder>…</system-reminder>; the row's text may
+// carry the wrapper, in plain or HTML-escaped form (&lt;/system-reminder&gt;, or only one of the
+// brackets escaped), with blank lines around it. It is no part of what ccqc printed.
+const TAG_OPEN = /^\s*(?:(?:<|&lt;)system-reminder(?:>|&gt;)\s*)+/i
+const TAG_CLOSE_TAIL = /(?:\s*(?:<|&lt;)\/system-reminder(?:>|&gt;))+\s*$/i
+
+// unwrap takes the wrapper (the opening tag at the start, the closing tag at the end) and the blank
+// tail off. A tag in the middle of a message text is that text, and stays.
+export function unwrap(text: string): string {
+  return text.replace(TAG_OPEN, '').replace(TAG_CLOSE_TAIL, '').replace(/\s+$/, '')
+}
+
 // parseBatch reads the text ccqc's wait hook (or the channel) hands over: a header with the
 // event count, then one entry per event. null when the text holds no batch. `intact` is false
 // when the entries found are not the number the header promised: a message text that imitates
-// a header would otherwise draw as a message nobody sent.
-export function parseBatch(text: string): Batch | null {
+// a header would otherwise draw as a message nobody sent. The wrapper of the hook's text is taken
+// off first, so it is neither an event nor the tail of the last message.
+export function parseBatch(raw: string): Batch | null {
+  const text = unwrap(raw)
   const h = BATCH_HEAD.exec(text)
   if (!h) return null
   const count = Number(h[1])
