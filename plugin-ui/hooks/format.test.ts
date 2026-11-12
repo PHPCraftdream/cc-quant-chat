@@ -3,12 +3,11 @@ import { expect, test } from 'claude-code/testing'
 import { batch, board, context, history, omittedHead, owner, search } from './fixtures'
 import { notificationContent } from './rows'
 import {
-  chatOfToken,
   clean,
   extraLines,
   firstLine,
   flavor,
-  maskToken,
+  maskInvitation,
   parseBatch,
   parseLines,
   parseSent,
@@ -132,17 +131,20 @@ test('control characters of another agent never reach the terminal', async () =>
   expect(clean('one\ntwo')).toBe('one\ntwo')
 })
 
-test('a chat token is masked wherever it appears', async () => {
-  const secret = 'A'.repeat(43)
-  const out = maskToken(`join team.${secret} now`)
-  expect(out.includes(secret)).toBe(false)
-  expect(out).toBe('join team.' + '•'.repeat(8) + ' now')
-  const dashed = 'z'.repeat(42) + '-'
-  expect(maskToken(`t.${dashed} end`).includes('zzzz')).toBe(false) // a secret may end in "-" or "_"
-  expect(clean(`x ops-1.${'b'.repeat(43)}`).includes('bbbbbbbb')).toBe(false)
-  expect(chatOfToken(`team.${secret}`)).toBe('team')
-  expect(chatOfToken(undefined)).toBe('')
-  expect(chatOfToken('nodot')).toBe('')
+test('an invitation is masked wherever it appears; a chat token is not looked for any more', async () => {
+  const body = 'A'.repeat(60)
+  const inv = `ccqc1.${body}.abcd1234`
+  const out = maskInvitation(`join ${inv} now`)
+  expect(out.includes(body)).toBe(false)
+  expect(out).toBe('join ccqc1.' + '•'.repeat(8) + ' now')
+  const dashed = 'z'.repeat(59) + '-'
+  expect(maskInvitation(`x ccqc1.${dashed}.ab_-12 end`).includes('zzzz')).toBe(false) // it may end in "-" or "_"
+  expect(clean(`say ccqc1.${'b'.repeat(40)}.00ff00ff`).includes('bbbbbbbb')).toBe(false)
+  expect(maskInvitation('ccqc1.' + 'c'.repeat(60)).includes('cccc')).toBe(false) // without the checksum too
+  expect(maskInvitation('ccqc1.short')).toBe('ccqc1.short') // too short to be one
+  expect(maskInvitation('see ccqc1 docs')).toBe('see ccqc1 docs')
+  const oldToken = `team.${'D'.repeat(43)}`
+  expect(maskInvitation(`x ${oldToken}`)).toBe(`x ${oldToken}`) // chat tokens do not exist any more
 })
 
 test('collapsed form: the first line, and how many lines are left out', async () => {

@@ -44,12 +44,12 @@ const BOARD = /^\[\/([a-z0-9-]+) board\] (.*)$/
 const NOTICE = /^\[\/([a-z0-9-]+)\] (.*)$/
 const REPLY = / {3}\(reply: (\/[a-z0-9-]+\/@[a-z0-9-]+(?:\/@[a-z0-9-]+)?)\)$/
 
-// A chat token is <chat>.<43 base64url characters>.
-// (Not \b: the secret may end in "-" or "_", which is no word boundary.)
-const TOKEN = /(?<![A-Za-z0-9_.-])([a-z0-9][a-z0-9-]{0,31})\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g
+// An invitation is ccqc1.<base64url of its JSON>.<checksum>: it is spent by the join, but until then it lets
+// whoever reads it in. (Not \b: the text may end in "-" or "_", which is no word boundary.)
+const INVITATION = /(?<![A-Za-z0-9_.-])ccqc1\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+)?(?![A-Za-z0-9_-])/g
 
-export function maskToken(s: string): string {
-  return s.replace(TOKEN, '$1.' + '•'.repeat(8))
+export function maskInvitation(s: string): string {
+  return s.replace(INVITATION, 'ccqc1.' + '•'.repeat(8))
 }
 
 function isInvisible(c: number): boolean {
@@ -66,7 +66,7 @@ function isInvisible(c: number): boolean {
 
 // clean makes text from another agent safe for the person's terminal: no escape sequence or
 // other control character survives (they show as their visible symbols), bidirectional and
-// invisible format characters are dropped, tokens are masked. Newlines stay.
+// invisible format characters are dropped, invitations are masked. Newlines stay.
 export function clean(s: string): string {
   let out = ''
   for (const ch of s) {
@@ -80,7 +80,7 @@ export function clean(s: string): string {
     else if (isInvisible(c)) continue
     else out += ch
   }
-  return maskToken(out)
+  return maskInvitation(out)
 }
 
 export function firstLine(text: string): string {
@@ -260,11 +260,4 @@ export type ToolKind = 'send' | 'history' | 'timeline' | 'search' | 'context' | 
 export function toolKind(tool: string): ToolKind | null {
   const m = TOOL.exec(tool)
   return m ? ((m[1] ?? '').slice('chat_'.length) as ToolKind) : null
-}
-
-// chatOfToken: the chat name in a token, never the secret.
-export function chatOfToken(token: unknown): string {
-  if (typeof token !== 'string') return ''
-  const dot = token.indexOf('.')
-  return dot > 0 ? token.slice(0, dot).slice(0, 32) : ''
 }

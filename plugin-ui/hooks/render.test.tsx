@@ -162,23 +162,6 @@ line
   await ui.unmount()
 })
 
-test('a join never shows the token', async $ => {
-  const secret = 'S'.repeat(43)
-  const ui = await $.ui.mount({
-    ...tool(
-      'mcp__plugin_quant_chat__chat_join',
-      { token: `team.${secret}`, name: 'dev' },
-      { output: 'chat /team — you are "dev", role: none\nmembers (1):\n' },
-    ),
-    surface: 'terminal',
-  })
-  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
-  expect(all.includes(secret)).toBe(false)
-  expect(all.includes('join /team')).toBe(true)
-  expect(all.includes('as @dev')).toBe(true)
-  await ui.unmount()
-})
-
 test('a join by invitation never shows the invitation', async $ => {
   const secret = 'ccqc1.' + 'Q'.repeat(60) + '.abcd1234'
   const ui = await $.ui.mount({

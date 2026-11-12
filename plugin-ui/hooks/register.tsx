@@ -12,7 +12,7 @@ import type { Register } from 'claude-code'
 import type { Stored } from '../types'
 import { Card, Plain, RawCard, flip } from './cards'
 import type { Open, UI } from './cards'
-import { chatOfToken, clean, parseBatch, parseLines, parseSent, textOf, toolKind } from './format'
+import { clean, parseBatch, parseLines, parseSent, textOf, toolKind } from './format'
 import type { Batch, Entry, Msg, ToolKind } from './format'
 
 // Which rows of a card are open: one value per drawn row (message or tool call), keyed by the
@@ -61,10 +61,9 @@ function heading(kind: ToolKind, input: Record<string, unknown>): { title: strin
     case 'inbox':
       return { title: 'ccqc · inbox' }
     case 'join':
-      // The token and the invitation are secrets: the invitation is not even looked into (it names the
-      // chat and the nick, which the broker's answer shows); of a token, only the chat name and the nick.
-      if (str(input.invite)) return { title: 'ccqc · join by invitation' }
-      return { title: `ccqc · join /${chatOfToken(input.token) || '?'}`, subtitle: `as @${str(input.name)}` }
+      // The invitation is a secret: it is not even looked into (it names the chat and the nick, which the
+      // broker's answer shows).
+      return { title: 'ccqc · join by invitation' }
     default:
       return { title: 'ccqc' }
   }
