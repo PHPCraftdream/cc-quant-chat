@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { batch, board, context, history, omittedHead, owner, search } from './fixtures'
+import { notificationContent } from './rows'
 import {
   chatOfToken,
   clean,
@@ -244,4 +245,16 @@ test('a batch that is not intact is still not intact with the wrapper off, and n
   expect(b.intact).toBe(false) // no reply address: not a message the broker wrote
   expect(unwrap(text).includes('system-reminder')).toBe(false)
   expect(unwrap('&lt;system-reminder&gt;\nplain\n&lt;/system-reminder&gt;\n')).toBe('plain')
+})
+
+test('the notification row of a Stop hook, taken from a real session: two events, one a presence, one a message', async () => {
+  const b = need(parseBatch(notificationContent))
+  expect(b.intact).toBe(true)
+  expect(b.count).toBe(2)
+  expect(b.entries.map(e => e.type).join(',')).toBe('presence,msg')
+  const m = need(msgs(b.entries)[0])
+  expect(m.chat + '/' + m.room + '#' + m.id + ' ↩' + m.replyTo + ' ' + m.from + '→' + m.to).toBe('ccqc-team/direct#120 ↩119 dev-main→main-expert')
+  expect(m.text).toBe('Привет! Нормально, спасибо, что спросил.\nВторая строка ответа.\nТретья строка, подлиннее: что понравилось и что было тяжело.')
+  expect(m.reply).toBe('/ccqc-team/@direct/@dev-main')
+  expect(JSON.stringify(b).includes('system-reminder') || JSON.stringify(b).includes('task-notification')).toBe(false)
 })

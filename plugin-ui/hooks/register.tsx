@@ -10,7 +10,7 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Stored } from '../types'
-import { Card, Plain, RawCard } from './cards'
+import { Card, Plain, RawCard, flip } from './cards'
 import type { Open, UI } from './cards'
 import { chatOfToken, clean, parseBatch, parseLines, parseSent, textOf, toolKind } from './format'
 import type { Batch, Entry, Msg, ToolKind } from './format'
@@ -26,7 +26,7 @@ const stored = atom({ plugin: 'quant-ui', key: 'batches' } as const, [] as Store
 })
 
 const BATCH_TEXT = /ccqc: \d+ new chat event\(s\)\. /
-const KEEP = 20
+const KEEP = 50
 const KEEP_CHARS = 60000
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
@@ -94,12 +94,21 @@ export const register: Register = on => {
         raw = hit.text
       }
     }
-    if (!batch) return next(e)
+    if (!batch) {
+      // A Stop hook's text arrives as a task notification: the row's text is its summary alone, the batch
+      // is in the content that session.append saw. If that was not seen (a session resumed from its file,
+      // state lost), say so rather than leave a bare summary that looks like nothing was said.
+      if (e.props.origin?.kind === 'task-notification' && /^Stop hook feedback/.test(e.props.text)) {
+        const ui = $.ui.resolve(e) as UI
+        return Plain(ui, { title: 'Stop hook feedback', color: 'gray', text: 'the chat cards do not have the text of this row (ctrl+o shows it)', dim: true })
+      }
+      return next(e)
+    }
 
     const ui = $.ui.resolve(e) as UI
     const state = memberOf(open, e)
     const o = await read($, state)
-    const toggle = (k: string) => update($, state, m => ({ ...m, [k]: !(m[k] ?? m['*'] ?? false) }))
+    const toggle = (k: string) => update($, state, m => flip(m, k))
     const title = batch.omitted > 0 ? `ccqc ← ${batch.count} (last ${batch.count - batch.omitted} shown)` : `ccqc ← ${batch.count}`
     if (!batch.intact) {
       return RawCard(ui, { key: 'in', title: `${title} · unparsed`, color: 'yellow', text: raw, open: o, onToggle: toggle })
@@ -111,7 +120,7 @@ export const register: Register = on => {
       entries: batch.entries,
       open: o,
       onToggle: toggle,
-      onAll: v => update($, state, () => ({ '*': v })),
+      onAll: v => update($, state, () => ({ '*': v, '*+': v })),
     })
   })
 
@@ -128,8 +137,8 @@ export const register: Register = on => {
     const text = textOf(e.props.output)
     const state = memberOf(open, e)
     const o = await read($, state)
-    const toggle = (k: string) => update($, state, m => ({ ...m, [k]: !(m[k] ?? m['*'] ?? false) }))
-    const onAll = (v: boolean) => update($, state, () => ({ '*': v }))
+    const toggle = (k: string) => update($, state, m => flip(m, k))
+    const onAll = (v: boolean) => update($, state, () => ({ '*': v, '*+': v }))
     const { title, subtitle } = kind === 'send' ? { title: 'ccqc →', subtitle: str(input.to) } : heading(kind, input)
 
     if (e.props.isRunning) {

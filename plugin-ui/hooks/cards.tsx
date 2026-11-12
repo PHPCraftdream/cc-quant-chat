@@ -43,7 +43,42 @@ export function when(ts: string): string {
 
 export const rowKey = (m: Msg, i: number): string => `${m.chat}/${m.room}#${m.id}.${i}`
 
-const isOpenRow = (o: Open, k: string): boolean => o[k] ?? o['*'] ?? false
+// A row is shown open by default (the person reads what was said without a click), clipped to MAX_LINES
+// lines with the rest behind "N more lines"; a click on its header folds it to one line. State keys: `k` is
+// open (default true), `k+` is the whole text of a long row (default false); `*` and `*+` stand for all rows.
+export const MAX_LINES = 12
+export const isOpenRow = (o: Open, k: string): boolean => o[k] ?? o['*'] ?? true
+export const isFullRow = (o: Open, k: string): boolean => o[k + '+'] ?? o['*+'] ?? false
+
+// flip is the click on a row's header (`k`) or on its "more lines" button (`k+`).
+export function flip(m: Open, k: string): Open {
+  return k.endsWith('+') ? { ...m, [k]: !isFullRow(m, k.slice(0, -1)) } : { ...m, [k]: !isOpenRow(m, k) }
+}
+
+// clip: the lines of a text that are shown, and how many are left behind.
+function clip(text: string, full: boolean): { shown: string; more: number } {
+  const lines = clean(text).split('\n')
+  if (full || lines.length <= MAX_LINES) return { shown: lines.join('\n'), more: 0 }
+  return { shown: lines.slice(0, MAX_LINES).join('\n'), more: lines.length - MAX_LINES }
+}
+
+// Body: the text of an open row, clipped; the button under a long one shows the rest (or folds it again).
+function Body(ui: UI, p: { key: string; text: string; open: Open; onToggle: (k: string) => void; rowKey: string }) {
+  const { Text, Button, Box } = ui
+  const full = isFullRow(p.open, p.rowKey)
+  const { shown, more } = clip(p.text, full)
+  const long = more > 0 || (full && clean(p.text).split('\n').length > MAX_LINES)
+  return (
+    <Box flexDirection="column">
+      <Text>{shown}</Text>
+      {long ? (
+        <Button key={`${p.key}:m:${p.rowKey}`} plain onPress={() => p.onToggle(p.rowKey + '+')}>
+          <Text dimColor>{more > 0 ? `… ${more} more line${more === 1 ? '' : 's'}` : '▴ fewer lines'}</Text>
+        </Button>
+      ) : null}
+    </Box>
+  )
+}
 
 function MsgRow(ui: UI, p: CardProps, m: Msg, i: number) {
   const { Box, Text, Button } = ui
@@ -67,7 +102,7 @@ function MsgRow(ui: UI, p: CardProps, m: Msg, i: number) {
       </Button>
       <Box paddingLeft={2}>
         {isOpen ? (
-          <Text>{clean(m.text)}</Text>
+          Body(ui, { key: p.key, text: m.text, open: p.open, onToggle: p.onToggle, rowKey: k })
         ) : (
           <Button key={`${p.key}:p:${k}`} plain onPress={() => p.onToggle(k)}>
             <Text wrap="truncate-end" dimColor>
@@ -115,7 +150,7 @@ function OtherRow(ui: UI, e: Entry, i: number) {
 export function Card(ui: UI, p: CardProps) {
   const { Box, Text, Button } = ui
   const msgs = p.entries.filter((e): e is Msg => e.type === 'msg')
-  const allOpen = msgs.length > 0 && msgs.every((m, i) => isOpenRow(p.open, rowKey(m, p.entries.indexOf(m))))
+  const allOpen = msgs.length > 0 && msgs.every(m => isOpenRow(p.open, rowKey(m, p.entries.indexOf(m))))
   let notes = 0
   const rows = p.entries.map((e, i) => {
     if (e.type === 'msg') return MsgRow(ui, p, e, i)
@@ -150,7 +185,7 @@ export function RawCard(ui: UI, p: { key: string; title: string; color: string; 
       <Button key={`${p.key}:raw`} plain onPress={() => p.onToggle('raw')}>
         <Text bold color={p.color}>{isOpen ? '▾ ' : '▸ '}{p.title}</Text>
       </Button>
-      {isOpen ? <Text>{clean(text)}</Text> : <Text wrap="truncate-end" dimColor>{firstLine(text)}</Text>}
+      {isOpen ? Body(ui, { key: p.key, text, open: p.open, onToggle: p.onToggle, rowKey: 'raw' }) : <Text wrap="truncate-end" dimColor>{firstLine(text)}</Text>}
     </Box>
   )
 }
