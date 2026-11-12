@@ -237,10 +237,14 @@ sessions can't be online under one nick. Every join brings what was missed while
 (up to 100 newest; the rest via `chat_timeline` / `chat_history`).
 
 If the key of a nick is lost on this machine (the nick shows as taken although it is
-yours), `ccqc nick reset - <nick>` (token on stdin) frees it: history and rooms stay, the next join
-binds a new key. It works only while the nick is offline. **Anyone holding the chat token
-can do this to an offline nick** and then read its direct-message history, so the chat is
-told when a key is reset; treat the token like the chat's password.
+yours), ask the owner for a new invitation: `ccqc invite <chat> <nick>` replaces the nick's
+key (the old key stops working), and its history and rooms stay. `ccqc nick reset` is
+deprecated: once the machine has an owner it is an administrator operation (signed with the
+owner key, password on the console) and a chat token alone frees nothing. Only in a chat
+without an owner can anyone holding the token free an offline nick and read its
+direct-message history, so there the chat is told when a key is reset.
+The nick keys themselves are kept as plain files today; protecting them is planned
+([docs/design-keys.md](docs/design-keys.md)).
 
 ### Addresses
 
