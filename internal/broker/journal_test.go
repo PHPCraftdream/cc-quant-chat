@@ -200,10 +200,6 @@ func runScenario(t *testing.T) (*sqlite.DB, string, string, ed25519.PrivateKey) 
 	}
 	consistent(t, db, "a chat setting")
 	bob.call("leave", nil, nil)
-	if _, perr := b.nickReset(proto.NickResetArgs{Token: tok, Name: "bob"}); perr != nil {
-		t.Fatalf("nick reset: %v", perr)
-	}
-	consistent(t, db, "a nick reset")
 	return db, chatFile(path, id), id, priv
 }
 
@@ -433,11 +429,10 @@ func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.
 	c := b.connect(t)
 	mustCode(t, "role_give", adminReq(t, c, k, "role_give", proto.AdminRole{Chat: id, Nick: "alice", Role: "lead"}))
 	mustCode(t, "config_set", adminReq(t, c, k, "config_set", proto.AdminConfig{Chat: id, Key: "board.manager_role", Value: " lead "}))
-	mustCode(t, "nick_reset", adminReq(t, c, k, "nick_reset", proto.AdminRole{Chat: id, Nick: "bob"}))
-	consistent(t, db, "three administrator operations")
+	consistent(t, db, "two administrator operations")
 	rep, err := db.Verify(id)
-	if err != nil || rep.Signed != 3 {
-		t.Fatalf("%d signed events (want the three operations): %+v %v", rep.Signed, rep.Issues, err)
+	if err != nil || rep.Signed != 2 {
+		t.Fatalf("%d signed events (want the two operations): %+v %v", rep.Signed, rep.Issues, err)
 	}
 
 	raw, err := sqlite.OpenRaw(chatFile(path, id))

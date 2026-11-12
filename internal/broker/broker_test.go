@@ -404,46 +404,6 @@ func mustID(t *testing.T, tok string) string {
 	return id
 }
 
-func TestNickReset(t *testing.T) {
-	b := newTestBroker(newMemStore())
-	tok, id := token(t)
-	a, c := b.connect(t), b.connect(t)
-	a.join(tok, "alice", proto.ProtoVersion)
-	c.join(tok, "bob", proto.ProtoVersion)
-	a.send(proto.RoomCommon, "", "history stays")
-	c.msgs()
-	if c.call("ack", proto.AckArgs{ID: 1}, nil) != "" {
-		t.Fatal("ack failed")
-	}
-
-	op := b.connect(t)
-	if code := op.call("nick_reset", proto.NickResetArgs{Token: tok, Name: "bob"}, nil); code != "name_online" {
-		t.Fatalf("reset of an online nick: %q", code)
-	}
-	if code := op.call("nick_reset", proto.NickResetArgs{Token: tok, Name: "nobody"}, nil); code != "no_such_member" {
-		t.Fatalf("reset of an unknown nick: %q", code)
-	}
-	c.close()
-	b.waitOffline(t, b.chatOf(id), "bob")
-	b.inChat(id, func(ch *chat) { delete(ch.members, "bob") }) // grace period over
-	if code := op.call("nick_reset", proto.NickResetArgs{Token: tok, Name: "bob"}, nil); code != "" {
-		t.Fatalf("reset: %q", code)
-	}
-
-	fresh := b.connect(t) // a new session without the old key
-	w, code := fresh.join(tok, "bob", proto.ProtoVersion)
-	if code != "" || w.Key == "" {
-		t.Fatalf("join after reset: code %q, key %q; want a new key", code, w.Key)
-	}
-	if len(w.Backlog) != 0 {
-		t.Fatalf("the nick's read cursor must be kept, got backlog %d", len(w.Backlog))
-	}
-	late := b.connect(t)
-	if _, code := late.join(tok, "bob", proto.ProtoVersion); code == "" {
-		t.Fatal("the new key must protect the nick again")
-	}
-}
-
 func TestStoppedBrokerTakesNoConnections(t *testing.T) {
 	b := newTestBroker(newMemStore())
 	b.stopping.Store(true)

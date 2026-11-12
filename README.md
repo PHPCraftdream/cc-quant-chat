@@ -55,7 +55,7 @@ the nicks that are already bound to a key: those sessions and clients go on as b
 exists a token no longer registers a new nick or moves one to a key, and makes no chat: new people
 and key replacements come by invitation (`ccqc invite <chat> <nick>` works for old chats too). To
 leave tokens behind altogether, make a new chat with `ccqc chat new` and invite everyone into it.
-`ccqc token new` and `ccqc nick reset` are deprecated for that reason; without an owner they work as before.
+`ccqc nick reset` is gone: `ccqc keys revoke` (the owner) frees a protected nick, an invitation brings it back.
 
 ## Install
 
@@ -238,11 +238,9 @@ sessions can't be online under one nick. Every join brings what was missed while
 
 If the key of a nick is lost on this machine (the nick shows as taken although it is
 yours), ask the owner for a new invitation: `ccqc invite <chat> <nick>` replaces the nick's
-key (the old key stops working), and its history and rooms stay. `ccqc nick reset` is
-deprecated: once the machine has an owner it is an administrator operation (signed with the
-owner key, password on the console) and a chat token alone frees nothing. Only in a chat
-without an owner can anyone holding the token free an offline nick and read its
-direct-message history, so there the chat is told when a key is reset.
+key (the old key stops working), and its history and rooms stay. If the client secret was stolen,
+the owner runs `ccqc keys revoke <chat> <nick>` first: the broker's half of the key is deleted and the nick is
+free until an invitation brings it back.
 A nick key is not kept as a plain file any more: see [Protecting nick keys](#protecting-nick-keys-protocol-6).
 
 ### Addresses
@@ -310,7 +308,7 @@ for on the console; no owner password): `ccqc doc tree <chat> [prefix]`, `ccqc d
 
 Some operations can only be done by the owner, from their own terminal, signed with the owner
 key (the password is typed on the console): `ccqc role give|take`, `ccqc config set`, and
-`ccqc nick reset` once an owner exists. The client signs `ccqc/v1/admin`, the operation, its
+`ccqc keys revoke`. The client signs `ccqc/v1/admin`, the operation, its
 arguments in canonical JSON and a one-time challenge of the connection. Without an initialized
 owner they are unavailable (`no_owner`). A refusal tells an agent not to look for a way around
 and to ask the user. Every attempt, refused ones included, goes to the `admin_log` table

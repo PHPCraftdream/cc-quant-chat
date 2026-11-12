@@ -345,7 +345,7 @@ func (b *Broker) dropSecrets(chatID, nick string) {
 
 // revokeKey is the owner's operation for a protected nick whose client secret is lost or stolen: the
 // broker's half of the key is deleted and the nick is freed, so every copy of A is dead at once and the
-// nick comes back only by an invitation. It is `nick_reset` that insists the nick is a protected one.
+// nick comes back only by an invitation. The nick must be a protected one.
 func (b *Broker) revokeKey(chatID, nick string, at *store.AdminAttest) (any, *proto.Error) {
 	ss, ok := b.nickSecrets()
 	if !ok {
@@ -356,7 +356,7 @@ func (b *Broker) revokeKey(chatID, nick string, at *store.AdminAttest) (any, *pr
 		return nil, proto.Errf("store_failed", "%v", err)
 	}
 	if row == nil {
-		return nil, proto.Errf("not_protected", "@%s has no protected key in this chat; `ccqc nick reset` frees a nick with a plain key", nick)
+		return nil, proto.Errf("not_protected", "@%s has no protected key in this chat", nick)
 	}
-	return b.resetNick(chatID, nick, at)
+	return b.freeNick(chatID, nick, at)
 }

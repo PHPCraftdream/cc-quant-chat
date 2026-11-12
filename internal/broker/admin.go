@@ -98,12 +98,6 @@ func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest
 			return nil, e
 		}
 		return proto.BoardReply{Text: fmt.Sprintf("%s = %q", c.Key, v)}, nil
-	case "nick_reset":
-		var r proto.AdminRole
-		if err := json.Unmarshal(args, &r); err != nil {
-			return nil, proto.Errf("bad_args", "%v", err)
-		}
-		return b.resetNick(r.Chat, r.Nick, at)
 	case "key_revoke":
 		var r proto.AdminRole
 		if err := json.Unmarshal(args, &r); err != nil {
@@ -230,9 +224,9 @@ func (ch *chat) displayRole(m *member) string {
 	return m.role
 }
 
-// resetNick frees an offline nick, as the owner's administrator operation (nickReset is the older
-// token-based one, which only works while no owner exists).
-func (b *Broker) resetNick(chatID, nickName string, at *store.AdminAttest) (any, *proto.Error) {
+// freeNick frees an offline nick, as the owner's administrator operation (keys revoke): its key is gone, and
+// the nick comes back only by an invitation.
+func (b *Broker) freeNick(chatID, nickName string, at *store.AdminAttest) (any, *proto.Error) {
 	ch, e := b.adminChat(chatID)
 	if e != nil {
 		return nil, e
@@ -243,13 +237,13 @@ func (b *Broker) resetNick(chatID, nickName string, at *store.AdminAttest) (any,
 		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", nickName)
 	}
 	if ch.members[nickName] != nil {
-		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", nickName)
+		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; a key is revoked for an offline nick (wait about a minute)", nickName)
 	}
 	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: "", Admin: at}); e != nil {
 		return nil, e
 	}
 	nk.hash = ""
 	b.dropSecrets(ch.id, nickName)
-	b.presence(ch, nil, "", "the key of @"+nickName+" was reset: the next join under this nick takes it over")
+	b.presence(ch, nil, "", "the key of @"+nickName+" was revoked: the nick comes back by an invitation")
 	return proto.BoardReply{Text: "nick @" + nickName + " is free"}, nil
 }

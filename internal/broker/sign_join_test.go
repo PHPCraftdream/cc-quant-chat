@@ -96,25 +96,6 @@ func TestJoinNeedsAFreshChallengeSignedByTheKeyItPresents(t *testing.T) {
 	}
 }
 
-func TestResetFreesAProtectedNickAndItsSecretAndAPlainKeyIsNoWayBackIn(t *testing.T) {
-	be := newMemStore()
-	b := newTestBroker(be)
-	tok, id := token(t)
-	k := newKey(t)
-	p := b.mustJoin(t, tok, "carol", k)
-	p.leaveChat()
-	if _, perr := b.nickReset(proto.NickResetArgs{Token: tok, Name: "carol"}); perr != nil {
-		t.Fatalf("reset: %v", perr)
-	}
-	if row, _ := be.ActiveNickSecret(id, "carol"); row != nil {
-		t.Fatalf("the secret stayed after the reset: %+v", row)
-	}
-	// The key is gone with its secret: it opens nothing (no protected key, so only an invitation lets in).
-	if _, err := b.keyedJoin(t, tok, "carol", newKey(t)); codeOf(err) == "" {
-		t.Fatal("a key joined a nick that was reset")
-	}
-}
-
 // Old clients work against this broker, new clients against an old one: the pieces of the
 // compatibility the levels promise.
 func TestLegacyClientsKeepWorkingAndTheirEventsAreStoredUnsigned(t *testing.T) {

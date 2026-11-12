@@ -174,38 +174,6 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
 }
 
-// nickReset frees a registered nick whose key is lost: the next join binds a new key, and the
-// nick keeps its history and rooms. Needs the chat token; refused while the nick is present.
-// Anyone holding the token can do this to an offline nick, so the chat is told when it happens.
-func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
-	name, id, err := proto.ParseToken(a.Token)
-	if err != nil {
-		return nil, proto.Errf("bad_token", "%v", err)
-	}
-	ch, err := b.useChat(id, name)
-	if err != nil {
-		return nil, errNoStore(err)
-	}
-	defer func() {
-		b.doneChat(ch)
-		b.unloadIfEmpty(ch)
-	}()
-	nk := ch.nicks[a.Name]
-	if nk == nil {
-		return nil, proto.Errf("no_such_member", "no nick @%s in this chat", a.Name)
-	}
-	if ch.members[a.Name] != nil {
-		return nil, proto.Errf("name_online", "@%s is online or was online a moment ago; reset works for an offline nick (wait about a minute)", a.Name)
-	}
-	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name}); e != nil {
-		return nil, e
-	}
-	nk.hash, nk.pub = "", ""
-	b.dropSecrets(ch.id, a.Name)
-	b.presence(ch, nil, "", "the key of @"+a.Name+" was reset: the next join under this nick takes it over")
-	return nil, nil
-}
-
 // unread: messages visible to the nick, newer than seen and not its own; newest unreadCap of them.
 func (ch *chat) unread(name string, seen int64) ([]proto.Event, int) {
 	var msgs []proto.Message

@@ -56,11 +56,6 @@ Documents (the chat's shared page tree, as an ordinary member; token from your s
   ccqc doc put <chat> <path> <file|->   create or replace a page
   ccqc doc export <chat> <dir>          the whole tree as .md files
 
-Nicks:
-  ccqc nick reset - <nick>  free an offline nick whose key was lost on this machine (the token is
-                            read from stdin; avoid putting it in the arguments); the next join binds
-                            a new key. Anyone with the token can do this, and the chat is told.
-
   ccqc keys status          where the client secret of your nick keys is kept (the store of the OS, or a
                             file with a warning), and which nicks are protected
   ccqc keys revoke <chat> <nick>   (owner) a protected nick whose client secret is lost or stolen: its
@@ -115,8 +110,6 @@ func main() {
 		err = printSession()
 	case "db":
 		err = runDB(os.Args[2:])
-	case "nick":
-		err = runNick(os.Args[2:])
 	case "owner":
 		err = runOwner(os.Args[2:])
 	case "keys":

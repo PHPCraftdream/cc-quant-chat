@@ -222,12 +222,6 @@ const ProtoVersion = KeysProto
 // events are stored unsigned.
 const LegacyProto = 3
 
-// NickResetArgs: free a registered nick whose key is lost, so the next join binds a new key.
-type NickResetArgs struct {
-	Token string `json:"token"`
-	Name  string `json:"name"`
-}
-
 // AckArgs: everything visible to the nick up to message ID was delivered to the session.
 type AckArgs struct {
 	ID int64 `json:"id"`

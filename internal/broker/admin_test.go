@@ -257,36 +257,3 @@ func TestConfigSetAppliesWithoutARestart(t *testing.T) {
 		t.Fatalf("after a restart: limit %d, manager role %q", b2.msgLimit(), b2.managerRole(id))
 	}
 }
-
-func TestNickResetBecomesAnAdministratorOperationOnceThereIsAnOwner(t *testing.T) {
-	be := newMemStore()
-	b := newTestBroker(be)
-	tok, id := token(t)
-	bob := b.connect(t)
-	bob.join(tok, "bob", proto.ProtoVersion)
-	bob.close()
-	b.waitOffline(t, b.chatOf(id), "bob")
-	b.inChat(id, func(ch *chat) { delete(ch.members, "bob") })
-
-	token := func() string {
-		c := b.connect(t)
-		return c.call("nick_reset", proto.NickResetArgs{Token: tok, Name: "bob"}, nil)
-	}
-	k := newKey(t)
-	register(t, b, k)
-	if code := token(); code != "admin_only" {
-		t.Fatalf("a token holder resetting a nick while an owner exists: %q", code)
-	}
-	adm := b.connect(t)
-	if code := adminReq(t, adm, k, "nick_reset", proto.AdminRole{Chat: id, Nick: "bob"}); code != "" {
-		t.Fatalf("the owner's reset: %q", code)
-	}
-	fresh := b.connect(t)
-	if w, code := fresh.join(tok, "bob", proto.ProtoVersion); code != "" || w.Key == "" {
-		t.Fatalf("join after the reset: %q %q", code, w.Key)
-	}
-	got := results(be)
-	if len(got) < 2 || got[0] != "nick_reset: refused: needs the owner's signature" || got[len(got)-1] != "nick_reset: ok" {
-		t.Fatalf("admin_log: %v", got)
-	}
-}

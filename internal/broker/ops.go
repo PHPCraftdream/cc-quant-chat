@@ -14,7 +14,7 @@ import (
 // against the next broker.
 var changes = map[string]bool{
 	"join": true, "send": true, "room_create": true, "room_join": true, "room_leave": true,
-	"role_claim": true, "role_release": true, "nick_reset": true, "owner_register": true, "owner_rotate": true,
+	"role_claim": true, "role_release": true, "owner_register": true, "owner_rotate": true,
 	"admin": true,
 }
 
@@ -116,16 +116,6 @@ func (b *Broker) handleGlobal(c *conn, f *proto.Frame) (any, *proto.Error) {
 			return nil, e
 		}
 		return b.configList(a.Chat), nil
-	case "nick_reset":
-		var a proto.NickResetArgs
-		if e := decode(f.Args, &a); e != nil {
-			return nil, e
-		}
-		if b.ownerKey() != nil { // with an owner, this is an administrator operation
-			b.logAdmin("nick_reset", []byte(`{"via":"token"}`), "refused: needs the owner's signature")
-			return nil, proto.Errf("admin_only", "%s", adminRefusal)
-		}
-		return b.nickReset(a)
 	}
 	if c.m == nil {
 		return nil, proto.Errf("not_joined", "join first")

@@ -167,8 +167,8 @@ func TestTheOwnersResetOfAProtectedNickTakesItsSecretAwayToo(t *testing.T) {
 	if code := c.call("leave", nil, nil); code != "" {
 		t.Fatalf("leave: %q", code)
 	}
-	if _, code := adminCall(t, ic.adm, ic.ownk, "nick_reset", proto.AdminRole{Chat: ic.chat, Nick: "bob"}); code != "" {
-		t.Fatalf("nick_reset: %q", code)
+	if _, code := adminCall(t, ic.adm, ic.ownk, "key_revoke", proto.AdminRole{Chat: ic.chat, Nick: "bob"}); code != "" {
+		t.Fatalf("key_revoke: %q", code)
 	}
 	if row, _ := ic.db.ActiveNickSecret(ic.chat, "bob"); row != nil {
 		t.Fatalf("the secret stayed after the reset: %+v", row)

@@ -13,7 +13,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// Administrator operations (role give/take, config set, nick reset once an owner exists) are
+// Administrator operations (role give/take, config set, keys revoke) are
 // signed with the owner key: the password is typed on the console, the broker verifies the
 // signature over the operation, its arguments and a one-time challenge.
 

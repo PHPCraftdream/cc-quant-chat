@@ -253,12 +253,6 @@ func TestChatsLoadUnloadAndResetWhileBusy(t *testing.T) {
 	for _, task := range []func(){
 		func() { b.sweep() },
 		func() { _ = b.info() },
-		func() {
-			c := b.connect(t)
-			for i, tok := range toks {
-				check("nick_reset", c.call("nick_reset", proto.NickResetArgs{Token: tok, Name: fmt.Sprintf("w%d", i)}, nil))
-			}
-		},
 	} {
 		wg.Add(1)
 		go func() {
@@ -359,7 +353,6 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 			ok("config_set", admin(c, "config_set", proto.AdminConfig{Chat: chat, Key: "board.manager_role", Value: "lead"}))
 			ok("config_set", admin(c, "config_set", proto.AdminConfig{Key: "limits.messages_per_minute", Value: "1000"}))
 			ok("role_take", admin(c, "role_take", proto.AdminRole{Chat: chat, Nick: nickName}))
-			ok("nick_reset", admin(c, "nick_reset", proto.AdminRole{Chat: chat, Nick: nickName}))
 		}
 	}()
 	time.Sleep(300 * time.Millisecond)
@@ -416,9 +409,6 @@ func TestAJoinIntoAStuckChatWaitsAndNobodyElseDoes(t *testing.T) {
 		var info proto.BrokerInfo
 		if code := b.connect(t).call("ping", nil, &info); code != "" {
 			t.Errorf("ping: %q", code)
-		}
-		if code := b.connect(t).call("nick_reset", proto.NickResetArgs{Token: tokB, Name: "dave"}, nil); code != "name_online" {
-			t.Errorf("nick reset in chat B: %q", code)
 		}
 	})
 
