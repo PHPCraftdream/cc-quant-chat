@@ -14,6 +14,7 @@ import { Card, Plain, RawCard, flip } from './cards'
 import type { Open, UI } from './cards'
 import { clean, parseBatch, parseLines, parseSent, textOf, toolKind } from './format'
 import type { Batch, Entry, Msg, ToolKind } from './format'
+import { pickBatch } from './match'
 
 // Which rows of a card are open: one value per drawn row (message or tool call), keyed by the
 // row's id. '*' stands for "all rows" (the expand/collapse-all button).
@@ -25,6 +26,10 @@ const stored = atom({ plugin: 'quant-ui', key: 'batches' } as const, [] as Store
   shape: 'batches-1',
 })
 
+// Which stored batch each row has taken (row id -> batch id), in the memory of the module: a write of state is
+// refused while a row is drawn, and a row is drawn again and again; see match.ts.
+const claimed = new Map<string, string>()
+
 const BATCH_TEXT = /ccqc: \d+ new chat event\(s\)\. /
 const KEEP = 50
 const KEEP_CHARS = 60000
@@ -34,11 +39,6 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 // The text of a row's content. The engine's type says a list of blocks, but a notification row (a Stop hook's
 // text, delivered as a task notification) keeps its content as one string, as the transcript file shows; with
 // `.filter` on a string the hook threw, nothing was stored and the card had no text. A list is read as before.
-// sameRow: two ids that name one row, one holding the other (both whole ids, not a short stub).
-function sameRow(a: string, b: string): boolean {
-  return typeof a === 'string' && typeof b === 'string' && a.length >= 32 && b.length >= 32 && (a.includes(b) || b.includes(a))
-}
-
 function rowText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -97,9 +97,9 @@ export const register: Register = on => {
     let batch: Batch | null = BATCH_TEXT.test(e.props.text) ? parseBatch(e.props.text) : null
     let raw = e.props.text
     const seen = batch ? [] : await read($, stored)
-    // The row's id and the id session.append saw name one row; they are matched whole first, then as one holding the
-    // other (an id of a row may carry a prefix or a suffix at a drawing that the stored one has not).
-    const hit = batch ? undefined : (seen.find(s => s.id === e.requestId) ?? seen.find(s => sameRow(s.id, e.requestId)))
+    // Which stored batch is this row's: see match.ts (the ids are not always one).
+    const pick = batch ? undefined : pickBatch(String(e.requestId), seen, claimed)
+    const hit = pick?.hit
     if (hit) {
       batch = parseBatch(hit.text)
       raw = hit.text
@@ -110,13 +110,14 @@ export const register: Register = on => {
       // state lost), say so rather than leave a bare summary that looks like nothing was said.
       if (e.props.origin?.kind === 'task-notification' && /^Stop hook feedback/.test(e.props.text)) {
         const ui = $.ui.resolve(e) as UI
-        // What a person can send back when it still happens: no secret in it (ids cut to eight characters, no text).
+        // What a person can send back when it still happens: whole ids (uuids, no secret), lengths and how the match
+        // went; of a stored batch only its first 60 characters.
         const debug = [
-          `row ${String(e.requestId).slice(0, 8)}, text ${e.props.text.length} chars, props: ${Object.keys(e.props).join(',')}`,
+          `row ${String(e.requestId)}, text ${e.props.text.length} chars, props: ${Object.keys(e.props).join(',')}`,
           `origin ${JSON.stringify(e.props.origin)}, task ${JSON.stringify(e.props.task ?? null)}`,
-          `batches seen by session.append: ${seen.length}${seen.length ? ' [' + seen.map(s => s.id.slice(0, 8)).join(' ') + ']' : ''}; id lengths: row ${String(e.requestId).length}, stored ${seen.map(s => s.id.length).join(' ')}`,
+          `batches seen by session.append: ${seen.length}${seen.length ? ' ' + JSON.stringify(seen.map(s => s.id)) : ''}`,
           hit
-            ? `matched a stored batch of ${hit.text.length} chars, starts ${JSON.stringify(hit.text.slice(0, 60))}; read as ${batch ? 'a batch' : 'null'}`
+            ? `matched by ${pick?.how} a stored batch of ${hit.text.length} chars, starts ${JSON.stringify(hit.text.slice(0, 60))}; read as ${batch ? 'a batch' : 'null'}`
             : 'no stored batch matched this row',
         ].join('\n')
         return Plain(ui, {

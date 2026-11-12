@@ -758,7 +758,9 @@ cleaned plain text instead of as messages.
 
 How the incoming card finds its text: the "Stop hook feedback" row is a user-role transcript
 row (`UserMessage`); the mod reads the batch from its text, or, when the row carries none, from
-the row the session appended with that text (`session.append`, matched by the row's id).
+the row the session appended with that text (`session.append`). The two ids are not always one uuid (observed: only
+the first segment is shared), so the row is matched by the whole id, then by the first segment when one batch has it, and
+last by the newest batch no other row has taken (`plugin-ui/hooks/match.ts` says what that admits).
 The parsing lives in `plugin-ui/hooks/format.ts` and depends on the exact text ccqc prints:
 `internal/mcp` has a test (`TestWireFormat`) that pins the output to
 `plugin-ui/hooks/fixtures.ts`, which the mod's own tests parse. Change the format on one side

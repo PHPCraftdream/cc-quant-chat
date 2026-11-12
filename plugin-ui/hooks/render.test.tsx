@@ -432,13 +432,56 @@ for (const [name, rowId] of [
   })
 }
 
-test('a row that no stored batch matches says what it knows, in ids and lengths only', async $ => {
+test('a row that no stored batch matches says what it knows: whole ids, how many batches, no match', async $ => {
   const props = { text: 'Stop hook feedback', origin: { kind: 'task-notification' }, isExpanded: false, task: {} }
   const ui = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: '0123abcd-aaaa-4bbb-8ccc-dddddddddddd', surface: 'terminal', props } as never)
   const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
   expect(all.includes('do not have the text of this row')).toBe(true)
-  expect(all.includes('row 0123abcd')).toBe(true)
-  expect(all.includes('id lengths: row 36')).toBe(true)
+  expect(all.includes('row 0123abcd-aaaa-4bbb-8ccc-dddddddddddd')).toBe(true)
+  expect(all.includes('batches seen by session.append: 0')).toBe(true)
   expect(all.includes('no stored batch matched this row')).toBe(true)
   await ui.unmount()
+})
+
+// The live data: the row is drawn under an id that shares only its first segment with the one session.append saw.
+test('a row whose uuid shares only the first segment with the stored one is drawn as a card', async $ => {
+  await $.session.append({
+    message: { type: 'user', content: liveRow },
+    door: 'delivery',
+    origin: { kind: 'hook', event: 'Stop' },
+    uuid: 'b93aa80f-1111-4222-8333-444444444444',
+  } as never)
+  const props = { text: 'Stop hook feedback', origin: { kind: 'task-notification' }, isExpanded: false, task: {} }
+  const ui = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: 'b93aa80f-aaaa-4bbb-8ccc-dddddddddddd', surface: 'terminal', props } as never)
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(all.includes('ccqc in 4')).toBe(true)
+  expect(all.includes('do not have the text')).toBe(false)
+  await ui.unmount()
+})
+
+// The last resort: the ids have nothing in common; the newest batch that no other row has is the row's.
+test('a row that matches by nothing gets the newest batch that no other row has taken, and a second such row the one before', async $ => {
+  for (const [uuid, mark] of [['a1000000-1111-4222-8333-444444444444', 'FIRSTMARK'], ['b2000000-1111-4222-8333-444444444444', 'SECONDMARK']]) {
+    await $.session.append({
+      message: { type: 'user', content: liveRow.replace('first line', mark) },
+      door: 'delivery',
+      origin: { kind: 'hook', event: 'Stop' },
+      uuid,
+    } as never)
+  }
+  const props = { text: 'Stop hook feedback', origin: { kind: 'task-notification' }, isExpanded: false, task: {} }
+  const draw = async (id: string) => {
+    const ui = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: id, surface: 'terminal', props } as never)
+    const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    await ui.unmount()
+    return all
+  }
+  const one = await draw('ee000001-0000-4000-8000-000000000000')
+  expect(one.includes('SECONDMARK') && !one.includes('FIRSTMARK')).toBe(true)
+  const again = await draw('ee000001-0000-4000-8000-000000000000') // drawn again: the same batch
+  expect(again.includes('SECONDMARK')).toBe(true)
+  const two = await draw('ee000002-0000-4000-8000-000000000000')
+  expect(two.includes('FIRSTMARK') && !two.includes('SECONDMARK')).toBe(true)
+  const three = await draw('ee000003-0000-4000-8000-000000000000') // nothing left that is not taken
+  expect(three.includes('do not have the text of this row')).toBe(true)
 })
