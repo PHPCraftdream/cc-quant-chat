@@ -60,6 +60,9 @@ Nicks:
                             read from stdin; avoid putting it in the arguments); the next join binds
                             a new key. Anyone with the token can do this, and the chat is told.
 
+  ccqc keys status          where the client secret of your nick keys is kept (the store of the OS, or a
+                            file with a warning) and which nicks are not protected yet
+
 Broker (started automatically; one per user):
   ccqc broker status        is it running: pid, version, uptime, chats, members, store
                             (exit code 3 when it is not running)
@@ -112,6 +115,8 @@ func main() {
 		err = runNick(os.Args[2:])
 	case "owner":
 		err = runOwner(os.Args[2:])
+	case "keys":
+		err = runKeys(os.Args[2:])
 	case "role":
 		err = runRole(os.Args[2:])
 	case "peer":
