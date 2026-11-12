@@ -104,6 +104,12 @@ func (b *Broker) runAdmin(op string, args json.RawMessage, at *store.AdminAttest
 			return nil, proto.Errf("bad_args", "%v", err)
 		}
 		return b.resetNick(r.Chat, r.Nick, at)
+	case "key_revoke":
+		var r proto.AdminRole
+		if err := json.Unmarshal(args, &r); err != nil {
+			return nil, proto.Errf("bad_args", "%v", err)
+		}
+		return b.revokeKey(r.Chat, r.Nick, at)
 	case "peer_add", "peer_remove", "peer_share", "peer_unshare", "peer_trust":
 		return b.peerAdmin(op, args)
 	case "peer_revert":

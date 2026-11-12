@@ -142,6 +142,9 @@ func renderState(local string, st *proto.State) string {
 		if m.Unsigned {
 			mark += "  [unsigned: no signing key]"
 		}
+		if m.KeyPlain {
+			mark += "  [key not protected]"
+		}
 		fmt.Fprintf(&b, "  @%s%s%s  role: %s  %s\n", m.Name, you, mark, r, status)
 	}
 	mine := set(st.MyRooms)

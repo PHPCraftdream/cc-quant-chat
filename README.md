@@ -243,8 +243,7 @@ deprecated: once the machine has an owner it is an administrator operation (sign
 owner key, password on the console) and a chat token alone frees nothing. Only in a chat
 without an owner can anyone holding the token free an offline nick and read its
 direct-message history, so there the chat is told when a key is reset.
-The nick keys themselves are kept as plain files today; protecting them is planned
-([docs/design-keys.md](docs/design-keys.md)).
+A nick key is not kept as a plain file any more: see [Protecting nick keys](#protecting-nick-keys-protocol-6).
 
 ### Addresses
 
@@ -473,6 +472,60 @@ only adds columns. **Rollback** to an older broker: nicks that moved to a key ke
 secret and join with it as before (their events are stored unsigned again). A nick that was
 first registered with a key has no secret, and an older broker sees it as free: the first join
 under that name would take it over. Roll back only with the chats' members away, or not at all.
+
+## Protecting nick keys (protocol 6)
+
+Neither the broker's data nor the client's is enough, alone, to sign as a nick. The key of a nick in a chat is
+derived (HKDF-SHA256) from two secrets of 32 random bytes: **A**, the client's (one per user and machine), and
+**B**, the broker's (its own for every chat and nick, in `node.db` only). The public key in the chat, the signatures
+of events and everything downstream are as before; the private key is nowhere as a whole: it lives in the memory
+of the session. `docs/design-keys.md` has the reasons, the formats and the threat model.
+
+- **A** is kept in the store of the OS: Windows DPAPI (a sealed blob of the current user), the macOS keychain
+  (`security`), libsecret on Linux (`secret-tool`, the secret goes through stdin). With none of them
+  (a server without a keyring) it is a file with mode 0600 **outside** `CCQC_HOME` (`CCQC_SECRET_DIR`,
+  `%LOCALAPPDATA%\ccqc`, `$XDG_STATE_HOME/ccqc` or `~/.local/state/ccqc`) and ccqc says so loudly: that is weaker,
+  a copy of both folders opens your nicks. A is made and read back before the broker is asked; a secret that
+  vanished from its store is never made again silently (the nicks it protected need new invitations).
+- **A way in** is: the client proves A (it signs a challenge with a key derived from A alone; the broker keeps
+  only the public half), the broker gives B, the client derives the nick's key and joins as usual. A protected nick
+  joins only on a connection that did this; without it, `key_not_unlocked`. After five wrong proofs in a row no
+  proof is taken for a minute, twice as long after each next one, and the chat is told at the third.
+- **Binding to the session.** A nick enrolled by a Claude Code session is given its key only to that session
+  (`keys.bind_session`, on by default; the owner can turn it off as an emergency switch). After `/clear` or a
+  compaction the session has a new id: the client says which id the broker has it bound to and why it changed,
+  the broker moves the binding one step (the nick must be offline, the proof of A must be right), tells the chat,
+  and writes both ids (eight characters) and the program and pid of the client, as the kernel reports them, to the
+  administrator log. A session with no such link (a fork, a new session, a hook that gave no id) is refused
+  (`unlock_session`); the way out is a new invitation. The ids are declared by the client, not attested: this
+  guards against a copy of A in a wrong session, not against a process that knows both A and the id.
+- **Moving the nicks that exist.** A nick with a plain key moves to a protected one **at its next join**, with the
+  proof of its old key (or, for a nick of the time of secrets, its old secret): no new invitation. The old key and every
+  copy of `nick-keys.json` (also in `backup-*` folders) are dead from that moment, because the key registered in
+  the chat is replaced; the chat is told. Until then a copy works, and whoever moves the nick first has it:
+  run `ccqc keys migrate` once to move all your nicks now (a nick that is online moves by itself at its next join).
+  The order cannot lose a nick: A is stored and read back, the broker is asked, and only then is the plain key removed
+  from `nick-keys.json`.
+- **New nicks** come by invitation as before; an invitation of this level enrolls a protected key straight away.
+  `ccqc doc` and other terminal commands use a protected nick of their own (`ccqc invite <chat> cli` once, then
+  `ccqc doc … --nick cli`), with no password per command and not bound to a session. The owner's key keeps its
+  password and is not touched.
+- **Never silent.** If the key the chat holds for a protected nick is not the one the broker has the secret for
+  (something changed it by a way that is not an invitation), the login is refused (`key_mismatch`), logged, and the
+  chat is told; an invitation of the owner heals it. A nick marked `[key not protected]` in the chat's state has a
+  plain key.
+- **Compatibility.** Earlier clients keep joining under nicks that did not move; a protected nick refuses them
+  (`key_protected`: update ccqc). A new client against an older broker keeps the plain key and says so.
+  `ccqc config set keys.require_protected on` (off by default; the owner turns it on when every client is updated)
+  closes the window: only protected keys join. `ccqc keys status` shows where A is kept and which nicks are or
+  are not protected; `ccqc keys revoke <chat> <nick>` (the owner) deletes the broker's half and frees a protected nick
+  whose client secret is lost or stolen: every copy of A is dead at once, and the nick comes back by an invitation.
+
+What this does **not** close, without embellishment: any process of the same OS user. It can read the memory of a
+live session, or call DPAPI / `security` / `secret-tool` itself, take A, state the session id (it is no secret) and
+get B from the broker; the tools of an agent of any session run as that user. A and B together (a whole disk image
+with the file store) open the nicks. A secret typed by a person per session was rejected; isolating the agents
+is a separate task.
 
 ## Where the data lives
 
@@ -744,8 +797,11 @@ and the other test fails until both agree.
   confirmations keep the old behavior (everything counts as delivered on disconnect).
 - **User config** (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — per
   folder and session id, the chats each session rejoins (with tokens; the 50 most recently
-  used sessions are kept); `nick-keys.json` — keys of your nicks. Writes go through a lock
-  file and an atomic replace, so sessions running at once don't lose each other's updates.
+  used sessions are kept); `nick-keys.json` — the plain keys of nicks that are not protected yet (empty
+  once they moved); `keystore.json` and `protected-nicks.json` — where the client secret is kept and which nicks
+  are protected (nothing secret); `client-secret.dpapi` — the client secret on Windows, sealed by DPAPI. Writes
+  go through a lock file and an atomic replace, so sessions running at once don't lose each other's updates.
+  Without a key store of the OS the client secret is a file *outside* this folder (see below).
 - **Local endpoints:** the broker's pipe/socket is checked before use: on Windows the pipe
   must be owned by you (or Administrators), on Unix the socket and its folder must belong
   to you; anything else is refused, so a program of another user can't pose as the broker.

@@ -114,3 +114,10 @@ func (b *Broker) logSession(op string, row *store.NickSecret, a proto.KeyUnlockA
 	}
 	b.logAdminMap(op, args, result)
 }
+
+// requireProtected: whether only protected keys join (the setting keys.require_protected; off by default,
+// turned on by the owner once every client is updated).
+func (b *Broker) requireProtected() bool {
+	v, _ := b.setting("", "keys.require_protected")
+	return v == "on"
+}

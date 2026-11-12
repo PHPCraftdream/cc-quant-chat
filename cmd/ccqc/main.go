@@ -33,7 +33,8 @@ Administrator operations (signed with the owner key; the owner password is typed
   ccqc config list|get [<key>] [--chat NAME]
   ccqc config set <key> <value> [--chat NAME]
                             settings applied without a restart: broker.idle, broker.grace,
-                            limits.messages_per_minute, keys.bind_session, board.manager_role (per chat)
+                            limits.messages_per_minute, keys.bind_session, keys.require_protected,
+                            board.manager_role (per chat)
 
 Chats and invitations (administrator operations; people are let in only by an invitation):
   ccqc chat new <name>                  a chat with a random id and no token
@@ -64,6 +65,9 @@ Nicks:
                             file with a warning), which nicks are protected and which are not yet
   ccqc keys migrate         move the nicks that still have a plain key (nick-keys.json) to protected keys
                             now; each also moves by itself at its next join. Copies of the old file die
+  ccqc keys revoke <chat> <nick>   (owner) a protected nick whose client secret is lost or stolen: its
+                            broker half is deleted, the nick is freed, every copy of the secret is dead; it
+                            comes back by an invitation
 
 Broker (started automatically; one per user):
   ccqc broker status        is it running: pid, version, uptime, chats, members, store

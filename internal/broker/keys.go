@@ -200,15 +200,18 @@ func (c *conn) markUnlocked(chatID, nick string) {
 // only with a client that knows how). An invitation is the way to replace the key, so it needs no
 // proof of the old one; the owner proves itself by its own key.
 func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nick, owner bool) *proto.Error {
-	if owner || a.Invite != nil || a.Enroll != nil { // a move is judged by joinMove: it needs the proof of the old key
+	if owner {
 		return nil
+	}
+	if a.Invite != nil || a.Enroll != nil { // a move is judged by joinMove: it needs the proof of the old key
+		return b.refuseUnprotected(ch, a)
 	}
 	row, err := b.protectedRow(ch.id, a.Name)
 	if err != nil {
 		return proto.Errf("store_failed", "%v", err)
 	}
 	if row == nil {
-		return nil
+		return b.refuseUnprotected(ch, a)
 	}
 	if nk == nil || nk.pub != row.SignPub { // fail closed: the protection is never dropped without a word
 		b.keyMismatch(ch, c, row, nk)
@@ -328,4 +331,39 @@ func (b *Broker) dropSecrets(chatID, nick string) {
 		_, err := ss.DeleteNickSecrets(chatID, nick)
 		logIf("remove the secret of a nick that was reset", err)
 	}
+}
+
+// refuseUnprotected is the rule of keys.require_protected: once the owner turned it on, only protected
+// keys join. A client that can't enroll (an earlier level), an invitation used for a plain key and a nick
+// with a plain key are refused with what to do; an invitation or a move that enrolls a protected key is
+// the way in.
+func (b *Broker) refuseUnprotected(ch *chat, a proto.JoinArgs) *proto.Error {
+	if !b.requireProtected() {
+		return nil
+	}
+	if a.Enroll != nil {
+		return nil
+	}
+	if a.Proto < proto.KeysProto {
+		return proto.Errf("key_protected", "this broker accepts protected keys only: update ccqc (a client of an earlier level can't join)")
+	}
+	return proto.Errf("key_unprotected", "this broker accepts protected keys only: @%s has a plain key; `ccqc keys migrate` (or the next join with an updated ccqc) moves it, an invitation of the owner enrolls a new one", a.Name)
+}
+
+// revokeKey is the owner's operation for a protected nick whose client secret is lost or stolen: the
+// broker's half of the key is deleted and the nick is freed, so every copy of A is dead at once and the
+// nick comes back only by an invitation. It is `nick_reset` that insists the nick is a protected one.
+func (b *Broker) revokeKey(chatID, nick string, at *store.AdminAttest) (any, *proto.Error) {
+	ss, ok := b.nickSecrets()
+	if !ok {
+		return nil, keysUnavailable()
+	}
+	row, err := ss.ActiveNickSecret(chatID, nick)
+	if err != nil {
+		return nil, proto.Errf("store_failed", "%v", err)
+	}
+	if row == nil {
+		return nil, proto.Errf("not_protected", "@%s has no protected key in this chat; `ccqc nick reset` frees a nick with a plain key", nick)
+	}
+	return b.resetNick(chatID, nick, at)
 }

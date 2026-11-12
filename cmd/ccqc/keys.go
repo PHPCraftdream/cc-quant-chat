@@ -15,8 +15,11 @@ func runKeys(args []string) error {
 	if len(args) == 1 && args[0] == "migrate" {
 		return runKeysMigrate()
 	}
+	if len(args) == 3 && args[0] == "revoke" {
+		return runKeysRevoke(args[1], args[2])
+	}
 	if len(args) != 1 || args[0] != "status" {
-		return errors.New("usage: ccqc keys status | migrate")
+		return errors.New("usage: ccqc keys status | migrate | revoke <chat> <nick>")
 	}
 	st, err := local.Info()
 	if err != nil {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
@@ -76,4 +77,26 @@ func firstNoteLine(note string) string {
 		}
 	}
 	return note
+}
+
+// runKeysRevoke: the owner's operation for a protected nick whose client secret is lost or stolen. The
+// broker's half of its key is deleted and the nick is freed: every copy of the secret is dead at once and
+// the nick comes back by an invitation (ccqc invite <chat> <nick>). Signed with the owner key.
+func runKeysRevoke(chat, nick string) error {
+	id, err := chatID(strings.Trim(chat, "/"))
+	if err != nil {
+		return err
+	}
+	c, err := client.Connect()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	text, err := adminDo(c, "key_revoke", proto.AdminRole{Chat: id, Nick: strings.TrimPrefix(nick, "@")})
+	if err != nil {
+		return err
+	}
+	fmt.Println(text)
+	fmt.Printf("the nick comes back by an invitation: ccqc invite %s %s\n", strings.Trim(chat, "/"), strings.TrimPrefix(nick, "@"))
+	return nil
 }
