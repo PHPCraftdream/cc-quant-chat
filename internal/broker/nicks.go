@@ -238,6 +238,7 @@ func (b *Broker) nickReset(a proto.NickResetArgs) (any, *proto.Error) {
 		return nil, e
 	}
 	nk.hash, nk.pub = "", ""
+	b.dropSecrets(ch.id, a.Name)
 	b.presence(ch, nil, "", "the key of @"+a.Name+" was reset: the next join under this nick takes it over")
 	return nil, nil
 }

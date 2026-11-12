@@ -206,12 +206,16 @@ func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nic
 	if owner || a.Invite != nil {
 		return nil
 	}
-	row, err := b.protectedRow(ch.id, a.Name, nk)
+	row, err := b.protectedRow(ch.id, a.Name)
 	if err != nil {
 		return proto.Errf("store_failed", "%v", err)
 	}
 	if row == nil {
 		return nil
+	}
+	if nk == nil || nk.pub != row.SignPub { // fail closed: the protection is never dropped without a word
+		b.keyMismatch(ch, c, row, nk)
+		return proto.Errf("key_mismatch", "the key of @%s in this chat is not the protected one the broker holds: the owner can replace it with an invitation (ccqc invite %s %s)", a.Name, ch.name, a.Name)
 	}
 	if a.Proto < proto.KeysProto {
 		return proto.Errf("key_protected", "the key of @%s is protected: update ccqc (a client of an earlier level can't join under it)", a.Name)
@@ -222,18 +226,39 @@ func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nic
 	return nil
 }
 
-// protectedRow is the secret of a nick whose key is protected: there is an active row and it is for the
-// key the chat has registered. A row for another key (the nick was re-keyed by an older client) does not count.
-func (b *Broker) protectedRow(chatID, nick string, nk *nick) (*store.NickSecret, error) {
+// protectedRow is the active secret of a nick (nil if the nick is not a protected one). Every path that
+// takes the protection away (an invitation, the owner's reset) deletes the row; a row that is still
+// there while the chat holds another key (or none) is a key that changed by a way that is not one of
+// them, and is refused (keyMismatch).
+func (b *Broker) protectedRow(chatID, nick string) (*store.NickSecret, error) {
 	ss, ok := b.nickSecrets()
-	if !ok || nk == nil || nk.pub == "" {
+	if !ok {
 		return nil, nil
 	}
-	row, err := ss.ActiveNickSecret(chatID, nick)
-	if err != nil || row == nil || row.SignPub != nk.pub {
-		return nil, err
+	return ss.ActiveNickSecret(chatID, nick)
+}
+
+// keyMismatch records a refused login that found the chat's key for a protected nick changed behind
+// the protection's back, and tells the chat (at most once an hour per nick). The caller holds the chat's lock.
+func (b *Broker) keyMismatch(ch *chat, c *conn, row *store.NickSecret, nk *nick) {
+	have := "none"
+	if nk != nil && nk.pub != "" {
+		have = "another key"
 	}
-	return row, nil
+	b.logAdminMap("key.mismatch", map[string]string{"chat": ch.id[:8], "nick": row.Nick, "chat_has": have, "peer": c.peer.String()}, "refused: the key in the chat is not the protected one")
+	b.keyMu.Lock()
+	k := "mismatch/" + pairID(ch.id, row.Nick)
+	if b.keyAlerts == nil {
+		b.keyAlerts = map[string]time.Time{}
+	}
+	told := false
+	if at, seen := b.keyAlerts[k]; !seen || time.Since(at) >= keyAlertEvery {
+		b.keyAlerts[k], told = time.Now(), true
+	}
+	b.keyMu.Unlock()
+	if told {
+		b.announceChat(ch, "the key of @"+row.Nick+" in this chat is not the protected one the broker holds ("+have+"): a login was refused; the owner can replace the key with an invitation")
+	}
 }
 
 // prepareEnroll checks what a join that enrolls a protected key brings and writes the pending row of
@@ -296,5 +321,14 @@ func (b *Broker) settleNickSecrets() {
 		}
 		b.doneChat(ch)
 		b.unloadIfEmpty(ch)
+	}
+}
+
+// dropSecrets takes the protection away from a nick: its key is being freed (the owner's reset), so
+// the row of the broker's half goes with it.
+func (b *Broker) dropSecrets(chatID, nick string) {
+	if ss, ok := b.nickSecrets(); ok {
+		_, err := ss.DeleteNickSecrets(chatID, nick)
+		logIf("remove the secret of a nick that was reset", err)
 	}
 }

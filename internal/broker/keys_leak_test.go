@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -138,5 +139,64 @@ func TestANickThatIsNotProtectedJoinsAsBeforeAtTheOldAndTheNewLevel(t *testing.T
 			t.Fatalf("level %d: %q", level, code)
 		}
 		ic.leave(t, cl, "bob")
+	}
+}
+
+// The protection is never dropped silently: when the chat holds another key for a protected nick than
+// the one the broker has the secret for (a way that is not an invitation changed it), a login is
+// refused, the administrator log has it and the chat is told. An invitation of the owner is the way out.
+func TestAProtectedNickWhoseKeyInTheChatChangedBehindItsBackIsRefusedAndTheChatIsToldAndAnInvitationHeals(t *testing.T) {
+	ic := newInvitedChat(t)
+	a := ic.session(t, "bob", sidA)
+	watch := ic.watcher(t)
+	// A change of the chat's key that is no invitation (a failure that left the two databases apart, a
+	// hand-edited projection, a path of the code that forgot the secret).
+	ic.b.inChat(ic.chat, func(ch *chat) { ch.nicks["bob"].pub = owner.Encode(newKey(t).Public().(ed25519.PublicKey)) })
+
+	for i := 0; i < 2; i++ { // every time, not only the first
+		if _, _, code := ic.login(t, "bob", a); code != "key_mismatch" {
+			t.Fatalf("login %d: %q", i, code)
+		}
+	}
+	heard := watch.heard(t, "not the protected one", 3*time.Second)
+	if !strings.Contains(heard, "@bob") || !strings.Contains(heard, "invitation") {
+		t.Fatalf("the chat was not told: %q", heard)
+	}
+	if more := watch.heard(t, "not the protected one", 300*time.Millisecond); more != "" {
+		t.Fatalf("told again at once: %q", more)
+	}
+	if l := lastOf(adminLog(t, ic), "key.mismatch"); !strings.Contains(l, `"nick":"bob"`) || !strings.Contains(l, "refused") {
+		t.Fatalf("admin log: %q", l)
+	}
+	// An older client with the changed key does not get in by "it is not protected any more" either.
+	if _, code := ic.joinWith(t, ic.b.connect(t), "bob", a, secretOf(t), proto.InviteProto); code == "" {
+		t.Fatal("an older client got in under the nick")
+	}
+	// The owner's invitation replaces the key and the nick works again.
+	a2 := secretOf(t)
+	c, _, _ := ic.enroll(t, "bob", a2)
+	ic.leave(t, c, "bob")
+	if _, w, code := ic.login(t, "bob", a2); code != "" || w.State.Me != "bob" {
+		t.Fatalf("after the invitation: %q", code)
+	}
+}
+
+// The owner's reset frees a nick and with it the broker's half of its key: a nick that is freed is not
+// "protected but mismatched".
+func TestTheOwnersResetOfAProtectedNickTakesItsSecretAwayToo(t *testing.T) {
+	ic := newInvitedChat(t)
+	a := secretOf(t)
+	c, _, _ := ic.enroll(t, "bob", a)
+	if code := c.call("leave", nil, nil); code != "" {
+		t.Fatalf("leave: %q", code)
+	}
+	if _, code := adminCall(t, ic.adm, ic.ownk, "nick_reset", proto.AdminRole{Chat: ic.chat, Nick: "bob"}); code != "" {
+		t.Fatalf("nick_reset: %q", code)
+	}
+	if row, _ := ic.db.ActiveNickSecret(ic.chat, "bob"); row != nil {
+		t.Fatalf("the secret stayed after the reset: %+v", row)
+	}
+	if _, code := ic.unlock(t, ic.b.connect(t), "bob", a); code != "unlock_unknown" {
+		t.Fatalf("unlock after the reset: %q", code)
 	}
 }

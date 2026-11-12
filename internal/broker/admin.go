@@ -243,6 +243,7 @@ func (b *Broker) resetNick(chatID, nickName string, at *store.AdminAttest) (any,
 		return nil, e
 	}
 	nk.hash = ""
+	b.dropSecrets(ch.id, nickName)
 	b.presence(ch, nil, "", "the key of @"+nickName+" was reset: the next join under this nick takes it over")
 	return proto.BoardReply{Text: "nick @" + nickName + " is free"}, nil
 }
