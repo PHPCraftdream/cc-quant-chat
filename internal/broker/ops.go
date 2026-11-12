@@ -70,6 +70,18 @@ func (b *Broker) handleGlobal(c *conn, f *proto.Frame) (any, *proto.Error) {
 		return nil, nil
 	case "challenge":
 		return b.challenge(c)
+	case "key_prepare":
+		var a proto.KeyPrepareArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.keyPrepare(c, a)
+	case "key_unlock":
+		var a proto.KeyUnlockArgs
+		if e := decode(f.Args, &a); e != nil {
+			return nil, e
+		}
+		return b.keyUnlock(c, a)
 	case "owner_info":
 		return b.ownerInfo(), nil
 	case "owner_register":

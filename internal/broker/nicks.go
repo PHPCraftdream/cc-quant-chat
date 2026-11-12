@@ -102,6 +102,9 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 	var issued string
 	var pub ed25519.PublicKey
 	nk := ch.nicks[a.Name]
+	if e := b.protectedJoinCheck(ch, c, a, nk, signed); e != nil {
+		return nil, e
+	}
 	switch {
 	case a.Invite != nil: // proto 5: a one-time invitation registers the key, or replaces the nick's
 		var e *proto.Error

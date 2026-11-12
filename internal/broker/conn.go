@@ -26,6 +26,11 @@ type conn struct {
 	nonceAt time.Time
 	// Uses of invitations tried on this connection lately (a join is served by one goroutine).
 	inviteHits []time.Time
+	// Protected keys (keys.go): the B waiting for the join that registers its key, how many were
+	// made here, and the nicks whose client proved A on this connection.
+	prep     *prepared
+	prepares int
+	unlocked map[string]bool
 }
 
 func (c *conn) close() {

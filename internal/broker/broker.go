@@ -48,6 +48,9 @@ type Broker struct {
 	setMu     sync.RWMutex
 	ownerMu   sync.RWMutex
 	ownerOpMu sync.Mutex // one change of the owner at a time
+	keyMu     sync.Mutex // the proofs of A, one at a time (the counters of wrong ones); nothing is taken after it but a database
+
+	keyAlerts map[string]time.Time // chat/nick → when the chat was last told of wrong proofs (under keyMu)
 
 	nodePriv  ed25519.PrivateKey // the node key; with it the broker starts the exchange of chats with other nodes
 	peerMgr   *peer.Manager      // nil without a store that can exchange
@@ -152,6 +155,7 @@ func Run() error {
 		b.closeStore()
 		return fmt.Errorf("owner key: %w", err)
 	}
+	b.settleNickSecrets()
 	if err := b.startPeers(b.nodePriv); err != nil {
 		b.closeStore()
 		return fmt.Errorf("exchange with other nodes: %w", err)

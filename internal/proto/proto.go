@@ -111,6 +111,8 @@ type JoinArgs struct {
 	// Invite: the use of a one-time invitation (proto 5): it registers Pub for the nick it was
 	// issued for, or replaces the key of that nick. Needs Pub and NickSig.
 	Invite *JoinInvite `json:"invite,omitempty"`
+	// Enroll (proto 6): the key registered by this join is a protected one (see keys.go).
+	Enroll *JoinEnroll `json:"enroll,omitempty"`
 }
 
 // Challenge: reply to "challenge": a one-time nonce (base64url) for OwnerSig, valid 30 s on the
@@ -214,7 +216,7 @@ type ConfigList struct {
 const OwnerNick = "owner"
 
 // ProtoVersion is the protocol level this build speaks.
-const ProtoVersion = 5
+const ProtoVersion = KeysProto
 
 // LegacyProto is the last level whose clients do not sign: they join by their secret and their
 // events are stored unsigned.
