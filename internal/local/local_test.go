@@ -49,7 +49,7 @@ func TestSessionsInOneFolderAreSeparate(t *testing.T) {
 	}
 
 	// /clear gives the session a new id: its chats move along.
-	must(MoveSession(folder, "s1", "s1b"))
+	must(MoveSession(folder, "s1", "s1b", "clear"))
 	if got := names(t, folder, "s1"); len(got) != 0 {
 		t.Fatalf("old id still has chats: %v", got)
 	}

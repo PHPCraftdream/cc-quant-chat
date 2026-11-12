@@ -26,6 +26,13 @@ type Entry struct {
 	Chat   string `json:"chat,omitempty"` // the chat's name
 	Name   string `json:"name"`
 	Alias  string `json:"alias,omitempty"`
+	// Bound is the session id the broker has a protected nick bound to, when it is not the session that
+	// holds this entry now (the session went on after /clear or a compaction and the broker has not
+	// been told yet); BoundVia says why it changed. Together they are the chain the broker is shown
+	// at the next login, and survive a restart of Claude Code (docs/design-keys.md section 8).
+	Bound     string `json:"bound,omitempty"`
+	BoundVia  string `json:"bound_via,omitempty"`
+	Protected bool   `json:"protected,omitempty"` // the nick has a protected key, bound to this session
 }
 
 // Local name of an entry: alias, the chat's name, or the chat name from the token.
@@ -245,10 +252,20 @@ func ForgetChat(folder, sessionID, localName string) error {
 	})
 }
 
-// MoveSession hands a session's chats to its new id (Claude Code starts a new id on /clear).
-func MoveSession(folder, from, to string) error {
+// MoveSession hands a session's chats to its new id (Claude Code starts a new id on /clear and after a
+// compaction; source says which). A chat whose nick is bound to a session at the broker keeps the id
+// it is bound to and learns why the id changed.
+func MoveSession(folder, from, to, source string) error {
 	return update(folder, func(f *folderFile) {
 		if s := f.Sessions[from]; s != nil && from != to {
+			for i := range s.Chats {
+				if e := &s.Chats[i]; e.Bound == "" && e.Protected {
+					e.Bound = from
+				}
+				if s.Chats[i].Bound != "" {
+					s.Chats[i].BoundVia = source
+				}
+			}
 			s.Used = now()
 			f.Sessions[to] = s
 			delete(f.Sessions, from)
@@ -273,5 +290,19 @@ func SetNickKey(chatID, nick, key string) error {
 		}
 		keys[chatID+"/"+nick] = key
 		return writeJSON(keysPath(), keys)
+	})
+}
+
+// SetBinding records, for the chat of a session, that its nick has a protected key and that the broker
+// has it bound to this session now (a join, or a login the broker accepted): no older id to tell.
+func SetBinding(folder, sessionID, localName string) error {
+	return update(folder, func(f *folderFile) {
+		if s := f.Sessions[sessionID]; s != nil {
+			for i := range s.Chats {
+				if s.Chats[i].Local() == localName {
+					s.Chats[i].Protected, s.Chats[i].Bound, s.Chats[i].BoundVia = true, "", ""
+				}
+			}
+		}
 	})
 }

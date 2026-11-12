@@ -60,7 +60,7 @@ func (s *Session) setSessionID(sid, source string, hello bool) {
 	case source == "clear" || source == "compact":
 		s.sid = sid
 		s.mu.Unlock()
-		if err := local.MoveSession(local.ProjectDir(), old, sid); err != nil {
+		if err := local.MoveSession(local.ProjectDir(), old, sid, source); err != nil {
 			log.Printf("move session chats: %v", err)
 		}
 	case source == "resume" || source == "fork" || source == "startup":

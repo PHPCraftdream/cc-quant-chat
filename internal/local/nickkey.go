@@ -101,3 +101,11 @@ func SetNickPrivateKey(chatID, nick string, priv ed25519.PrivateKey) error {
 		return writeJSON(keysPath(), keys)
 	})
 }
+
+func decodeSecretSeed(s string) ([]byte, error) {
+	seed, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil || len(seed) != ed25519.SeedSize {
+		return nil, errors.New("nick-keys.json: a saved key is damaged")
+	}
+	return seed, nil
+}

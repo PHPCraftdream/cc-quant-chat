@@ -253,3 +253,16 @@ func decodeSecret(s string) ([]byte, error) {
 	}
 	return a, nil
 }
+
+// ClientSecretIfAny returns A when the key store has been set up, and nil when it has not: it makes
+// nothing, so a client that has no protected key yet does not make a secret for nothing.
+func ClientSecretIfAny() ([]byte, Keystore, error) {
+	var kf keystoreFile
+	if err := withLock(func() error { return readJSON(keystorePath(), &kf) }); err != nil {
+		return nil, Keystore{}, err
+	}
+	if kf.Kind == "" {
+		return nil, Keystore{}, nil
+	}
+	return ClientSecret()
+}

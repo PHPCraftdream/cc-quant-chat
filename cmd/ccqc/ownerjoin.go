@@ -99,28 +99,65 @@ func joinOwner(chat, nick string, level int) (*client.Conn, string, ed25519.Priv
 	return c, chatID, priv, w, nil
 }
 
-// joinInvited enters a chat with an invitation of the terminal's own: the key it registers is kept
-// with the other nick keys of this machine. The invitation is not stored anywhere.
-func joinInvited(line string) (*client.Conn, string, string, error) {
+// joinInvited enters a chat with an invitation of the terminal's own: the key it registers is a
+// protected one (derived from the client secret and the broker's), kept nowhere in the clear. The
+// invitation is not stored anywhere. The nick has no session: it is not bound to one.
+func joinInvited(line string) (*client.Conn, *client.Signer, error) {
 	in, err := invite.Parse(line)
 	if err != nil {
-		return nil, "", "", err
-	}
-	_, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		return nil, "", "", err
+		return nil, nil, err
 	}
 	c, err := client.Connect()
 	if err != nil {
-		return nil, "", "", err
+		return nil, nil, err
 	}
 	var w proto.Welcome
-	if _, err := client.JoinInvited(c.Call, in.Nick, priv, in, &w); err != nil {
+	kj, err := client.JoinWithKeys(c.Call, client.KeyJoinInput{ChatID: in.ChatID, Nick: in.Nick, Invite: &in}, &w)
+	if err != nil {
 		c.Close()
-		return nil, "", "", err
+		return nil, nil, err
 	}
-	if err := local.SetNickPrivateKey(in.ChatID, in.Nick, priv); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: the key of nick @%s could not be saved (%v): ask for a new invitation after this\n", in.Nick, err)
+	fmt.Fprint(os.Stderr, kj.Note)
+	return c, kj.Signer, nil
+}
+
+// joinTerminal enters a chat as a nick of this machine whose key is protected (or still plain and moved at
+// this join), the way a session does but without one: the client secret proves it, no password is typed.
+func joinTerminal(chat, nick string) (*client.Conn, *client.Signer, error) {
+	c, err := client.Connect()
+	if err != nil {
+		return nil, nil, err
 	}
-	return c, in.ChatID, in.Nick, nil
+	chatID, token, err := chatForJoin(c, chat)
+	if err != nil {
+		c.Close()
+		return nil, nil, err
+	}
+	var w proto.Welcome
+	kj, err := client.JoinWithKeys(c.Call, client.KeyJoinInput{ChatID: chatID, Token: token, Nick: nick}, &w)
+	if err != nil {
+		c.Close()
+		return nil, nil, err
+	}
+	fmt.Fprint(os.Stderr, kj.Note)
+	return c, kj.Signer, nil
+}
+
+// nickKnownHere: this machine holds a key (protected, or a plain one) for a nick of that name.
+func nickKnownHere(nick string) bool {
+	if refs, err := local.NickKeyRefs(); err == nil {
+		for _, r := range refs {
+			if r.Nick == nick {
+				return true
+			}
+		}
+	}
+	if got, err := local.ProtectedNicks(); err == nil {
+		for _, k := range got {
+			if strings.HasSuffix(k, "/"+nick) {
+				return true
+			}
+		}
+	}
+	return false
 }

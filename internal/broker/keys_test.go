@@ -357,8 +357,8 @@ func TestAKeyThatIsNotProtectedTakesTheNicksProtectionAwayAndEnrollNeedsItsProof
 	pub := owner.Encode(sign.Public().(ed25519.PublicKey))
 	if code := e.call("join", proto.JoinArgs{Chat: ic.chat, Name: "bob", Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(sign, proto.NickJoinMessage(ic.chat, "bob", pub, ch.Nonce))),
-		Enroll:  &proto.JoinEnroll{AuthPub: owner.Encode(auth.Public().(ed25519.PublicKey))}}, nil); code != "bad_args" {
-		t.Fatalf("enroll without a proof: %q", code)
+		Enroll:  &proto.JoinEnroll{AuthPub: owner.Encode(auth.Public().(ed25519.PublicKey))}}, nil); code != "already_protected" {
+		t.Fatalf("a protected nick moved again: %q", code)
 	}
 	// Enroll without the B of key_prepare for this pair is refused before the invitation is spent.
 	in := ic.issue(t, "dave")

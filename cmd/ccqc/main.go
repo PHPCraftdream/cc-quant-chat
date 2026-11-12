@@ -61,7 +61,9 @@ Nicks:
                             a new key. Anyone with the token can do this, and the chat is told.
 
   ccqc keys status          where the client secret of your nick keys is kept (the store of the OS, or a
-                            file with a warning) and which nicks are not protected yet
+                            file with a warning), which nicks are protected and which are not yet
+  ccqc keys migrate         move the nicks that still have a plain key (nick-keys.json) to protected keys
+                            now; each also moves by itself at its next join. Copies of the old file die
 
 Broker (started automatically; one per user):
   ccqc broker status        is it running: pid, version, uptime, chats, members, store

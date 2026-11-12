@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
@@ -23,6 +24,7 @@ type chatConn struct {
 	name  string
 	key   string // the nick's old secret (a legacy nick moves to its key with it)
 	priv  ed25519.PrivateKey
+	auth  ed25519.PrivateKey // for a protected nick: proves the client secret on every connection (nil: a plain key)
 
 	mu      sync.Mutex
 	signer  *client.Signer // nil while the broker doesn't sign (older than proto 4)
@@ -131,6 +133,21 @@ func (cc *chatConn) reconnect() *client.Conn {
 		args := proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}
 		if cc.token == "" {
 			args.Chat = cc.id // by the key alone
+		}
+		if cc.auth != nil { // a protected nick proves A first, on every connection
+			ids := cc.s.idsFor(cc.local)
+			if _, err := client.Unlock(conn.Call, cc.auth, cc.id, cc.name, ids); err != nil {
+				conn.Close()
+				log.Printf("unlock /%s: %v", cc.local, err)
+				if proto.IsCode(err, "unlock_session") || proto.IsCode(err, "unlock_denied") || errors.Is(err, client.ErrNotProtected) {
+					cc.giveUp(err)
+					return nil
+				}
+				continue
+			}
+			if ids.PrevSID != "" { // the broker moved the binding along the chain
+				_ = local.SetBinding(local.ProjectDir(), ids.SID, cc.local)
+			}
 		}
 		signer, err := client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
 		if err != nil {

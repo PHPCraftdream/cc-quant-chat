@@ -40,14 +40,19 @@ func runDoc(args []string) error {
 		return errors.New(docUsage)
 	}
 	cmd, chat := rest[0], strings.Trim(rest[1], "/")
-	c, leave, err := joinForDoc(chat, nick, invitation)
+	c, signer, leave, err := joinForDoc(chat, nick, invitation)
 	if err != nil {
 		return err
 	}
 	defer leave()
 	call := func(a proto.DocArgs) (proto.DocReply, error) {
 		var r proto.DocReply
-		err := c.Call("doc", a, &r)
+		var err error
+		if signer != nil && a.Op == "put" { // a nick with a key signs what it writes
+			err = signer.Write(c.Call, "doc", "doc."+a.Op, &a, &r)
+		} else {
+			err = c.Call("doc", a, &r)
+		}
 		if proto.IsCode(err, "unknown_op") || proto.IsCode(err, "not_joined") {
 			err = errors.New("the running broker is older and has no document tree: run `ccqc broker restart`")
 		}
@@ -143,13 +148,20 @@ func exportDocs(call func(proto.DocArgs) (proto.DocReply, error), dir string) er
 
 // joinForDoc enters a chat for the document commands: by an invitation, by the owner's key, or (no
 // owner on this machine) as before by the token.
-func joinForDoc(chat, nick, invitation string) (*client.Conn, func(), error) {
+func joinForDoc(chat, nick, invitation string) (*client.Conn, *client.Signer, func(), error) {
 	if invitation != "" {
-		c, _, _, err := joinInvited(invitation)
+		c, sg, err := joinInvited(invitation)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return c, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+		return c, sg, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+	}
+	if nick != "" && nick != proto.OwnerNick && nickKnownHere(nick) { // a nick of this machine (protected, or still plain): no password per command
+		c, sg, err := joinTerminal(chat, nick)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return c, sg, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
 	}
 	if _, err := owner.Load(local.OwnerKeyPath()); err == nil {
 		if nick == "" {
@@ -158,14 +170,15 @@ func joinForDoc(chat, nick, invitation string) (*client.Conn, func(), error) {
 		// Proto 3: the owner's writes from a terminal are unsigned, as they were.
 		c, _, _, _, err := joinOwner(chat, nick, proto.LegacyProto)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return c, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+		return c, nil, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
 	}
 	if nick == "" {
 		nick = "cli"
 	}
-	return joinAsMember(chat, nick)
+	c, leave, err := joinAsMember(chat, nick)
+	return c, nil, leave, err
 }
 
 // joinAsMember joins a chat as an ordinary member under nick (its key kept like any nick's) and

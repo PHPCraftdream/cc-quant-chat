@@ -3,15 +3,20 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 )
 
-// runKeys: ccqc keys status. Where the client secret is kept, and what the nicks of this machine
-// are protected by (docs/design-keys.md). It reads, it makes nothing.
+// runKeys: ccqc keys status | migrate. Status: where the client secret is kept, and what the nicks of this
+// machine are protected by (docs/design-keys.md); it reads, it makes nothing. Migrate moves every nick
+// that still has a plain key to a protected one now, without waiting for its next join.
 func runKeys(args []string) error {
+	if len(args) == 1 && args[0] == "migrate" {
+		return runKeysMigrate()
+	}
 	if len(args) != 1 || args[0] != "status" {
-		return errors.New("usage: ccqc keys status")
+		return errors.New("usage: ccqc keys status | migrate")
 	}
 	st, err := local.Info()
 	if err != nil {
@@ -28,15 +33,21 @@ func runKeys(args []string) error {
 	if st.Warning != "" {
 		fmt.Println("warning:", st.Warning)
 	}
+	if prot, err := local.ProtectedNicks(); err == nil && len(prot) > 0 {
+		fmt.Println("protected nicks (chat id, nick):")
+		for _, k := range prot {
+			fmt.Printf("  %s  @%s\n", k[:min(8, len(k))], k[strings.LastIndexByte(k, '/')+1:])
+		}
+	}
 	refs, err := local.NickKeyRefs()
 	if err != nil {
 		return err
 	}
 	if len(refs) == 0 {
-		fmt.Println("nicks: none in nick-keys.json")
+		fmt.Println("nicks not protected: none in nick-keys.json")
 		return nil
 	}
-	fmt.Println("nicks in nick-keys.json (chat id, nick):")
+	fmt.Println("nicks NOT protected, in nick-keys.json (chat id, nick); `ccqc keys migrate` moves them:")
 	for _, r := range refs {
 		what := "old secret only"
 		if r.Seed {

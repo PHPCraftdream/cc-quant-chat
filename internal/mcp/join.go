@@ -1,8 +1,6 @@
 package mcp
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -84,47 +82,18 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	if t.token != "" {
 		key = local.NickKey(chatID, name) // the nick's old secret: moves a legacy nick to its key
 	}
-	var priv ed25519.PrivateKey
-	if inv != nil { // a new key: the invitation binds it to the nick (and replaces the old one, if any)
-		_, fresh, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return "", err
-		}
-		priv = fresh
-	} else {
-		var err error
-		if priv, err = local.NickPrivateKey(chatID, name); err != nil {
-			return "", fmt.Errorf("the nick key could not be read or saved: %w", err)
-		}
-	}
 	conn, err := client.Connect()
 	if err != nil {
 		return "", err
 	}
 	var w proto.Welcome
-	var signer *client.Signer
-	if inv != nil {
-		signer, err = client.JoinInvited(conn.Call, name, priv, *inv, &w)
-	} else {
-		args := proto.JoinArgs{Name: name, Key: key}
-		if t.token != "" {
-			args.Token = t.token
-		} else {
-			args.Chat = chatID
-		}
-		signer, err = client.JoinSigned(conn.Call, args, priv, chatID, &w)
-	}
+	kj, err := s.connectKeys(conn, t, name, lname, inv, &w)
 	if err != nil {
 		conn.Close()
 		return "", err
 	}
-	keyNote := ""
-	if inv != nil { // the invitation is spent: the key it registered is the way in from now on
-		if err := local.SetNickPrivateKey(chatID, name, priv); err != nil {
-			log.Printf("save nick key: %v", err)
-			keyNote = fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that the owner must issue a new invitation.\n\n", name, err)
-		}
-	}
+	signer, priv := kj.Signer, kj.Priv
+	keyNote := kj.Note
 	if w.Key != "" {
 		key = w.Key
 		if err := local.SetNickKey(chatID, name, key); err != nil {
@@ -137,7 +106,7 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	if w.Proto < proto.SigningProto {
 		brokerNote = "the broker runs an older ccqc that does not sign events: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
 	}
-	cc := &chatConn{s: s, local: lname, token: t.token, id: chatID, name: name, key: key, priv: priv, signer: signer, conn: conn,
+	cc := &chatConn{s: s, local: lname, token: t.token, id: chatID, name: name, key: key, priv: priv, auth: kj.Auth, signer: signer, conn: conn,
 		role: w.State.MyRole, rooms: set(w.State.MyRooms)}
 
 	s.mu.Lock()
@@ -153,6 +122,13 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	remembered := ""
 	if !auto {
 		remembered = s.remember(local.Entry{Token: t.token, ChatID: chatID, Chat: chatName, Name: name, Alias: alias})
+	}
+	if kj.Protected { // the broker has the nick bound to this session now
+		if sid := s.sessionID(); sid != "" {
+			if err := local.SetBinding(local.ProjectDir(), sid, lname); err != nil {
+				log.Printf("record the binding: %v", err)
+			}
+		}
 	}
 	if auto {
 		cc.presence(fmt.Sprintf("auto-joined /%s as @%s", lname, name))

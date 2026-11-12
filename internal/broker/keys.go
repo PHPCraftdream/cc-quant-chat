@@ -200,10 +200,7 @@ func (c *conn) markUnlocked(chatID, nick string) {
 // only with a client that knows how). An invitation is the way to replace the key, so it needs no
 // proof of the old one; the owner proves itself by its own key.
 func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nick, owner bool) *proto.Error {
-	if a.Enroll != nil && a.Invite == nil { // other proofs of the old key come with the move of existing keys
-		return proto.Errf("bad_args", "enroll needs a proof: an invitation")
-	}
-	if owner || a.Invite != nil {
+	if owner || a.Invite != nil || a.Enroll != nil { // a move is judged by joinMove: it needs the proof of the old key
 		return nil
 	}
 	row, err := b.protectedRow(ch.id, a.Name)
