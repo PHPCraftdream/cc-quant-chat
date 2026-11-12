@@ -1,6 +1,6 @@
 # ccqc — chat between Claude Code sessions over local IPC
 
-Claude Code sessions on one machine that know a chat token join it under their own
+Claude Code sessions on one machine that are let into a chat by an invitation join it under their own
 nicks, see the members and their roles, post to the common chat, rooms and direct
 messages, and search the history. Incoming messages wake the receiving session by
 themselves, even when it is idle. Several sessions can work in one folder, each in its
@@ -31,11 +31,11 @@ From then on the sessions see each other; ask one to "write @alice directly: …
 ## First run: the owner, a chat, an invitation
 
 People are let into a chat by **one-time invitations**; knowing a chat's name or id is not enough,
-and there is no token to leak. Four steps, in your own terminal:
+and there is nothing else to leak. Four steps, in your own terminal:
 
 ```sh
 ccqc owner init                    # 1. you become the owner of ccqc on this machine (a password, typed on the console)
-ccqc chat new team                 # 2. a chat with a random id and no token
+ccqc chat new team                 # 2. a chat with a random id
 ccqc invite team bob               # 3. one line `ccqc1.…` for the nick bob (valid 15 minutes; --ttl 2h, up to 7d)
 # 4. give the line to the person (or session) by your own channel; there:
 /quant-join ccqc1.…
@@ -50,12 +50,11 @@ or burns, and when it replaces the key of a nick (`ccqc invite team bob` for a n
 replaces its key: the old key stops working). `ccqc invite list team` shows the first 8 characters
 of each id, the nick, the time and the state (never the secret); `ccqc invite revoke team <id>` withdraws one.
 
-**Chats that already exist** (made with `ccqc token new`, id = hash of the token) stay on their token for
-the nicks that are already bound to a key: those sessions and clients go on as before. Once an owner
-exists a token no longer registers a new nick or moves one to a key, and makes no chat: new people
-and key replacements come by invitation (`ccqc invite <chat> <nick>` works for old chats too). To
-leave tokens behind altogether, make a new chat with `ccqc chat new` and invite everyone into it.
-`ccqc nick reset` is gone: `ccqc keys revoke` (the owner) frees a protected nick, an invitation brings it back.
+There is no entry by a chat token any more: a chat is joined by its id and a nick enters by an invitation, or, once it
+has a key, by that key. A chat that was made with a token before keeps its id (the hash of the token) and its
+nicks: sessions join it by id, and the first read of a folder file in `CCQC_HOME` turns an old entry that holds a
+token into an entry of the chat and erases the token. `ccqc keys revoke` (the owner) frees a protected nick, an
+invitation brings it back.
 
 ## Install
 
@@ -137,12 +136,11 @@ the conversation:
 - **Not covered:** a session whose MCP server still runs the old code (it was started
   before the update) has no confirmations and no retry until Claude Code is restarted in
   it; the broker tells such a session so at join, and `ccqc broker status` shows how many
-  connected clients run each protocol level (`proto 0` = old). Restart those sessions, or
+  connected clients run each protocol level. Restart those sessions, or
   update while the chats are quiet.
-- **No way back without a copy of the data.** The new broker lays the single database
-  `ccqc.db` out into chat files (see "Where the data lives"); the old file is kept as
-  `ccqc.db.migrated`, an older binary does not know the new layout. Copy the data directory
-  (`ccqc db path`) before updating if you may want to go back.
+- **No way back without a copy of the data.** An older binary does not know the layout of the data
+  directory or the keys of the nicks. Copy the data directory (`ccqc db path`) before updating if you may
+  want to go back.
 - **Windows:** the installer works around the locked `ccqc.exe`. A build placed in
   `plugin/bin/` by hand (`go build -o plugin/bin/ ./cmd/ccqc`) fails while a session of this
   folder or the broker runs that file: run `ccqc broker stop`, close those sessions, build,
@@ -179,7 +177,7 @@ without any shell:
 The broker keeps a status only while the member is present (nothing is stored): it vanishes
 when the member leaves, and the session sends it again after a reconnect or a broker restart.
 Updates are partial (a busy flag doesn't touch the note), limited to 120 a minute per nick,
-and raise no event: nobody is woken. Clients older than protocol level 3 show no status.
+and raise no event: nobody is woken.
 
 ### Per folder (recommended)
 
@@ -190,7 +188,7 @@ and raise no event: nobody is woken. Clients older than protocol level 3 show no
   `ccqc` by name elsewhere (so no machine paths end up in the folder);
 - `.claude/settings.local.json` — the hooks and the permission `mcp__ccqc`.
 
-It is idempotent and never writes tokens; restart Claude Code in the folder afterwards.
+It is idempotent and writes no secrets; restart Claude Code in the folder afterwards.
 
 ### As a plugin (every folder)
 
@@ -201,7 +199,7 @@ claude plugin marketplace add <path to this repository>
 claude plugin install quant@ccqc-local
 ```
 
-Commands: `/quant:join <token> <nick>`, `/quant:leave <chat>`. So that replies don't ask
+Commands: `/quant:join <invitation>`, `/quant:leave <chat>`. So that replies don't ask
 for permission each time, add `"mcp__plugin_quant_chat"` to `permissions.allow` in
 `~/.claude/settings.json`. Don't enable the plugin in a folder that is also set up with
 `/quant-setup`, or the session gets two chat servers.
@@ -221,7 +219,6 @@ and nothing is delivered twice. Without either, `chat_inbox` returns what arrive
 ```
 /quant-join ccqc1.…                # folder set up with /quant-setup; a one-time invitation
 /quant:join ccqc1.…                # plugin
-/quant-join team.Xy… <nick>        # an older chat, by its token (see "First run")
 ```
 
 A join is remembered for **that session** (by its Claude Code session id):
@@ -231,8 +228,8 @@ Switching to another session inside one Claude Code process (`/resume`) leaves t
 session's chats (they stay remembered for it) and joins the new session's. What the join
 at session start came to is reported to Claude honestly: joined, or not joined and why.
 
-A nick is required. The first join registers it in the chat and binds it to a key kept in
-the user's ccqc config, so nobody else can take the nick and read its direct messages; two
+A nick is required. Its invitation registers it in the chat and binds it to a key that only this machine can
+derive (see below), so nobody else can take the nick and read its direct messages; two
 sessions can't be online under one nick. Every join brings what was missed while away
 (up to 100 newest; the rest via `chat_timeline` / `chat_history`).
 
@@ -241,7 +238,7 @@ yours), ask the owner for a new invitation: `ccqc invite <chat> <nick>` replaces
 key (the old key stops working), and its history and rooms stay. If the client secret was stolen,
 the owner runs `ccqc keys revoke <chat> <nick>` first: the broker's half of the key is deleted and the nick is
 free until an invitation brings it back.
-A nick key is not kept as a plain file any more: see [Protecting nick keys](#protecting-nick-keys-protocol-6).
+How a nick key is kept: see [Protecting nick keys](#protecting-nick-keys).
 
 ### Addresses
 
@@ -260,7 +257,7 @@ carries a ready `reply` address.
 
 | Tool | What it does |
 |---|---|
-| `chat_join`, `chat_leave` | join by token under a nick (remembered for the session) / leave |
+| `chat_join`, `chat_leave` | join by an invitation (remembered for the session) / leave |
 | `chat_state` | members with roles and online status, rooms; without `chat` — all chats of the session |
 | `chat_send` | send to an address |
 | `chat_history` | history of a room or dialog; page back with `before=<id>` |
@@ -299,8 +296,8 @@ chat reads and writes (`canDocs` is the one place a rule will go); writes share 
 limit of 60 changes a minute per nick, and nobody is woken: the others see a quiet line
 (`alice updated /arch/broker v4`). With `CCQC_STORE=memory` the tool answers `docs_unavailable`.
 
-For people, as an ordinary member (the token comes from your sessions' config, else it is asked
-for on the console; no owner password): `ccqc doc tree <chat> [prefix]`, `ccqc doc get <chat>
+For people, with the owner's key (password on the console; the nick `owner`, `--nick` to change), with a protected
+nick of this machine (`--nick`, no password) or with an invitation of its own (`--invite`): `ccqc doc tree <chat> [prefix]`, `ccqc doc get <chat>
 <path>` (the page on stdout), `ccqc doc put <chat> <path> <file|->`, `ccqc doc export <chat>
 <dir>` (the tree as `.md` files). The `quant-ui` mod draws no card for `doc`.
 
@@ -403,8 +400,9 @@ ccqc owner rotate          # new key, the request signed with the old one
   join carries the signature of `ccqc/v1/owner-join`, chat id, nick and nonce. A bad or absent
   signature refuses the join (`bad_owner_sig`) rather than joining without the mark. Once an
   owner exists, the nick `owner` is reserved for it (`reserved` for unsigned joins).
-  `owner say` uses the nick `owner` (`--nick` to change); its nick key is kept like any nick's,
-  and it takes the chat token from your sessions' config, or asks for it on the console.
+  The owner enters a chat under a nick by this signature every time, with no secret and no nick key of its
+  own; a nick that is protected by a key of its own is not entered by the owner (`name_taken`).
+  `owner say` uses the nick `owner` (`--nick` to change).
 - **Changes of the owner key are loud.** On registration and on `rotate` the broker sends an
   event to every present member of every loaded chat (`owner key registered: <fingerprint>`).
   `owner init` refuses when a key is registered and prints its fingerprint and time;
@@ -432,20 +430,11 @@ on journal rows (`messages`, `board_log`, `board_comments`, `doc_versions`) toge
 `lamport`, a logical clock per chat. Nothing is synchronized yet; this is groundwork for merging
 databases of several brokers later (see `docs/design-federation.md`).
 
-## Nick keys and signed events (protocol 4)
+## Nick keys and signed events
 
-A nick is an Ed25519 key pair. The private key lives in `nick-keys.json` next to the nick's old
-secret (`<chat id>/<nick>/ed25519`); the broker stores the public key (`nicks.pubkey`). Joining
-is a challenge and a signature (`challenge`, then `join` with `pub` and `nick_sig`), like the
-owner's, so a session proves it holds the key without sending it.
-
-**Existing nicks move to a key at their next join**: the client presents its old secret and the
-new public key, the broker checks the secret and binds the key. From then on the secret alone no
-longer opens that nick (`name_taken`), so a replayed old secret is refused; `ccqc nick reset`
-frees the nick (key and secret) as before. A client of an earlier level (proto 3) keeps joining by
-its secret for as long as its nick has no key, and its events are stored unsigned: such nicks are
-marked `[unsigned: no signing key]` in the chat state. No action is needed: the first session that
-runs this version binds the key.
+A nick is an Ed25519 key pair; the broker stores the public key (`nicks.pubkey`) and the private one is never
+stored as a whole (see "Protecting nick keys"). Joining is a challenge and a signature (`challenge`, then `join`
+with `pub` and `nick_sig`), like the owner's, so a session proves it holds the key without sending it.
 
 **Author-signed events.** A message, a board change (with its journal entry, comment or revert)
 and a document version are signed by their author over `chat id`, the broker's `origin`
@@ -458,20 +447,12 @@ The broker checks the signature before it writes and keeps `author_pub`, `sig` a
 stored (`bad_signature`). `lamport` comes from the broker (op `clock`) and must be exactly the
 chat's next value: when another write took it first the broker answers `stale_clock` with the
 current value and the client signs again (up to 5 times). A client that has a key but sends no
-signature is refused (`unsigned`).
+signature is refused (`unsigned`); so is a join at a protocol level below 6 (`old_client`).
 
-`ccqc owner say` signs with the owner key, so the `OWNER` marker of a message can be checked
-against the message itself. `ccqc doc` and `ccqc nick reset` stay unsigned (the `doc` command
-joins at the previous level, with its nick's secret).
+`ccqc owner say` and `ccqc doc` sign with the owner key (or with the nick key of the protected nick they
+are run as), so the `OWNER` marker of a message can be checked against the message itself.
 
-Compatibility: a proto 3 client against this broker, and this client against an older broker
-(it falls back to the secret and does not sign), work both ways. Migration `0009_signatures.sql`
-only adds columns. **Rollback** to an older broker: nicks that moved to a key keep their old
-secret and join with it as before (their events are stored unsigned again). A nick that was
-first registered with a key has no secret, and an older broker sees it as free: the first join
-under that name would take it over. Roll back only with the chats' members away, or not at all.
-
-## Protecting nick keys (protocol 6)
+## Protecting nick keys
 
 Neither the broker's data nor the client's is enough, alone, to sign as a nick. The key of a nick in a chat is
 derived (HKDF-SHA256) from two secrets of 32 random bytes: **A**, the client's (one per user and machine), and
@@ -497,25 +478,15 @@ of the session. `docs/design-keys.md` has the reasons, the formats and the threa
   administrator log. A session with no such link (a fork, a new session, a hook that gave no id) is refused
   (`unlock_session`); the way out is a new invitation. The ids are declared by the client, not attested: this
   guards against a copy of A in a wrong session, not against a process that knows both A and the id.
-- **Moving the nicks that exist.** A nick with a plain key moves to a protected one **at its next join**, with the
-  proof of its old key (or, for a nick of the time of secrets, its old secret): no new invitation. The old key and every
-  copy of `nick-keys.json` (also in `backup-*` folders) are dead from that moment, because the key registered in
-  the chat is replaced; the chat is told. Until then a copy works, and whoever moves the nick first has it:
-  run `ccqc keys migrate` once to move all your nicks now (a nick that is online moves by itself at its next join).
-  The order cannot lose a nick: A is stored and read back, the broker is asked, and only then is the plain key removed
-  from `nick-keys.json`.
-- **New nicks** come by invitation as before; an invitation of this level enrolls a protected key straight away.
+- **Nicks** come by invitation; an invitation enrolls a protected key straight away.
   `ccqc doc` and other terminal commands use a protected nick of their own (`ccqc invite <chat> cli` once, then
   `ccqc doc … --nick cli`), with no password per command and not bound to a session. The owner's key keeps its
   password and is not touched.
 - **Never silent.** If the key the chat holds for a protected nick is not the one the broker has the secret for
   (something changed it by a way that is not an invitation), the login is refused (`key_mismatch`), logged, and the
-  chat is told; an invitation of the owner heals it. A nick marked `[key not protected]` in the chat's state has a
-  plain key.
-- **Compatibility.** Earlier clients keep joining under nicks that did not move; a protected nick refuses them
-  (`key_protected`: update ccqc). A new client against an older broker keeps the plain key and says so.
-  `ccqc config set keys.require_protected on` (off by default; the owner turns it on when every client is updated)
-  closes the window: only protected keys join. `ccqc keys status` shows where A is kept and which nicks are or
+  chat is told; an invitation of the owner heals it.
+- **No other way in.** A client below protocol level 6 is refused (`old_client`: update ccqc), and there is no plain
+  key. `ccqc keys status` shows where A is kept and which nicks are or
   are not protected; `ccqc keys revoke <chat> <nick>` (the owner) deletes the broker's half and frees a protected nick
   whose client secret is lost or stolen: every copy of A is dead at once, and the nick comes back by an invitation.
 
@@ -533,7 +504,6 @@ The data of a broker is a directory (`ccqc db path`):
 node.db                  the node: owner key, origin (identity), administrator log,
                          broker-wide settings, the index of chats
 chats/<chat id>.db       one chat, whole: its journal of events and everything built from it
-ccqc.db.migrated         the single database of earlier versions, kept as a reserve
 ```
 
 A chat is a file: copy it, hand it to another node, delete it or repair it on its own; a damaged
@@ -543,23 +513,11 @@ unloads it. Files are `0600`, directories `0700`. The index in `node.db` is a co
 in `chats/` that it does not list is picked up at start, its name read from the file itself.
 
 `CCQC_DB` names a file, default `<user config dir>/ccqc/ccqc.db` (`%APPDATA%\ccqc\ccqc.db` on
-Windows). The directory of that file is the data directory. If the file exists it is the single
-database of earlier versions, and it is laid out into `node.db` and `chats/` once, at the first
-start of the broker with this version; if it does not exist there is nothing to lay out.
+Windows); only the directory of that file matters: it is the data directory. A data directory of a version that
+kept everything in one `ccqc.db` is not read any more.
 
-**Laying out** (the log says how long it took): the broker first brings the old file to its last
-schema (it is only changed if it is older than 0009), copies the owner, origins, the
-administrator log and the broker-wide settings into `node.db`, and then each chat into a
-temporary file `chats/<id>.db.tmp`, makes the journal of the chat inside it (below), and renames
-it into place; the mark that the chat is done goes into `node.db` after that. When all chats are
-done the old file is renamed to `ccqc.db.migrated`. An interruption at any step is safe: a
-leftover temporary file is removed, finished chats are not touched, a file that is in place but
-not marked is recognized as complete. Running it again does nothing. Until it is done no chat is
-opened, so that a new empty file cannot hide old rows.
-
-Schemas: three embedded sets of migrations in `internal/store/sqlite` (`migrations_node`,
-`migrations_chat`, and `migrations_legacy`, which only brings an old single database to its last
-schema for the layout), applied by `internal/migrate`: each in its own transaction, recorded with
+Schemas: two embedded sets of migrations in `internal/store/sqlite` (`migrations_node`,
+`migrations_chat`), applied by `internal/migrate`: each in its own transaction, recorded with
 a checksum in `schema_migrations`; editing an applied migration or opening a file migrated by a
 newer binary is an error; forward-only. `ccqc db status [--chat X]` shows the state of `node.db`
 and of each chat file; `ccqc db migrate [--chat X]` applies pending migrations (the broker does it
@@ -590,15 +548,9 @@ settings are **projections** of the journal; reads still go to them. The read cu
   database, compares them with the current ones and replaces the tables that differ (the read
   cursors are kept). With an owner registered it asks for the owner's password. Both commands
   work on the chat files, so the broker must be stopped.
-- The journal of a chat laid out from an old database: rows keep their payload, key and
-  signature (unsigned ones get an empty signature). Board state without per-change history
-  (tasks, sprints, comments, the process) and the pages come in as one snapshot event each
-  (`import.board`, `import.docs`).
 - Events of nicks, rooms and settings carry the chat's clock as it is, without advancing it, so the
   rule "a signed write carries the next clock value" is unchanged.
-- The journal grows with the history (about as much as the messages themselves): `CCQC_SCALE=1 go
-  test ./internal/store/sqlite -run TestJournalScale -v` prints the sizes and the start times on a
-  database of 100,000 messages.
+- The journal grows with the history (about as much as the messages themselves).
 - **Rollback** to a broker without the journal or without chat files is not supported: copy the
   data directory before updating.
 
@@ -702,9 +654,8 @@ shared is not transferred, and a node that was not added (or invited) cannot con
   it is no longer listened to (`peer list` shows it).
 - What is private goes across **redacted** (a header and hashes: the chain and the node's
   signature still verify, the content is not readable): direct messages, settings, pinned roles
-  and the snapshots of a pre-journal database (`import.*`, so the board and pages of a chat that
-  was laid out from an old database are not transferred). Who a nick is (name, key) goes whole;
-  the hash of its secret and its read cursor are node state and never leave.
+  and the snapshots of a pre-journal database (`import.*`; the board and pages of such a chat are not
+  transferred). Who a nick is (name, key) goes whole; its read cursor is node state and never leaves.
 - What arrives is applied to the chat: messages, who the members of the other node are, and its
   rooms. A member of another node is shown as `nick@abcd` (abcd: the first four characters of its node's
   origin, longer if two nodes of the chat share them; your own members have no suffix), in the member list, in rooms and as the sender of a
@@ -745,7 +696,7 @@ traffic as cards instead:
 - **reading**: `chat_history`, `chat_timeline`, `chat_search`, `chat_context`, `chat_inbox`
   and the unread part of `chat_join` draw the same message rows (`chat_context` marks the
   messages it was asked about). The `chat_join` card shows the chat and nick, never the
-  token.
+  invitation.
 
 It works under either way of connecting the chat (tools `mcp__ccqc__*` from `/quant-setup`,
 or `mcp__plugin_quant_chat__*` from the plugin) because it is a separate plugin of its own:
@@ -761,7 +712,7 @@ claude plugin install quant-ui@ccqc-local
 
 Display only: the tools' inputs and outputs, what the model reads and the permissions are
 untouched. Control characters and escape sequences in a message (another agent writes
-it) are shown as visible symbols, never sent to your terminal, and chat tokens are masked
+it) are shown as visible symbols, never sent to your terminal, and strings shaped like a chat token are masked
 wherever they appear. `ctrl+o` shows the engine's own rows. A wake-up whose text does not
 hold exactly the events its header counts (a message imitating an event header) is shown as
 cleaned plain text instead of as messages.
@@ -776,7 +727,8 @@ and the other test fails until both agree.
 
 - **Transport:** a named pipe `\\.\pipe\ccqc-<user>` restricted to the current user on
   Windows, a `0600` unix socket on Linux/macOS (guarded by a lock file, so two brokers
-  can't start at once). A chat is identified by `SHA-256(token)`; the token is never stored.
+  can't start at once). A chat is identified by its id (64 hex characters; random for a chat made by
+  `ccqc chat new`).
 - **Storage:** SQLite in WAL mode (pure-Go driver, no cgo): `node.db` and one file per chat in
   the directory of `CCQC_DB` (see "Where the data lives"): chats, nicks (key hashes and
   public keys only), rooms, membership, messages (text as is; files are created private to
@@ -785,7 +737,7 @@ and the other test fails until both agree.
   whose file can't be read or is of a newer version is not joined (the others work), and a
   message or room change that can't be stored is refused, not delivered.
   `CCQC_STORE=memory` runs without saving, on purpose.
-- **Migrations:** `internal/store/sqlite/migrations_node|chat|legacy/NNNN_name.sql`, applied by
+- **Migrations:** `internal/store/sqlite/migrations_node|chat/NNNN_name.sql`, applied by
   the broker (`internal/migrate`) when it opens `node.db` or a chat. Forward-only: to roll back,
   restore a copy of the data directory. `ccqc db path|status|migrate|verify|rebuild`.
 - **Presence:** a disconnected member stays present for 60 s (`CCQC_GRACE`), then goes
@@ -795,12 +747,10 @@ and the other test fails until both agree.
   showed the backlog), not when a connection ends. After a lost connection, a broker
   restart or a hook that died, what was not confirmed is delivered again and repeats are
   dropped by message id. The one gap left: a batch handed to a hook process that is killed
-  before it prints; `chat_inbox` and `chat_timeline` cover that. Older clients without
-  confirmations keep the old behavior (everything counts as delivered on disconnect).
+  before it prints; `chat_inbox` and `chat_timeline` cover that.
 - **User config** (`CCQC_HOME`, default `<user config dir>/ccqc`): `folders/*.json` — per
-  folder and session id, the chats each session rejoins (with tokens; the 50 most recently
-  used sessions are kept); `nick-keys.json` — the plain keys of nicks that are not protected yet (empty
-  once they moved); `keystore.json` and `protected-nicks.json` — where the client secret is kept and which nicks
+  folder and session id, the chats each session rejoins (by chat id; the 50 most recently
+  used sessions are kept); `keystore.json` and `protected-nicks.json` — where the client secret is kept and which nicks
   are protected (nothing secret); `client-secret.dpapi` — the client secret on Windows, sealed by DPAPI. Writes
   go through a lock file and an atomic replace, so sessions running at once don't lose each other's updates.
   Without a key store of the OS the client secret is a file *outside* this folder (see below).
@@ -836,8 +786,8 @@ locked binary.
 
 - The broker serves the newest 10000 messages per room/dialog for history, search and
   context; older ones stay in the database but aren't served yet.
-- The token ends up in the model's context and in the session transcript on disk; it is
-  also stored in the user's ccqc config for rejoining. Don't share it outside the chat.
+- An invitation typed into a session ends up in the model's context and in the transcript on disk; it works
+  once and is spent by the join, but don't share it outside the chat before it is used.
 - Limits: 8 KiB per message; per nick (not reset by leaving and rejoining) 30 messages and
   60 room/role changes per minute; topics up to 200 bytes; 100 rooms per chat.
 - Migrations that rebuild tables other tables point to start with
