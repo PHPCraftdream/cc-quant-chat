@@ -109,7 +109,7 @@ export const register: Register = on => {
     const state = memberOf(open, e)
     const o = await read($, state)
     const toggle = (k: string) => update($, state, m => flip(m, k))
-    const title = batch.omitted > 0 ? `ccqc ← ${batch.count} (last ${batch.count - batch.omitted} shown)` : `ccqc ← ${batch.count}`
+    const title = batch.omitted > 0 ? `ccqc in ${batch.count} (last ${batch.count - batch.omitted} shown)` : `ccqc in ${batch.count}`
     if (!batch.intact) {
       return RawCard(ui, { key: 'in', title: `${title} · unparsed`, color: 'yellow', text: raw, open: o, onToggle: toggle })
     }
@@ -139,7 +139,7 @@ export const register: Register = on => {
     const o = await read($, state)
     const toggle = (k: string) => update($, state, m => flip(m, k))
     const onAll = (v: boolean) => update($, state, () => ({ '*': v, '*+': v }))
-    const { title, subtitle } = kind === 'send' ? { title: 'ccqc →', subtitle: str(input.to) } : heading(kind, input)
+    const { title, subtitle } = kind === 'send' ? { title: 'ccqc out', subtitle: str(input.to) } : heading(kind, input)
 
     if (e.props.isRunning) {
       return Plain(ui, { title: `${title} ${clean(subtitle ?? '')}`.trim(), color: 'gray', text: '…', dim: true })
@@ -164,7 +164,7 @@ export const register: Register = on => {
       }
       return Card(ui, {
         key: 'out',
-        title: `ccqc → ${clean(str(input.to))}`,
+        title: `ccqc out ${clean(str(input.to))}`,
         subtitle: id ? `#${id}` : undefined,
         color: 'green',
         entries: [msg],
@@ -187,6 +187,14 @@ export const register: Register = on => {
       onAll,
       maxNotes: kind === 'join' ? 14 : undefined,
     })
+  })
+
+  // Claude Code folds a run of calls (MCP calls among them: "Called ccqc") into one count line, and a
+  // ToolUse hook is not asked for a call that is folded. A group that holds a chat call is unfolded where it
+  // is: each call is then a ToolUse row of its own and the cards above draw it.
+  on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
+    if (e.props.isExpanded || !e.props.calls.some(c => toolKind(c.tool))) return next(e)
+    return next({ ...e, props: { ...e.props, isExpanded: true } })
   })
 
   // The result is part of the card: nothing is drawn under it again.

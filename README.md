@@ -734,12 +734,16 @@ By default a wake-up shows in Claude Code as a bare "Stop hook feedback" row. Th
 `quant-ui` plugin (folder `plugin-ui/`, a Claude Code *mod*, early-access API) draws chat
 traffic as cards instead:
 
-- **incoming**: one card per wake-up, `ccqc ← N`, a row per message (address, `#id`, time,
-  sender(role) → addressee). Collapsed it shows the first line of each text, truncated to
-  the width; a click on a row opens its full text, another click closes it; `[expand all]` /
-  `[collapse all]` act on the whole card. Direct messages, messages addressed to you and
+- **incoming**: one card per wake-up, `ccqc in N`, a row per message (address, `#id`, time,
+  sender(role) → addressee). Messages are shown open: up to 12 lines of the text, the rest
+  behind `… N more lines`; a click on a row's header folds it to its first line, another
+  opens it again; `[collapse all]` / `[expand all]` act on the whole card. The card is drawn
+  from the text the row had when it was appended; a row the cards never saw (a session
+  resumed from its file) says so, and ctrl+o shows the engine's own row. Direct messages, messages addressed to you and
   other room messages get different marks and colors; presence lines are dim;
-- **outgoing**: `chat_send` becomes `ccqc → <address>` with the text and `#id`, red on error;
+- **outgoing**: `chat_send` becomes `ccqc out <address>` with the text (open, as above) and `#id`, red on
+  error. Claude Code folds MCP calls into one line (`Called ccqc`); the mod unfolds a group
+  that holds a chat call, so the card is drawn;
 - **reading**: `chat_history`, `chat_timeline`, `chat_search`, `chat_context`, `chat_inbox`
   and the unread part of `chat_join` draw the same message rows (`chat_context` marks the
   messages it was asked about). The `chat_join` card shows the chat and nick, never the

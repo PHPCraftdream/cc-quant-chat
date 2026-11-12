@@ -37,7 +37,7 @@ test('a batch draws as a card, every message open; a click folds one, another op
       (await ui.find({ type: 'Text', text: re }))?.text ??
       'MISSING of ' + JSON.stringify((await ui.findAll({ type: 'Text' })).map(t => t.text))
 
-    seen.push(`${surface} title ${await text(/ccqc ← 4/)}`)
+    seen.push(`${surface} title ${await text(/ccqc in 4/)}`)
     seen.push(`${surface} first ${await text(/hello all/)}`)
     // Open as it comes: what was said is read without a click.
     seen.push(`${surface} open ${JSON.stringify(await text(/^multi\nline$/))}`)
@@ -57,7 +57,7 @@ test('a batch draws as a card, every message open; a click folds one, another op
   const want: string[] = []
   for (const surface of SURFACES) {
     want.push(
-      `${surface} title ccqc ← 4`,
+      `${surface} title ccqc in 4`,
       `${surface} first hello all`,
       `${surface} open "multi\\nline"`,
       `${surface} folded multi  (+1 line)`,
@@ -133,7 +133,7 @@ test('chat_send draws an outgoing card; a failure is told', async $ => {
     ),
     surface: 'terminal',
   })
-  expect(await sent.find({ type: 'Text', text: /ccqc → \/team\/@common\/@alice/ })).toBeDefined()
+  expect(await sent.find({ type: 'Text', text: /ccqc out \/team\/@common\/@alice/ })).toBeDefined()
   expect(await sent.find({ type: 'Text', text: /#12/ })).toBeDefined()
   // The whole text is shown, as it was sent; a click on the header folds it to one line.
   expect((await sent.find({ type: 'Text', text: /^hi there\nsecond line$/ }))?.text).toBe('hi there\nsecond line')
@@ -250,7 +250,7 @@ test('the exact hook text a person saw: one card, the event told apart, no tag',
     '[/ccqc-team/@direct #112 2026-11-12T09:47:23Z ↩#110] dev-main → @main-expert: a text\nof two lines   (reply: /ccqc-team/@direct/@dev-main)\n\n</system-reminder>'
   const ui = await $.ui.mount({ ...row(text, 'exact'), surface: 'terminal' })
   const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
-  expect(all.includes('ccqc ← 1')).toBe(true)
+  expect(all.includes('ccqc in 1')).toBe(true)
   expect(all.includes('unparsed')).toBe(false)
   expect(all.includes('system-reminder')).toBe(false)
   await ui.unmount()
@@ -271,7 +271,7 @@ test('the notification row of a Stop hook, as the engine hands it: the summary i
   const props = { text: 'Stop hook feedback', origin: notificationOrigin, isExpanded: false }
   const ui = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: uuid, surface: 'terminal', props } as never)
   const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
-  expect(all.includes('ccqc ← 2')).toBe(true)
+  expect(all.includes('ccqc in 2')).toBe(true)
   expect(all.includes('unparsed')).toBe(false)
   expect(all.includes('dev-main is back')).toBe(true) // the presence line
   // the message, whole and open
@@ -287,7 +287,7 @@ test('the notification row of a Stop hook, as the engine hands it: the summary i
 
   // ctrl+o: the engine's own row.
   const full = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: uuid, surface: 'terminal', props: { ...props, isExpanded: true } } as never)
-  expect((await full.findAll({ type: 'Text' })).map(t => t.text).join('\n').includes('ccqc ←')).toBe(false)
+  expect((await full.findAll({ type: 'Text' })).map(t => t.text).join('\n').includes('ccqc in')).toBe(false)
   await full.unmount()
 })
 
@@ -316,4 +316,27 @@ test('a long message shows its first twelve lines and the rest behind a button, 
   const out = (await sent.findAll({ type: 'Text' })).map(t => t.text).join('\n')
   expect(out.includes('line 12') && !out.includes('line 13') && out.includes('… 18 more lines')).toBe(true)
   await sent.unmount()
+})
+
+test('a folded group of calls that holds a chat call is unfolded, so the outgoing card is drawn; other groups stay folded', async ($, on) => {
+  const seenExpanded: boolean[] = []
+  on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
+    seenExpanded.push(e.props.isExpanded)
+    return next(e)
+  })
+  const call = (tool: string, input: unknown, output: unknown) => ({ tool_use_id: 'c-' + tool, tool, input, isRunning: false, isErrored: false, isInterrupted: false, output })
+  const group = (calls: unknown[], isExpanded = false) =>
+    ({ plugin: 'quant-ui', component: 'ToolGroup', requestId: 'g-1', surface: 'terminal', props: { calls, isActive: false, isExpanded } }) as never
+
+  const ui = await $.ui.mount(group([call('mcp__ccqc__chat_send', { to: '/team/@common/@alice', text: 'hi there' }, 'sent #12 to /team/@common/@alice')]))
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  // The hook above this one in the chain (ours) ran first: the group is drawn unfolded.
+  expect(seenExpanded.includes(true)).toBe(true)
+  expect(all.includes('Called ccqc')).toBe(false)
+  await ui.unmount()
+
+  seenExpanded.length = 0
+  const other = await $.ui.mount(group([call('Read', { file_path: 'a.txt' }, 'x')]))
+  expect(seenExpanded.includes(true)).toBe(false) // not ours: left as the engine draws it
+  await other.unmount()
 })
