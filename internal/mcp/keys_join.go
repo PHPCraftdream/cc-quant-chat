@@ -27,5 +27,5 @@ func (s *Session) idsFor(localName string) client.SessionIDs {
 // connectKeys gets the connection into the chat (client.JoinWithKeys); localName is the chat's name
 // for this session.
 func (s *Session) connectKeys(conn *client.Conn, t joinTarget, name, localName string, inv *invite.Invitation, w *proto.Welcome) (client.KeyJoin, error) {
-	return client.JoinWithKeys(conn.Call, client.KeyJoinInput{ChatID: t.id, Token: t.token, Nick: name, Invite: inv, SID: s.sessionID(), IDs: s.idsFor(localName)}, w)
+	return client.JoinWithKeys(conn.Call, client.KeyJoinInput{ChatID: t.id, Nick: name, Invite: inv, SID: s.sessionID(), IDs: s.idsFor(localName)}, w)
 }

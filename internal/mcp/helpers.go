@@ -96,7 +96,7 @@ func RunHello() {
 	}
 	if len(failed) > 0 {
 		fmt.Printf("ccqc chat: NOT joined: %s. Tell the user; they can retry with /quant-join <invitation> "+
-			"(the token is not stored in this conversation) or check `ccqc broker status`.\n", strings.Join(failed, "; "))
+			"(the invitation is spent) or check `ccqc broker status`.\n", strings.Join(failed, "; "))
 	}
 	if len(pending) > 0 {
 		fmt.Println("ccqc chat: joining this session's chats is still in progress (chat_state shows where it stands).")

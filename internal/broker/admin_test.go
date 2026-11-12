@@ -28,6 +28,9 @@ func results(be *memStore) []string {
 	defer be.mu.Unlock()
 	var out []string
 	for _, e := range be.admin {
+		if strings.HasPrefix(e.Op, "key.") { // the proofs of the nicks that joined, not administrator operations
+			continue
+		}
 		out = append(out, e.Op+": "+e.Result)
 	}
 	return out

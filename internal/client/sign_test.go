@@ -21,40 +21,6 @@ func key(t *testing.T) ed25519.PrivateKey {
 
 // A broker older than proto 4 knows no "challenge" (or ignores the key): the join goes by the
 // secret and the client does not sign.
-func TestJoinSignedAgainstAnOlderBrokerFallsBackToTheSecretAndDoesNotSign(t *testing.T) {
-	for name, challengeErr := range map[string]error{
-		"no challenge op":      &proto.Error{Code: "not_joined", Msg: "join first"},
-		"unknown op":           &proto.Error{Code: "unknown_op"},
-		"challenge but proto3": nil,
-	} {
-		var joined proto.JoinArgs
-		call := func(op string, args, out any) error {
-			switch op {
-			case "challenge":
-				if challengeErr != nil {
-					return challengeErr
-				}
-				*out.(*proto.Challenge) = proto.Challenge{Nonce: "n"}
-			case "join":
-				joined = args.(proto.JoinArgs)
-				*out.(*proto.Welcome) = proto.Welcome{Proto: 3, Key: "issued-secret"}
-			}
-			return nil
-		}
-		var w proto.Welcome
-		sg, err := JoinSigned(call, proto.JoinArgs{Token: "t", Name: "alice", Key: "secret"}, key(t), "chat", &w)
-		if err != nil || sg != nil || w.Key != "issued-secret" {
-			t.Fatalf("%s: signer %v, err %v, key %q", name, sg, err, w.Key)
-		}
-		if joined.Key != "secret" {
-			t.Fatalf("%s: the secret was not presented: %+v", name, joined)
-		}
-		if challengeErr != nil && joined.Pub != "" {
-			t.Fatalf("%s: a key was presented without a challenge", name)
-		}
-	}
-}
-
 func TestJoinSignedRefusalOfTheBrokerIsReturned(t *testing.T) {
 	call := func(op string, args, out any) error {
 		if op == "challenge" {

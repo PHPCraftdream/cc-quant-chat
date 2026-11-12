@@ -90,24 +90,19 @@ func staleClock(next int64) *proto.Error {
 }
 
 // verifyWrite checks the signature of a write request (raw: its arguments as they came) and
-// returns what is stored with the rows it creates. A client without a key (an older one, proto
-// below 4) is not signed: its events are stored with an empty signature. A client that has a key
-// and speaks proto 4 must sign.
+// returns what is stored with the rows it creates. Every write is signed by its author: a nick by its
+// protected key, the owner by its own.
 func (b *Broker) verifyWrite(ch *chat, m *member, kind string, raw json.RawMessage) (store.EventSig, *proto.Error) {
 	s, err := proto.SplitSigned(raw)
 	if err != nil {
 		return store.EventSig{}, proto.Errf("bad_args", "%v", err)
 	}
-	canon := store.EventSig{Canon: string(s.Canon)} // what an unsigned write is stored with
 	key := b.authorKey(m)
 	if key == nil {
-		return canon, nil
+		return store.EventSig{}, proto.Errf("unsigned", "this nick has no signing key, so it writes nothing")
 	}
 	if s.Sig == "" {
-		if m.proto >= proto.SigningProto {
-			return store.EventSig{}, proto.Errf("unsigned", "this client has a signing key: sign the %s (origin, lamport, sig)", kind)
-		}
-		return canon, nil
+		return store.EventSig{}, proto.Errf("unsigned", "sign the %s (origin, lamport, sig)", kind)
 	}
 	if s.Origin != b.origin {
 		return store.EventSig{}, proto.Errf("wrong_origin", "the request is addressed to the node %q, this is %q", s.Origin, b.origin)

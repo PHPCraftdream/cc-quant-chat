@@ -25,14 +25,14 @@ type signedPeer struct {
 func (b *Broker) keyedJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey) (*signedPeer, error) {
 	t.Helper()
 	c := b.connect(t)
-	_, id, _ := proto.ParseToken(tok)
+	id := tok
 	b.seedProtected(t, tok, nick, priv)
 	p := &signedPeer{client: c, priv: priv}
 	if code := unlockAs(t, c, id, nick, priv); code != "" {
 		return p, &proto.Error{Code: code}
 	}
 	var err error
-	p.sg, err = cl.JoinSigned(c.callE, proto.JoinArgs{Token: tok, Name: nick}, priv, id, &p.w)
+	p.sg, err = cl.JoinSigned(c.callE, proto.JoinArgs{Chat: tok, Name: nick}, priv, id, &p.w)
 	return p, err
 }
 

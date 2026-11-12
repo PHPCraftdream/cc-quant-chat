@@ -38,11 +38,6 @@ func (c *conn) inviteTry() bool {
 	return true
 }
 
-// entryByInviteOnly: once the machine has an owner, a new nick (and a nick that moves to a key) gets
-// into a chat by invitation, a token is not enough. The brokers of most tests keep the entry of
-// earlier versions (lenientEntry); a broker made for real never does.
-func (b *Broker) entryByInviteOnly() bool { return b.ownerKey() != nil && !b.lenientEntry }
-
 func inviteRequired(ch *chat, nick string) *proto.Error {
 	return proto.Errf("invite_required", "this chat is entered by invitation: ask the owner of this machine for one (ccqc invite %s %s)", ch.name, nick)
 }
@@ -88,7 +83,7 @@ func (b *Broker) joinByInvite(ch *chat, c *conn, a proto.JoinArgs, nk *nick) (*n
 	if a.Enroll == nil {
 		return nil, nil, proto.Errf("key_protected", "an invitation enrolls a protected key: update ccqc")
 	}
-	subject := proto.InviteSubject6(ch.id, a.Name, a.Pub, a.Enroll.AuthPub) // the proof covers the auth key as well
+	subject := proto.InviteSubject(ch.id, a.Name, a.Pub, a.Enroll.AuthPub) // the proof covers the auth key as well
 	proof := decodeSig(a.Invite.Sig)
 	proofOK := func(r invite.Record) bool {
 		return r.Kind == invite.KindChat && r.Scope == a.Name && proof != nil &&
@@ -96,7 +91,7 @@ func (b *Broker) joinByInvite(ch *chat, c *conn, a proto.JoinArgs, nk *nick) (*n
 	}
 	rec := store.Record{T: "nick", Nick: a.Name, Pub: a.Pub, ID: ch.nextID} // nothing is "unread" for a new nick
 	if nk != nil {
-		rec = store.Record{T: "nick_key", Nick: a.Name, Hash: nk.hash, Pub: a.Pub}
+		rec = store.Record{T: "nick_key", Nick: a.Name, Pub: a.Pub}
 	}
 	// The protected key: its pending row is written before the key reaches the chat (and dropped if the
 	// invitation does not work), the active one replaces the old (if any) after.
@@ -155,18 +150,17 @@ func (b *Broker) inviteNotice(ch *chat, op, id, nick, text string) {
 	b.announceChat(ch, text)
 }
 
-// chatIDOf is the id and name for the chat a join names: a token gives its hash, an id is the id.
+// chatIDOf is the id and name of the chat a join names: its id, of a chat this node has.
 func (b *Broker) chatIDOf(a proto.JoinArgs) (name, id string, e *proto.Error) {
-	if a.Token != "" {
-		var err error
-		if name, id, err = proto.ParseToken(a.Token); err != nil {
-			return "", "", proto.Errf("bad_token", "%v", err)
-		}
-		return name, id, nil
-	}
 	id = a.Chat
 	if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
-		return "", "", proto.Errf("bad_args", "a join needs the chat's token or its id")
+		return "", "", proto.Errf("bad_args", "a join needs the chat's id (64 hex characters)")
+	}
+	b.mu.Lock()
+	loaded := b.chats[id]
+	b.mu.Unlock()
+	if loaded != nil && loaded.name != "" { // a chat in memory is known (it came by an event of another node, say)
+		return loaded.name, id, nil
 	}
 	is, ok := b.store.(store.Invites)
 	if !ok {

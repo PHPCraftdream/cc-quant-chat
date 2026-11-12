@@ -36,7 +36,6 @@ type invitedChat struct {
 func newInvitedChat(t *testing.T) *invitedChat {
 	t.Helper()
 	b, db, path, _ := journalBroker(t)
-	b.lenientEntry = false
 	k := newKey(t)
 	register(t, b, k)
 	adm := b.connect(t)
@@ -83,7 +82,7 @@ func (ic *invitedChat) join(t *testing.T, c *client, nick string, key ed25519.Pr
 	if in != nil {
 		authPub := owner.Encode(testAuth(key).Public().(ed25519.PublicKey))
 		a.Enroll = &proto.JoinEnroll{AuthPub: authPub, SID: ic.sid}
-		a.Invite = &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, nick, pub, authPub)))}
+		a.Invite = &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, nick, pub, authPub)))}
 	}
 	var w proto.Welcome
 	code := c.call("join", a, &w)
@@ -220,7 +219,7 @@ func TestInvitationsThatDoNotWork(t *testing.T) {
 		code := c.call("join", proto.JoinArgs{Chat: ic.chat, Name: "gina", Pub: pub, Proto: proto.KeysProto,
 			NickSig: owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(ic.chat, "gina", pub, ch.Nonce))),
 			Enroll:  &proto.JoinEnroll{AuthPub: authPub},
-			Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(wrong.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, "gina", pub, authPub)))}}, &out)
+			Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(wrong.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, "gina", pub, authPub)))}}, &out)
 		if code != "invite_invalid" {
 			t.Fatalf("wrong proof %d: %q", i, code)
 		}

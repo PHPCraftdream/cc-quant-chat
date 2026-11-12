@@ -13,9 +13,7 @@ import (
 
 var _ store.Invites = (*DB)(nil)
 
-const metaMode = "mode"
-
-// NewChat makes a chat in invite mode. The id is random; a chat of that id is an error.
+// NewChat makes a chat. The id is random; a chat of that id is an error.
 func (d *DB) NewChat(chatID, name string) error {
 	var have int
 	if err := d.node.QueryRow(`SELECT COUNT(*) FROM chats WHERE chat_id = ?`, chatID).Scan(&have); err != nil {
@@ -24,27 +22,9 @@ func (d *DB) NewChat(chatID, name string) error {
 	if have > 0 {
 		return fmt.Errorf("sqlite: a chat with that id exists already")
 	}
-	c, done, err := d.acquire(chatID, name, true)
+	_, done, err := d.acquire(chatID, name, true)
 	defer done()
-	if err != nil {
-		return err
-	}
-	_, err = c.db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`, metaMode, store.ModeInvite)
 	return err
-}
-
-func (d *DB) ChatMode(chatID string) (string, error) {
-	c, done, err := d.acquire(chatID, "", false)
-	defer done()
-	if err != nil || c == nil {
-		return "", err
-	}
-	var v string
-	err = c.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, metaMode).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return store.ModeToken, nil
-	}
-	return v, err
 }
 
 func (d *DB) ChatName(chatID string) (string, error) {

@@ -16,7 +16,6 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
@@ -63,10 +62,9 @@ func TestAChatForInvitationsIsMadeByTheOwnerAndFoundByItsName(t *testing.T) {
 	if len(found.Chats) != 2 || found.Chats[0].ID == found.Chats[1].ID {
 		t.Fatalf("two chats of one name are two: %+v", found)
 	}
-	is := b.store.(store.Invites)
 	for _, c := range found.Chats {
-		if mode, err := is.ChatMode(c.ID); err != nil || mode != store.ModeInvite || len(c.ID) != 64 {
-			t.Fatalf("a chat made for invitations: %q %q %v", c.ID, mode, err)
+		if len(c.ID) != 64 {
+			t.Fatalf("a chat made for invitations: %q", c.ID)
 		}
 	}
 	var none proto.ChatFindReply

@@ -91,7 +91,7 @@ func (e *DuplicateError) Error() string { return "duplicate client message id" }
 const ThreadWindow = 10000
 
 // Backend stores chat records; the broker replays Load on first use of a chat.
-// Load also registers the chat (name is for humans; the id is SHA-256 of the token).
+// Load also registers the chat (name is for humans).
 type Backend interface {
 	Load(chatID, name string) ([]Record, error)
 	Append(chatID string, r Record) error

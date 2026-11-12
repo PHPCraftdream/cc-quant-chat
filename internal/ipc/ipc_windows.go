@@ -41,7 +41,7 @@ func DialSession(key int, timeout time.Duration) (net.Conn, error) {
 }
 
 // dial connects and checks who created the pipe: any local user can create a pipe under our
-// name while no broker runs, and tokens must not be sent to it.
+// name while no broker runs, and nothing must be sent to it.
 func dial(path string, timeout time.Duration) (net.Conn, error) {
 	c, err := winio.DialPipe(path, &timeout)
 	if err != nil {

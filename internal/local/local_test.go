@@ -2,8 +2,11 @@ package local
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -31,10 +34,10 @@ func TestSessionsInOneFolderAreSeparate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(RememberChat(folder, "s1", Entry{Token: "dev.x", Name: "alice"}))
-	must(RememberChat(folder, "s2", Entry{Token: "dev.x", Name: "bob"}))
-	must(RememberChat(folder, "s2", Entry{Token: "ops.y", Name: "bob"}))
-	must(RememberChat(folder, "s2", Entry{Token: "dev.x", Name: "bobby"})) // same chat: replaced
+	must(RememberChat(folder, "s1", Entry{Chat: "dev", Name: "alice"}))
+	must(RememberChat(folder, "s2", Entry{Chat: "dev", Name: "bob"}))
+	must(RememberChat(folder, "s2", Entry{Chat: "ops", Name: "bob"}))
+	must(RememberChat(folder, "s2", Entry{Chat: "dev", Name: "bobby"})) // same chat: replaced
 
 	if got := names(t, folder, "s1"); len(got) != 1 || got[0] != "dev@alice" {
 		t.Fatalf("s1 = %v", got)
@@ -67,7 +70,7 @@ func TestOldSessionsArePruned(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
 	folder := t.TempDir()
 	for i := 0; i < keepSessions+5; i++ {
-		if err := RememberChat(folder, fmt.Sprintf("s%03d", i), Entry{Token: "dev.x", Name: "n"}); err != nil {
+		if err := RememberChat(folder, fmt.Sprintf("s%03d", i), Entry{Chat: "dev", Name: "n"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -77,19 +80,6 @@ func TestOldSessionsArePruned(t *testing.T) {
 	}
 	if len(f.Sessions) != keepSessions {
 		t.Fatalf("sessions kept = %d, want %d", len(f.Sessions), keepSessions)
-	}
-}
-
-func TestNickKeys(t *testing.T) {
-	t.Setenv("CCQC_HOME", t.TempDir())
-	if NickKey("c1", "alice") != "" {
-		t.Fatal("unknown nick must have no key")
-	}
-	if err := SetNickKey("c1", "alice", "k1"); err != nil {
-		t.Fatal(err)
-	}
-	if NickKey("c1", "alice") != "k1" || NickKey("c2", "alice") != "" {
-		t.Fatal("keys must be per chat and nick")
 	}
 }
 
@@ -103,11 +93,11 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 		wg.Add(2)
 		go func() { // sessions of one folder remembering chats at the same time
 			defer wg.Done()
-			errs <- RememberChat(folder, fmt.Sprintf("s%d", i), Entry{Token: "dev.x", Name: fmt.Sprintf("n%d", i)})
+			errs <- RememberChat(folder, fmt.Sprintf("s%d", i), Entry{Chat: "dev", Name: fmt.Sprintf("n%d", i)})
 		}()
-		go func() { // and nick keys of one user being stored
+		go func() { // and another session of the folder moving on
 			defer wg.Done()
-			errs <- SetNickKey("chat", fmt.Sprintf("n%d", i), fmt.Sprintf("key%d", i))
+			errs <- TouchSession(folder, fmt.Sprintf("s%d", i))
 		}()
 	}
 	wg.Wait()
@@ -120,9 +110,6 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 	for i := 0; i < n; i++ {
 		if got := names(t, folder, fmt.Sprintf("s%d", i)); len(got) != 1 {
 			t.Fatalf("session s%d lost its chat: %v", i, got)
-		}
-		if got := NickKey("chat", fmt.Sprintf("n%d", i)); got != fmt.Sprintf("key%d", i) {
-			t.Fatalf("nick key n%d = %q", i, got)
 		}
 	}
 }
@@ -138,23 +125,28 @@ func TestTouchSessionOnlyTouchesExisting(t *testing.T) {
 	}
 }
 
-func TestFindChatTokenTakesTheNewestSessionsEntry(t *testing.T) {
+// The bridge for the deployment of KEY-7: an entry that a session remembered by a token becomes the entry of its chat
+// (id = the SHA-256 of the token, name = its prefix) the first time the folder is read, and the token is erased from the file.
+func TestAnEntryOfATokenBecomesTheEntryOfItsChatAndTheTokenIsErasedFromTheFile(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
-	folderA, folderB := t.TempDir(), t.TempDir()
-	if err := RememberChat(folderA, "s1", Entry{Token: "team.old", Name: "a"}); err != nil {
+	folder := t.TempDir()
+	token := "team.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	p := folderPath(folder)
+	old := `{"folder":"x","sessions":{"sid":{"used":"2026-11-12T10:00:00Z","chats":[{"token":"` + token + `","name":"alice"}]}}}`
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := RememberChat(folderB, "s2", Entry{Token: "team.new", Name: "b"}); err != nil {
+	if err := os.WriteFile(p, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Make the first one the older by touching nothing; s2 was remembered later (same-second
-	// timestamps tie, which keeps the first found: both are valid tokens of the chat).
-	got, ok := FindChatToken("team")
-	if !ok || (got != "team.new" && got != "team.old") {
-		t.Fatalf("token = %q, found %v", got, ok)
+	got, err := SessionChats(folder, "sid")
+	h := sha256.Sum256([]byte(token))
+	if err != nil || len(got) != 1 || got[0].ChatID != hex.EncodeToString(h[:]) || got[0].Chat != "team" || got[0].Token != "" || got[0].Local() != "team" {
+		t.Fatalf("%+v %v", got, err)
 	}
-	if _, ok := FindChatToken("nope"); ok {
-		t.Fatal("found a token for a chat nobody joined")
+	raw, _ := os.ReadFile(p)
+	if bytes.Contains(raw, []byte("AAAAAAAAAA")) || bytes.Contains(raw, []byte("token")) {
+		t.Fatalf("the token is still in the file: %s", raw)
 	}
 }
 

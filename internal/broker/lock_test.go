@@ -180,20 +180,36 @@ func TestTheReplyToAJoinComesBeforeTheEventsOfTheChat(t *testing.T) {
 		}
 	}()
 	defer func() { stop.Store(true); <-flooded }()
-	key := ""
+	bobKey := nickKeyOf(tok, "bob")
+	if err := b.seedProtectedIn(t, tok, "team", "bob", bobKey); err != nil {
+		t.Fatal(err)
+	}
 	for round := 0; round < 40; round++ {
-		bob := b.raw(t) // a leave ends the connection
-		id := bob.send("join", proto.JoinArgs{Token: tok, Name: "bob", Key: key, Proto: proto.ProtoVersion})
+		bob := b.raw(t)                                 // a leave ends the connection
+		call := func(op string, args any) proto.Frame { // a request and its answer (nothing else comes before a join)
+			id := bob.send(op, args)
+			f := bob.next()
+			if f.ID != id || f.Op == "err" {
+				t.Fatalf("round %d: %s: %+v", round, op, f)
+			}
+			return f
+		}
+		nonce := func() string {
+			var ch proto.Challenge
+			_ = json.Unmarshal(call("challenge", nil).Data, &ch)
+			return ch.Nonce
+		}
+		call("key_unlock", proto.KeyUnlockArgs{Chat: tok, Nick: "bob",
+			AuthSig: owner.Encode(ed25519.Sign(testAuth(bobKey), proto.KeyUnlockMessage(tok, "bob", nonce())))})
+		bobPub := pubOf(bobKey)
+		id := bob.send("join", proto.JoinArgs{Chat: tok, Name: "bob", Pub: bobPub, Proto: proto.ProtoVersion,
+			NickSig: owner.Encode(ed25519.Sign(bobKey, proto.NickJoinMessage(tok, "bob", bobPub, nonce())))})
 		first := bob.next()
 		if first.Op == "event" || first.ID != id {
 			t.Fatalf("round %d: the first frame after join is %+v, want its reply", round, first)
 		}
 		if first.Op == "err" {
 			t.Fatalf("round %d: join: %s %s", round, first.Code, first.Msg)
-		}
-		var w proto.Welcome
-		if err := json.Unmarshal(first.Data, &w); err == nil && w.Key != "" {
-			key = w.Key
 		}
 		lid := bob.send("leave", nil)
 		for f := bob.next(); f.Op == "event" || f.ID != lid; f = bob.next() {
@@ -227,14 +243,10 @@ func TestChatsLoadUnloadAndResetWhileBusy(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tok, nickName, key := toks[w%3], fmt.Sprintf("w%d", w), ""
+			tok, nickName := toks[w%3], fmt.Sprintf("w%d", w)
 			for i := 0; i < 25 && !stop.Load(); i++ {
 				c := b.connect(t)
-				c.key = key
 				_, code := c.join(tok, nickName, proto.ProtoVersion)
-				if c.key != "" {
-					key = c.key
-				}
 				check("join", code)
 				if code == "" {
 					_, code = c.send(proto.RoomCommon, "", "hi")
@@ -318,15 +330,10 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			key := ""
 			for i := 0; !stop.Load(); i++ {
 				c := b.connect(t)
 				c.lax = true
-				c.key = key
 				_, code := c.join(toks[w%2], fmt.Sprintf("w%d", w), proto.ProtoVersion)
-				if c.key != "" {
-					key = c.key
-				}
 				if code == "" {
 					_, code = c.send(proto.RoomCommon, "", "work")
 					ok("send", code)

@@ -247,7 +247,7 @@ func ownerSay(args []string) error {
 		return errors.New("the message is empty")
 	}
 
-	c, chatID, priv, w, err := joinOwner(a.Chat, nick, proto.ProtoVersion)
+	c, chatID, priv, w, err := joinOwner(a.Chat, nick)
 	if err != nil {
 		return err
 	}

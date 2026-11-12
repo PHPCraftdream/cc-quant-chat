@@ -105,15 +105,15 @@ func TestMembersAndMessagesOfTwoNodesMeetAndTheProjectionsAgree(t *testing.T) {
 	p := newTwoBrokers(t)
 	alice := p.a.connect(t)
 	bob := p.b.mustJoin(t, p.tok, "bob", newKey(t)) // signs: his key is registered at his node
-	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+	if _, code := alice.join(p.tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("alice joins: %q", code)
 	}
 	bobAtA, aliceAtB := remote("bob", p.b), remote("alice", p.a)
 	eventually(t, "each node knows the member of the other", func() bool {
 		return hasMember(t, alice, bobAtA)() && hasMember(t, bob.client, aliceAtB)()
 	})
-	if m := memberInfo(t, bob.client, aliceAtB); !m.Unsigned || m.Online {
-		t.Fatalf("a member of another node that joined by its secret: %+v", m)
+	if m := memberInfo(t, bob.client, aliceAtB); m.Unsigned || m.Online {
+		t.Fatalf("a member of another node: %+v", m)
 	}
 	if m := memberInfo(t, alice, bobAtA); m.Unsigned || m.Online {
 		t.Fatalf("a member of another node that signs: %+v", m)
@@ -186,7 +186,7 @@ func textsOf(t *testing.T, db *sqlite.DB, id string) string {
 func TestAForeignMessageTakenWhileTheChatIsNotLoadedDoesNotTakeTheNumberOfTheNextOne(t *testing.T) {
 	p := newTwoBrokers(t)
 	alice := p.a.connect(t)
-	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+	if _, code := alice.join(p.tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("alice joins: %q", code)
 	}
 	for _, text := range []string{"one", "two", "three"} {
@@ -201,7 +201,7 @@ func TestAForeignMessageTakenWhileTheChatIsNotLoadedDoesNotTakeTheNumberOfTheNex
 	}
 
 	bob := p.b.connect(t)
-	if _, code := bob.join(p.tok, "bob", proto.LegacyProto); code != "" {
+	if _, code := bob.join(p.tok, "bob", proto.ProtoVersion); code != "" {
 		t.Fatalf("bob joins: %q", code)
 	}
 	id, code := bob.send(proto.RoomCommon, "", "four")
@@ -219,7 +219,7 @@ func TestAForeignMessageTakenWhileTheChatIsNotLoadedDoesNotTakeTheNumberOfTheNex
 func TestTheKeyOfAMemberOfAnotherNodeBeingResetIsToldToTheChat(t *testing.T) {
 	p := newTwoBrokers(t)
 	alice := p.a.connect(t)
-	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+	if _, code := alice.join(p.tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("alice joins: %q", code)
 	}
 	bob := p.b.mustJoin(t, p.tok, "bob", newKey(t))

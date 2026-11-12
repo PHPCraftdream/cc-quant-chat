@@ -2,11 +2,6 @@ package broker
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
-	"encoding/hex"
 	"sort"
 	"time"
 
@@ -14,26 +9,8 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-// A nick is registered on first join and bound to a random key returned to that session.
-// Rejoining under the nick requires the key, so nobody else can read its direct messages.
-
-func newNickKey() string {
-	b := make([]byte, 24)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func hashNickKey(key string) string {
-	h := sha256.Sum256([]byte("ccqc/v1/nick|" + key))
-	return hex.EncodeToString(h[:])
-}
-
-func (n *nick) check(key string) bool {
-	if key == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(hashNickKey(key)), []byte(n.hash)) == 1
-}
+// A nick enters a chat by an invitation that enrolls its protected key, and afterwards only by that key (keys.go).
+// The owner enters under a nick by its own key, every time.
 
 // dispatchJoin serves a join: what needs no chat is checked first; then the chat is found or loaded
 // (without the broker's lock held), locked, entered, and the reply sent before the lock is let go.
@@ -71,14 +48,12 @@ func (b *Broker) joinPre(c *conn, a proto.JoinArgs) (name, id string, signed boo
 	if c.m != nil {
 		return "", "", false, proto.Errf("already_joined", "this connection already joined a chat")
 	}
+	if a.Proto < proto.KeysProto {
+		return "", "", false, proto.Errf("old_client", "this broker speaks protocol %d and your ccqc speaks %d: update ccqc", proto.ProtoVersion, a.Proto)
+	}
 	name, id, e = b.chatIDOf(a)
 	if e != nil {
 		return "", "", false, e
-	}
-	if a.Token != "" && b.entryByInviteOnly() && !b.chatKnown(id) {
-		if _, ok := b.store.(store.Invites); ok {
-			return "", "", false, proto.Errf("no_such_chat", "chats are made by the owner of this machine (ccqc chat new); this token belongs to no chat here")
-		}
 	}
 	if !proto.ValidName(a.Name) {
 		return "", "", false, proto.Errf("bad_name", "nick must match [a-z0-9-]{1,32}: %q", a.Name)
@@ -99,19 +74,31 @@ func (b *Broker) joinPre(c *conn, a proto.JoinArgs) (name, id string, signed boo
 // joinIn enters the chat; the caller holds the chat's lock.
 func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, *proto.Error) {
 	id := ch.id
-	var issued string
 	var pub ed25519.PublicKey
 	nk := ch.nicks[a.Name]
 	if e := b.protectedJoinCheck(ch, c, a, nk, signed); e != nil {
 		return nil, e
 	}
 	switch {
-	case a.Invite != nil: // proto 5: a one-time invitation registers the key, or replaces the nick's
+	case a.Invite != nil: // a one-time invitation enrolls the key of the nick, or replaces it
 		var e *proto.Error
 		if nk, pub, e = b.joinByInvite(ch, c, a, nk); e != nil {
 			return nil, e
 		}
-	case a.Pub != "": // a protected nick: its key, after key_unlock (protectedJoinCheck has seen to that and to the key)
+	case signed: // the owner, under a nick that is not anybody's protected one: made on its first entry
+		if nk != nil && nk.pub != "" {
+			return nil, proto.Errf("name_taken", "nick @%s is a protected nick of this chat; the owner enters under a nick of its own", a.Name)
+		}
+		if nk == nil {
+			fresh := &nick{seen: ch.nextID} // nothing is "unread" for a new nick
+			if e := ch.save(store.Record{T: "nick", Nick: a.Name, ID: fresh.seen}); e != nil {
+				return nil, e
+			}
+			nk = fresh
+			ch.nicks[a.Name] = nk
+			ch.rooms[proto.RoomCommon].members[a.Name] = true
+		}
+	default: // a protected nick: its key, after key_unlock (protectedJoinCheck has seen to that and to the key)
 		var e *proto.Error
 		if pub, e = b.verifyNick(c, id, a); e != nil {
 			return nil, e
@@ -119,37 +106,6 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 		if nk == nil || nk.pub != a.Pub {
 			return nil, proto.Errf("name_taken", "nick @%s is registered in this chat under another key", a.Name)
 		}
-	case nk != nil && nk.pub != "":
-		return nil, proto.Errf("name_taken", "nick @%s joins with a signing key and this client has none: update ccqc (the secret alone no longer opens it)", a.Name)
-	case (nk == nil || nk.hash == "") && b.entryByInviteOnly() && !signed: // by token, with an owner: by invitation only
-		return nil, inviteRequired(ch, a.Name)
-	case nk == nil || nk.hash == "": // new nick, or one freed by `ccqc nick reset`
-		// Bind it to the presented key, else a fresh one.
-		key := a.Key
-		if key == "" {
-			key = newNickKey()
-		}
-		hash := hashNickKey(key)
-		if nk == nil {
-			// One record: the store registers the nick and its place in @common atomically.
-			fresh := &nick{hash: hash, seen: ch.nextID} // nothing is "unread" for a new nick
-			if e := ch.save(store.Record{T: "nick", Nick: a.Name, Hash: hash, ID: fresh.seen}); e != nil {
-				return nil, e
-			}
-			nk = fresh
-			ch.nicks[a.Name] = nk
-			ch.rooms[proto.RoomCommon].members[a.Name] = true
-		} else {
-			if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: hash}); e != nil {
-				return nil, e
-			}
-			nk.hash = hash
-		}
-		if a.Key == "" {
-			issued = key
-		}
-	case !nk.check(a.Key):
-		return nil, proto.Errf("name_taken", "nick @%s is registered in this chat by another session; pick another nick (or, if it is yours and its key was lost, `ccqc nick reset - %s` (token on stdin))", a.Name, a.Name)
 	}
 
 	m := ch.members[a.Name]
@@ -171,7 +127,7 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 		b.holdRole(ch, m, nk.pinned)
 	}
 	c.ch, c.m = ch, m
-	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
+	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Warning: b.warning, Proto: proto.ProtoVersion, Origin: b.origin}, nil
 }
 
 // unread: messages visible to the nick, newer than seen and not its own; newest unreadCap of them.

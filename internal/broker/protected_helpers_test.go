@@ -29,6 +29,9 @@ func unlockAs(t *testing.T, c *client, chatID, nick string, k ed25519.PrivateKey
 	t.Helper()
 	var ch proto.Challenge
 	if code := c.call("challenge", nil, &ch); code != "" {
+		if c.lax { // a connection that may be cut (a stress test) answers with what happened
+			return code
+		}
 		t.Fatalf("challenge: %q", code)
 	}
 	return c.call("key_unlock", proto.KeyUnlockArgs{Chat: chatID, Nick: nick,
@@ -39,14 +42,22 @@ func unlockAs(t *testing.T, c *client, chatID, nick string, k ed25519.PrivateKey
 // broker's half of it. It does nothing for a nick that is there already.
 func (b *Broker) seedProtected(t *testing.T, tok, who string, k ed25519.PrivateKey) {
 	t.Helper()
-	name, id, err := proto.ParseToken(tok)
+	if err := b.seedProtectedIn(t, tok, "team", who, k); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// makeChat makes a chat of a test known to the broker (the owner makes a chat by `ccqc chat new`).
+func (b *Broker) makeChat(t *testing.T, id string) {
+	t.Helper()
+	ch, err := b.useChat(id, "team")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.seedProtectedIn(t, id, name, who, k)
+	b.doneChat(ch)
 }
 
-func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed25519.PrivateKey) {
+func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed25519.PrivateKey) error {
 	t.Helper()
 	ss, ok := b.nickSecrets()
 	if !ok {
@@ -54,7 +65,7 @@ func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed255
 	}
 	ch, err := b.useChat(id, chatName)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	defer func() { b.doneChat(ch); b.unloadIfEmpty(ch) }()
 	if ch.nicks[who] == nil {
@@ -66,7 +77,7 @@ func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed255
 		ch.rooms[proto.RoomCommon].members[who] = true
 	}
 	if row, _ := ss.ActiveNickSecret(id, who); row != nil {
-		return
+		return nil
 	}
 	bsec, _ := keys.NewSecret()
 	row := store.NickSecret{ChatID: id, Nick: who, B: bsec, AuthPub: testAuth(k).Public().(ed25519.PublicKey), SignPub: pubOf(k)}
@@ -76,6 +87,7 @@ func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed255
 	if _, err := ss.ActivateNickSecret(id, who); err != nil {
 		t.Fatal(err)
 	}
+	return nil
 }
 
 // memSecrets: the broker's halves of protected keys in a memory store.

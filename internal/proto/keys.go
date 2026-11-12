@@ -45,7 +45,7 @@ type KeyUnlockReply struct {
 
 // JoinEnroll makes the key of a join a protected one: AuthPub is the public half of the auth key. The
 // B for it is the one of key_prepare on this connection. What authorizes it is the proof next to it:
-// an invitation (its subject is InviteSubject6).
+// an invitation (its subject is InviteSubject).
 type JoinEnroll struct {
 	AuthPub string `json:"auth_pub"`
 	SID     string `json:"sid,omitempty"` // the session the nick is bound to; "" for a terminal nick
@@ -56,7 +56,7 @@ func KeyUnlockMessage(chatID, nick, nonce string) []byte {
 	return []byte(strings.Join([]string{"ccqc/v1/key-unlock", chatID, nick, nonce}, "\n"))
 }
 
-// InviteSubject6 is InviteSubject for a join that enrolls a protected key: it covers the auth key too.
-func InviteSubject6(chatID, nick, pub, authPub string) []byte {
+// InviteSubject is what a use of an invitation is for: the chat, the nick, its key and its auth key.
+func InviteSubject(chatID, nick, pub, authPub string) []byte {
 	return []byte(strings.Join([]string{"ccqc/v1/invite-use-protected", chatID, nick, pub, authPub}, "\n"))
 }

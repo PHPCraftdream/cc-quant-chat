@@ -242,7 +242,7 @@ func (b *Broker) freeNick(chatID, nickName string, at *store.AdminAttest) (any, 
 	if e := ch.save(store.Record{T: "nick_key", Nick: nickName, Hash: "", Admin: at}); e != nil {
 		return nil, e
 	}
-	nk.hash = ""
+	nk.pub = ""
 	b.dropSecrets(ch.id, nickName)
 	b.presence(ch, nil, "", "the key of @"+nickName+" was revoked: the nick comes back by an invitation")
 	return proto.BoardReply{Text: "nick @" + nickName + " is free"}, nil

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -121,7 +122,6 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 		raw = json.RawMessage("{}")
 	}
 	var a struct {
-		Token     string  `json:"token"`
 		Invite    string  `json:"invite"`
 		Name      string  `json:"name"`
 		Alias     string  `json:"alias"`
@@ -151,7 +151,7 @@ func (s *Session) Call(name string, raw json.RawMessage) (string, error) {
 		if a.Invite != "" {
 			return s.joinInvite(a.Invite, a.Alias)
 		}
-		return s.join(a.Token, a.Name, a.Alias, false)
+		return "", errors.New("chat_join needs the invitation (invite=ccqc1...): ask the owner of ccqc for one")
 	case "chat_send":
 		return s.send(a.To, a.Text, a.ReplyTo)
 	case "chat_state":

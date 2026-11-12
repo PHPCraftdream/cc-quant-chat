@@ -19,7 +19,6 @@ import (
 // KeyJoinInput says what to join and who is joining.
 type KeyJoinInput struct {
 	ChatID string
-	Token  string // a chat of tokens is joined by its token; "" for a chat of invitations
 	Nick   string
 	Invite *invite.Invitation
 	SID    string     // the Claude Code session id ("" for a terminal)
@@ -29,7 +28,7 @@ type KeyJoinInput struct {
 // KeyJoin is what getting in brought back.
 type KeyJoin struct {
 	Signer    *Signer
-	Priv      ed25519.PrivateKey // the key of the nick, for the writes and for the next connection (nil: the old secret)
+	Priv      ed25519.PrivateKey // the key of the nick, for the writes and for the next connection
 	Auth      ed25519.PrivateKey // for a protected nick: proves A on every connection
 	Protected bool
 	Note      string // for the person: what happened to the keys, or a warning
@@ -40,12 +39,7 @@ func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error
 	if in.Invite != nil {
 		return enrollWithInvitation(call, in, w)
 	}
-	args := proto.JoinArgs{Name: in.Nick}
-	if in.Token != "" {
-		args.Token = in.Token
-	} else {
-		args.Chat = in.ChatID
-	}
+	args := proto.JoinArgs{Name: in.Nick, Chat: in.ChatID}
 	a, _, err := local.ClientSecretIfAny()
 	if err != nil {
 		return KeyJoin{}, keyStoreError(err)
@@ -59,20 +53,7 @@ func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error
 			return KeyJoin{}, err
 		}
 	}
-	if in.Token != "" { // a chat of tokens, before the owner decides about them: the old secret of the nick
-		return oldSecret(call, in, w)
-	}
 	return KeyJoin{}, fmt.Errorf("@%s has no protected key in this chat: ask the owner for an invitation (ccqc invite <chat> %s)", in.Nick, in.Nick)
-}
-
-// oldSecret joins a chat of tokens as before the keys: by the token and the nick's secret (the first
-// join of a nick makes it, and the broker hands it back to be kept). The events of such a nick are unsigned.
-func oldSecret(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error) {
-	args := proto.JoinArgs{Token: in.Token, Name: in.Nick, Key: local.NickKey(in.ChatID, in.Nick), Proto: proto.LegacyProto}
-	if err := call("join", args, w); err != nil {
-		return KeyJoin{}, err
-	}
-	return KeyJoin{}, nil
 }
 
 // secretSource hands out A when the join needs it: the one the client already has, or one made on the

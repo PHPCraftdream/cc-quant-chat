@@ -22,7 +22,7 @@ func TestFreshDropsRepeatedMessages(t *testing.T) {
 
 func TestPermanentJoinErrors(t *testing.T) {
 	for code, want := range map[string]bool{
-		"name_taken": true, "bad_token": true, "bad_name": true,
+		"name_taken": true, "old_client": true, "bad_name": true,
 		"name_online": false, "store_unavailable": false, "store_failed": false,
 	} {
 		if got := permanentJoinError(&proto.Error{Code: code}); got != want {
@@ -38,7 +38,7 @@ func TestSessionIDChanges(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
 	folder := t.TempDir()
 	t.Setenv("CLAUDE_PROJECT_DIR", folder)
-	if err := local.RememberChat(folder, "old-sid", local.Entry{Token: "dev.x", Name: "alice"}); err != nil {
+	if err := local.RememberChat(folder, "old-sid", local.Entry{ChatID: strings.Repeat("a", 64), Chat: "dev", Name: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 	s := newSession(func(string, map[string]string) {})
@@ -66,7 +66,7 @@ func TestResumeDoesNotStealChats(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
 	folder := t.TempDir()
 	t.Setenv("CLAUDE_PROJECT_DIR", folder)
-	if err := local.RememberChat(folder, "first", local.Entry{Token: "dev.x", Name: "alice"}); err != nil {
+	if err := local.RememberChat(folder, "first", local.Entry{ChatID: strings.Repeat("a", 64), Chat: "dev", Name: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 	s := newSession(func(string, map[string]string) {})
@@ -101,7 +101,7 @@ func TestCompactMovesAndUnknownSourceChangesNothing(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
 	folder := t.TempDir()
 	t.Setenv("CLAUDE_PROJECT_DIR", folder)
-	if err := local.RememberChat(folder, "a", local.Entry{Token: "dev.x", Name: "alice"}); err != nil {
+	if err := local.RememberChat(folder, "a", local.Entry{ChatID: strings.Repeat("a", 64), Chat: "dev", Name: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 	s := newSession(func(string, map[string]string) {})

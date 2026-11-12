@@ -198,8 +198,8 @@ func (c *conn) markUnlocked(chatID, nick string) {
 
 // protectedJoinCheck: a nick enters by invitation, and after that only by its protected key: on a connection that
 // proved A (key_unlock), with a client that knows how. An invitation enrolls a protected key (it is also the
-// way to replace one, so it needs no proof of the old); the owner proves itself by its own key. What is no key at
-// all (the old secret of a chat of tokens) is not judged here.
+// way to replace one, so it needs no proof of the old); the owner proves itself by its own key. Nothing else
+// is a way in.
 func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nick, owner bool) *proto.Error {
 	if owner {
 		return nil
@@ -213,8 +213,8 @@ func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nic
 		}
 		return nil
 	}
-	if a.Pub == "" {
-		return nil
+	if a.Pub == "" { // no key, no invitation, not the owner: the only way in is an invitation
+		return inviteRequired(ch, a.Name)
 	}
 	row, err := b.protectedRow(ch.id, a.Name)
 	if err != nil {

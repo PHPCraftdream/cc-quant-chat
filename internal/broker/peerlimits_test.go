@@ -50,7 +50,7 @@ func TestQuarantineByTheOwnerIsLoudMarksWhatTheNodeGaveAndIsLiftedByTheOwner(t *
 	register(t, p.a, k)
 	alice, adm := p.a.connect(t), p.a.connect(t)
 	bob := p.b.mustJoin(t, p.tok, "bob", newKey(t))
-	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+	if _, code := alice.join(p.tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("alice joins: %q", code)
 	}
 	bobAtA := remote("bob", p.b)

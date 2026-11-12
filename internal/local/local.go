@@ -17,11 +17,10 @@ import (
 	"time"
 )
 
-// Entry: a chat a session joins automatically.
-// A chat made for invitations has no token: it is joined by its id (ChatID) and the key of the nick;
-// nothing that lets a stranger in is kept here.
+// Entry: a chat a session joins automatically: by its id (ChatID) and the protected key of the nick; nothing
+// that lets a stranger in is kept here.
 type Entry struct {
-	Token  string `json:"token,omitempty"`
+	Token  string `json:"token,omitempty"` // only to be read once and erased (bridge.go)
 	ChatID string `json:"chat_id,omitempty"`
 	Chat   string `json:"chat,omitempty"` // the chat's name
 	Name   string `json:"name"`
@@ -35,16 +34,13 @@ type Entry struct {
 	Protected bool   `json:"protected,omitempty"` // the nick has a protected key, bound to this session
 }
 
-// Local name of an entry: alias, the chat's name, or the chat name from the token.
+// Local name of an entry: alias, or the chat's name.
 func (e Entry) Local() string {
 	if e.Alias != "" {
 		return e.Alias
 	}
 	if e.Chat != "" {
 		return e.Chat
-	}
-	if i := strings.LastIndexByte(e.Token, '.'); i > 0 {
-		return e.Token[:i]
 	}
 	return ""
 }
@@ -165,6 +161,7 @@ func updateLocked(folder string, fn func(f *folderFile)) error {
 	if err := readJSON(p, &f); err != nil {
 		return err
 	}
+	bridgeFolder(&f) // the rewrite below erases the tokens
 	if f.Sessions == nil {
 		f.Sessions = map[string]*session{}
 	}
@@ -200,7 +197,16 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 // SessionChats: chats the session joins automatically.
 func SessionChats(folder, sessionID string) ([]Entry, error) {
 	var f folderFile
-	if err := withLock(func() error { return readJSON(folderPath(folder), &f) }); err != nil {
+	if err := withLock(func() error {
+		p := folderPath(folder)
+		if err := readJSON(p, &f); err != nil {
+			return err
+		}
+		if bridgeFolder(&f) { // tokens of the days before KEY-7: made entries of chats, and erased from the file
+			return writeJSON(p, f)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	if s := f.Sessions[sessionID]; s != nil {
@@ -270,26 +276,6 @@ func MoveSession(folder, from, to, source string) error {
 			f.Sessions[to] = s
 			delete(f.Sessions, from)
 		}
-	})
-}
-
-func keysPath() string { return filepath.Join(home(), "nick-keys.json") }
-
-// NickKey: key of a nick registered from this machine; "" if unknown.
-func NickKey(chatID, nick string) string {
-	keys := map[string]string{}
-	_ = withLock(func() error { return readJSON(keysPath(), &keys) })
-	return keys[chatID+"/"+nick]
-}
-
-func SetNickKey(chatID, nick, key string) error {
-	return withLock(func() error {
-		keys := map[string]string{}
-		if err := readJSON(keysPath(), &keys); err != nil {
-			return err
-		}
-		keys[chatID+"/"+nick] = key
-		return writeJSON(keysPath(), keys)
 	})
 }
 

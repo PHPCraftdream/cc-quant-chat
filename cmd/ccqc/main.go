@@ -1,4 +1,4 @@
-// ccqc: token-gated chat between Claude Code sessions over local IPC.
+// ccqc: chat between Claude Code sessions over local IPC, entered by invitation.
 package main
 
 import (
@@ -8,14 +8,12 @@ import (
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/mcp"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proc"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/version"
 )
 
 const usage = `ccqc — chat between Claude Code sessions over local IPC
 
 Setup:
-  ccqc token new <chat>     print a new chat token: <chat>.<secret> (deprecated: with an owner use "chat new" and "invite")
   ccqc version              print the version
   ccqc help                 this help
 
@@ -37,7 +35,7 @@ Administrator operations (signed with the owner key; the owner password is typed
                             board.manager_role (per chat)
 
 Chats and invitations (administrator operations; people are let in only by an invitation):
-  ccqc chat new <name>                  a chat with a random id and no token
+  ccqc chat new <name>                  a chat with a random id
   ccqc invite <chat> <nick> [--ttl T]   a one-time invitation line for that nick (T: 15m default, up to 7d);
                             the nick may exist already: the invitation then replaces its key
   ccqc invite list <chat>   | revoke <chat> <id>   ids by their first 8 characters; no secret is shown
@@ -50,7 +48,7 @@ makes this broker accept nodes; nothing leaves unless a chat is shared):
                             (the events of its own), trusted (also the sources it brings); the chats are told
   ccqc peer share|unshare <chat> <origin>
 
-Documents (the chat's shared page tree, as an ordinary member; token from your sessions' config):
+Documents (the chat's shared page tree; as a protected nick of this machine, or as the owner):
   ccqc doc tree <chat> [prefix]         paths, titles and sizes
   ccqc doc get <chat> <path>            the page to stdout
   ccqc doc put <chat> <path> <file|->   create or replace a page
@@ -126,16 +124,6 @@ func main() {
 		err = runDoc(os.Args[2:])
 	case "config":
 		err = runConfig(os.Args[2:])
-	case "token":
-		if len(os.Args) != 4 || os.Args[2] != "new" {
-			fmt.Fprintln(os.Stderr, usage)
-			os.Exit(2)
-		}
-		var tok string
-		if tok, err = proto.NewToken(os.Args[3]); err == nil {
-			fmt.Println(tok)
-			fmt.Fprintln(os.Stderr, "ccqc: deprecated: once ccqc has an owner, people are let in by invitation (`ccqc chat new <name>`, `ccqc invite <chat> <nick>`); a token does not register a new nick or make a chat then")
-		}
 	case "version":
 		fmt.Println("ccqc", version.Version)
 	default:

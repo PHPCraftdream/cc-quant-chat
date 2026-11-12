@@ -81,7 +81,6 @@ type Enroll struct {
 	ChatID, Nick, SID string
 	A                 func() ([]byte, error) // the client secret; asked for only once the broker has shown it keeps protected keys
 	Invite            *invite.Invitation
-	Token             string // a chat of tokens is joined by its token
 }
 
 // JoinEnrolled registers a protected key and joins with it. ErrNotProtected: this broker can't keep
@@ -121,14 +120,10 @@ func JoinEnrolled(call Callf, e Enroll, w *proto.Welcome) (*Signer, ed25519.Priv
 	args := proto.JoinArgs{Name: e.Nick, Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(priv, proto.NickJoinMessage(e.ChatID, e.Nick, pub, ch.Nonce))),
 		Enroll:  &proto.JoinEnroll{AuthPub: authPub, SID: e.SID}}
-	if e.Token != "" {
-		args.Token = e.Token
-	} else {
-		args.Chat = e.ChatID
-	}
+	args.Chat = e.ChatID
 	switch {
 	case e.Invite != nil:
-		args.Invite = &proto.JoinInvite{ID: e.Invite.ID(), Sig: owner.Encode(e.Invite.Proof([]byte(ch.Nonce), proto.InviteSubject6(e.ChatID, e.Nick, pub, authPub)))}
+		args.Invite = &proto.JoinInvite{ID: e.Invite.ID(), Sig: owner.Encode(e.Invite.Proof([]byte(ch.Nonce), proto.InviteSubject(e.ChatID, e.Nick, pub, authPub)))}
 	}
 	if err := call("join", args, w); err != nil {
 		return nil, nil, err

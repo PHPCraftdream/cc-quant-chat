@@ -43,11 +43,3 @@ type JoinInvite struct {
 	ID  string `json:"id"`
 	Sig string `json:"sig"`
 }
-
-// SigningProto is the level from which clients sign their events with a nick key (proto 4); a
-// client of this level or above is refused an unsigned write. InviteProto is the level that joins a
-// chat by its id and, for a new nick, by an invitation (docs/design-invites.md).
-const (
-	SigningProto = 4
-	InviteProto  = 5
-)

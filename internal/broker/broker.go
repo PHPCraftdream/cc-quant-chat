@@ -1,5 +1,5 @@
 // Package broker: long-lived local process holding chats. One IPC connection = one member
-// in one chat. Chat key = SHA-256(token); the token is not stored. Nicks, room membership and
+// in one chat. A chat is named by its id. Nicks, room membership and
 // messages go through store.Backend (SQLite by default); presence, roles and connections don't.
 package broker
 
@@ -65,19 +65,15 @@ type Broker struct {
 	ownerPub  ed25519.PublicKey            // the registered owner key, nil if none
 	ownerAt   string                       // when it was registered
 	origin    string                       // this broker's identity: first 16 bytes of SHA-256(node key), hex
-	// lenientEntry: tests only. A token is enough for a new nick even with an owner (see entryByInviteOnly).
-	// It stays unexported and is never set from configuration, the environment or a flag: a broker made
-	// for real enters by invitation once it has an owner.
-	lenientEntry bool
-	active       int
-	idleAt       time.Time
-	idle         time.Duration
-	grace        time.Duration
-	started      time.Time
-	ln           net.Listener
-	serving      sync.WaitGroup // serve goroutines; waited for before the store closes
-	stopping     atomic.Bool
-	reason       atomic.Value // why the broker stops: "idle" or "requested"
+	active    int
+	idleAt    time.Time
+	idle      time.Duration
+	grace     time.Duration
+	started   time.Time
+	ln        net.Listener
+	serving   sync.WaitGroup // serve goroutines; waited for before the store closes
+	stopping  atomic.Bool
+	reason    atomic.Value // why the broker stops: "idle" or "requested"
 }
 
 type chat struct {
@@ -99,7 +95,6 @@ type chat struct {
 }
 
 type nick struct {
-	hash string // SHA-256 of the nick's secret (a legacy nick; kept after the nick moves to a key)
 	pub  string // the nick's Ed25519 key, base64; "" while the nick still joins by its secret
 	seen int64  // last message id delivered live before going offline
 	// pinned: a role the owner pinned to this nick; the member holds it, can't change it and
@@ -348,7 +343,7 @@ func newChat(id, name string) *chat {
 func (ch *chat) replay(r store.Record) {
 	switch r.T {
 	case "nick":
-		ch.nicks[r.Nick] = &nick{hash: r.Hash, pub: r.Pub, seen: r.ID}
+		ch.nicks[r.Nick] = &nick{pub: r.Pub, seen: r.ID}
 		ch.rooms[proto.RoomCommon].members[r.Nick] = true // registering a nick puts it in @common
 	case "seen":
 		if n := ch.nicks[r.Nick]; n != nil {
@@ -362,7 +357,7 @@ func (ch *chat) replay(r store.Record) {
 		}
 	case "nick_key":
 		if n := ch.nicks[r.Nick]; n != nil {
-			n.hash, n.pub = r.Hash, r.Pub
+			n.pub = r.Pub
 		}
 	case "room":
 		if ch.rooms[r.Room] == nil {

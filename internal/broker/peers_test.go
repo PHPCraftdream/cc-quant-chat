@@ -112,7 +112,7 @@ func TestTheOwnerSetsWhatIsAcceptedFromANodeAndTheChatsHearOfIt(t *testing.T) {
 	k := newKey(t)
 	register(t, p.a, k)
 	alice, adm := p.a.connect(t), p.a.connect(t)
-	if _, code := alice.join(p.tok, "alice", proto.LegacyProto); code != "" {
+	if _, code := alice.join(p.tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("alice joins: %q", code)
 	}
 	if _, code := adminCall(t, adm, newKey(t), "peer_trust", proto.PeerTrust{Origin: p.b.origin, Level: "read"}); code != "admin_only" {

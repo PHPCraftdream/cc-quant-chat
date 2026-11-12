@@ -2,8 +2,6 @@ package broker
 
 import (
 	"net"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -165,24 +163,6 @@ func TestChangesAreRefusedWhileStopping(t *testing.T) {
 	var info proto.BrokerInfo
 	if code := a.call("ping", nil, &info); code != "" {
 		t.Fatalf("ping: %q; reads must keep working", code)
-	}
-}
-
-func TestOldClientsAreToldToRestart(t *testing.T) {
-	b := newTestBroker(newMemStore())
-	tok, _ := token(t)
-	old, cur := b.connect(t), b.connect(t)
-	w, code := old.join(tok, "oldie", 0)
-	if code != "" || !strings.Contains(w.Warning, "older ccqc") {
-		t.Fatalf("old client: code %q, warning %q; want the restart advice", code, w.Warning)
-	}
-	w, code = cur.join(tok, "newbie", proto.ProtoVersion)
-	if code != "" || w.Warning != "" || w.Proto != proto.ProtoVersion {
-		t.Fatalf("current client: code %q, warning %q, proto %d; want none and the broker's level", code, w.Warning, w.Proto)
-	}
-	info := b.info()
-	if info.ByProto["0"] != 1 || info.ByProto[strconv.Itoa(proto.ProtoVersion)] != 1 {
-		t.Fatalf("by proto = %v", info.ByProto)
 	}
 }
 

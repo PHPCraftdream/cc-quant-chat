@@ -67,7 +67,7 @@ func (ic *invitedChat) enrollJoin(t *testing.T, c *client, nick string, a, bsec 
 	authPub := owner.Encode(auth.Public().(ed25519.PublicKey))
 	args := proto.JoinArgs{Chat: ic.chat, Name: nick, Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(sign, proto.NickJoinMessage(ic.chat, nick, pub, ch.Nonce))),
-		Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, nick, pub, authPub)))},
+		Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, nick, pub, authPub)))},
 		Enroll:  &proto.JoinEnroll{AuthPub: authPub, SID: ic.sid}}
 	var w proto.Welcome
 	return w, c.call("join", args, &w)
@@ -170,7 +170,7 @@ func TestAProtectedNickJoinsOnlyAfterTheProofOfAAndNothingLessIsEnough(t *testin
 	}
 	// A client of an earlier level is refused with a reason it can show.
 	c4 := ic.b.connect(t)
-	if _, code := ic.joinWith(t, c4, "bob", a, bsec, proto.InviteProto); code != "key_protected" {
+	if _, code := ic.joinWith(t, c4, "bob", a, bsec, (proto.KeysProto - 1)); code != "old_client" {
 		t.Fatalf("an earlier level: %q", code)
 	}
 }
@@ -377,10 +377,10 @@ func TestEnrollNeedsAnInvitationAndAPreparedBAndAnInvitationThatDoesNotEnrollIsR
 	old.call("challenge", nil, &ch2)
 	okey := newKey(t)
 	opub := owner.Encode(okey.Public().(ed25519.PublicKey))
-	if code := old.call("join", proto.JoinArgs{Chat: ic.chat, Name: "erin", Pub: opub, Proto: proto.InviteProto,
+	if code := old.call("join", proto.JoinArgs{Chat: ic.chat, Name: "erin", Pub: opub, Proto: (proto.KeysProto - 1),
 		NickSig: owner.Encode(ed25519.Sign(okey, proto.NickJoinMessage(ic.chat, "erin", opub, ch2.Nonce))),
-		Invite:  &proto.JoinInvite{ID: in2.ID(), Sig: owner.Encode(in2.Proof([]byte(ch2.Nonce), proto.InviteSubject(ic.chat, "erin", opub)))}}, nil); code != "key_protected" {
-		t.Fatalf("an invitation without enroll: %q", code)
+		Invite:  &proto.JoinInvite{ID: in2.ID(), Sig: owner.Encode(in2.Proof([]byte(ch2.Nonce), proto.InviteSubject(ic.chat, "erin", opub, "")))}}, nil); code != "old_client" {
+		t.Fatalf("an invitation without enroll, from a client of an earlier level: %q", code)
 	}
 	if _, code := ic.join(t, ic.b.connect(t), "erin", newKey(t), &in2); code != "" {
 		t.Fatalf("the invitation was spent by a refused join: %q", code)

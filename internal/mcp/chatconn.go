@@ -15,14 +15,12 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// chatConn: membership in one chat. Token lives only in memory, used to rejoin after broker loss.
+// chatConn: membership in one chat. The chat id is kept in memory, used to rejoin after broker loss.
 type chatConn struct {
 	s     *Session
 	local string
-	token string // "" for a chat made for invitations: it is joined by its id
 	id    string // the chat's id
 	name  string
-	key   string // the nick's old secret (a legacy nick moves to its key with it)
 	priv  ed25519.PrivateKey
 	auth  ed25519.PrivateKey // for a protected nick: proves the client secret on every connection (nil: a plain key)
 
@@ -130,10 +128,7 @@ func (cc *chatConn) reconnect() *client.Conn {
 			continue
 		}
 		var w proto.Welcome
-		args := proto.JoinArgs{Token: cc.token, Name: cc.name, Key: cc.key}
-		if cc.token == "" {
-			args.Chat = cc.id // by the key alone
-		}
+		args := proto.JoinArgs{Chat: cc.id, Name: cc.name}
 		if cc.auth != nil { // a protected nick proves A first, on every connection
 			ids := cc.s.idsFor(cc.local)
 			if _, err := client.Unlock(conn.Call, cc.auth, cc.id, cc.name, ids); err != nil {
@@ -149,13 +144,7 @@ func (cc *chatConn) reconnect() *client.Conn {
 				_ = local.SetBinding(local.ProjectDir(), ids.SID, cc.local)
 			}
 		}
-		var signer *client.Signer
-		if cc.priv == nil { // the old secret of a chat of tokens: no key, unsigned events
-			args.Proto = proto.LegacyProto
-			err = conn.Call("join", args, &w)
-		} else {
-			signer, err = client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
-		}
+		signer, err := client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
 		if err != nil {
 			conn.Close()
 			log.Printf("rejoin /%s: %v", cc.local, err)
@@ -188,7 +177,7 @@ func (cc *chatConn) reconnect() *client.Conn {
 // permanentJoinError: retrying can't help. name_online (the old connection is still closing),
 // store errors and a missing broker are transient and keep being retried.
 func permanentJoinError(err error) bool {
-	for _, code := range []string{"bad_token", "bad_name", "name_taken", "already_joined"} {
+	for _, code := range []string{"bad_name", "name_taken", "already_joined", "old_client", "key_mismatch", "invite_required"} {
 		if proto.IsCode(err, code) {
 			return true
 		}

@@ -146,7 +146,7 @@ func TestAProtectedNickWhoseKeyInTheChatChangedBehindItsBackIsRefusedAndTheChatI
 		t.Fatalf("admin log: %q", l)
 	}
 	// An older client with the changed key does not get in by "it is not protected any more" either.
-	if _, code := ic.joinWith(t, ic.b.connect(t), "bob", a, secretOf(t), proto.InviteProto); code == "" {
+	if _, code := ic.joinWith(t, ic.b.connect(t), "bob", a, secretOf(t), (proto.KeysProto - 1)); code == "" {
 		t.Fatal("an older client got in under the nick")
 	}
 	// The owner's invitation replaces the key and the nick works again.

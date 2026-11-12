@@ -2,6 +2,10 @@ package broker
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -10,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	cl "github.com/PHPCraftdream/cc-quant-chat/internal/client"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
@@ -19,12 +24,13 @@ func newTestBroker(be store.Backend) *Broker {
 		store: be, storeDesc: "test",
 		chats: map[string]*chat{}, conns: map[*conn]bool{}, hits: map[string][]time.Time{},
 		idle: time.Hour, grace: time.Hour, started: time.Now(), origin: "0123456789abcdef0123456789abcdef",
-		lenientEntry: true, // most tests join by token; the tests of invitations turn it off
 	}
 }
 
 // client is a minimal peer over net.Pipe.
 type client struct {
+	b       *Broker    // the broker it is connected to
+	sg      *cl.Signer // the signer of its nick: its writes are signed by call (nil until it joined)
 	t       *testing.T
 	nc      net.Conn
 	id      int64
@@ -50,7 +56,7 @@ func (b *Broker) connect(t *testing.T) *client {
 	srv, cl := net.Pipe()
 	b.serving.Add(1)
 	go b.serve(srv)
-	c := &client{t: t, nc: cl, events: make(chan proto.Event, 256), replies: make(chan proto.Frame, 16), ended: make(chan struct{})}
+	c := &client{b: b, t: t, nc: cl, events: make(chan proto.Event, 256), replies: make(chan proto.Frame, 16), ended: make(chan struct{})}
 	go func() {
 		defer close(c.ended)
 		sc := bufio.NewScanner(cl)
@@ -83,10 +89,46 @@ func (b *Broker) connect(t *testing.T) *client {
 func (c *client) call(op string, args, out any) string {
 	c.t.Helper()
 	var pe *proto.Error
-	if errors.As(c.callE(op, args, out), &pe) {
+	if errors.As(c.callSigned(op, args, out), &pe) {
 		return pe.Code
 	}
 	return ""
+}
+
+// callSigned is callE, with the writes of a joined nick signed as its client does (a message, a board
+// change, a document version); what is not a write goes as it is.
+func (c *client) callSigned(op string, args, out any) error {
+	c.t.Helper()
+	if c.sg != nil {
+		var st proto.Stamper
+		kind := ""
+		switch a := args.(type) {
+		case proto.SendArgs:
+			st, kind = &a, "msg"
+		case *proto.SendArgs:
+			st, kind = a, "msg"
+		case proto.BoardArgs:
+			if proto.BoardWrite(a.Op) {
+				st, kind = &a, a.Op
+			}
+		case *proto.BoardArgs:
+			if proto.BoardWrite(a.Op) {
+				st, kind = a, a.Op
+			}
+		case proto.DocArgs:
+			if proto.DocWrite(a.Op) {
+				st, kind = &a, "doc."+a.Op
+			}
+		case *proto.DocArgs:
+			if proto.DocWrite(a.Op) {
+				st, kind = a, "doc."+a.Op
+			}
+		}
+		if st != nil {
+			return c.sg.Write(c.callE, op, kind, st, out)
+		}
+	}
+	return c.callE(op, args, out)
 }
 
 // callE is call returning the broker's error whole, with its data.
@@ -136,14 +178,35 @@ func (c *client) answer(op string, r proto.Frame, out any) error {
 	return nil
 }
 
-func (c *client) join(token, name string, level int) (proto.Welcome, string) {
+// join enters the chat as a nick does: it is a protected nick (made when it is not there yet, with a key of its own
+// that every client of that name has: a test needs no memory of it), the proof of its auth key, the join; its
+// writes are signed from then on. chat is the chat's id; level is a leftover of the tests of the old levels.
+func (c *client) join(chat, name string, level int) (proto.Welcome, string) {
 	c.t.Helper()
 	var w proto.Welcome
-	code := c.call("join", proto.JoinArgs{Token: token, Name: name, Key: c.key, Proto: level}, &w)
-	if code == "" && w.Key != "" {
-		c.key = w.Key
+	k := nickKeyOf(chat, name)
+	if err := c.b.seedProtectedIn(c.t, chat, "team", name, k); err != nil {
+		return w, "store_unavailable"
 	}
-	return w, code
+	if code := unlockAs(c.t, c, chat, name, k); code != "" {
+		return w, code
+	}
+	sg, err := cl.JoinSigned(c.callE, proto.JoinArgs{Chat: chat, Name: name}, k, chat, &w)
+	if err != nil {
+		var pe *proto.Error
+		if errors.As(err, &pe) {
+			return w, pe.Code
+		}
+		c.t.Fatalf("join: %v", err)
+	}
+	c.sg = sg
+	return w, ""
+}
+
+// nickKeyOf is the key of a test nick: the same for every client that joins under the name.
+func nickKeyOf(chat, name string) ed25519.PrivateKey {
+	h := sha256.Sum256([]byte("test-nick|" + chat + "|" + name))
+	return ed25519.NewKeyFromSeed(h[:])
 }
 
 func (c *client) send(room, to, text string) (int64, string) {
@@ -191,17 +254,15 @@ func (b *Broker) waitOffline(t *testing.T, ch *chat, nick string) {
 	t.Fatalf("@%s still online", nick)
 }
 
+// token is a chat for a test: its id (twice, as the tests were written when a chat was named by a token).
 func token(t *testing.T) (string, string) {
 	t.Helper()
-	tok, err := proto.NewToken("team")
-	if err != nil {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
 		t.Fatal(err)
 	}
-	_, id, err := proto.ParseToken(tok)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tok, id
+	id := hex.EncodeToString(raw)
+	return id, id
 }
 
 func (b *Broker) chatOf(id string) *chat {
@@ -252,19 +313,16 @@ func TestNickKeySurvivesBrokerRestartAndIsChecked(t *testing.T) {
 	tok, _ := token(t)
 	b1 := newTestBroker(be)
 	a := b1.connect(t)
-	if _, code := a.join(tok, "alice", proto.ProtoVersion); code != "" || a.key == "" {
-		t.Fatalf("first join: code %q, key %q", code, a.key)
+	if _, code := a.join(tok, "alice", proto.ProtoVersion); code != "" {
+		t.Fatalf("first join: code %q", code)
 	}
-	key := a.key
+	a.close()
 
 	b2 := newTestBroker(be) // restart: everything comes from the store
-	thief := b2.connect(t)
-	if _, code := thief.join(tok, "alice", proto.ProtoVersion); code != "name_taken" {
-		t.Fatalf("join without the key: code %q, want name_taken", code)
+	if _, err := b2.keyedJoin(t, tok, "alice", newKey(t)); codeOf(err) != "unlock_denied" {
+		t.Fatalf("join with another key: %v, want unlock_denied", err)
 	}
-	owner := b2.connect(t)
-	owner.key = key
-	if _, code := owner.join(tok, "alice", proto.ProtoVersion); code != "" {
+	if _, code := b2.connect(t).join(tok, "alice", proto.ProtoVersion); code != "" {
 		t.Fatalf("join with the key: code %q", code)
 	}
 }
@@ -334,24 +392,6 @@ func TestDeliveryIsConfirmedByAckNotByDisconnect(t *testing.T) {
 	}
 }
 
-func TestOlderClientsKeepTheDisconnectCursor(t *testing.T) {
-	be := newMemStore()
-	b := newTestBroker(be)
-	tok, id := token(t)
-	a, c := b.connect(t), b.connect(t)
-	a.join(tok, "alice", proto.ProtoVersion)
-	c.join(tok, "bob", 0) // no proto level: can't ack
-	a.send(proto.RoomCommon, "", "one")
-	c.msgs()
-	c.close()
-	b.waitOffline(t, b.chatOf(id), "bob")
-	c2 := b.connect(t)
-	c2.key = c.key
-	if w, code := c2.join(tok, "bob", 0); code != "" || len(w.Backlog) != 0 {
-		t.Fatalf("legacy client got %d old messages", len(w.Backlog))
-	}
-}
-
 func TestRateLimitSurvivesLeaveAndRejoin(t *testing.T) {
 	b := newTestBroker(newMemStore())
 	tok, _ := token(t)
@@ -397,10 +437,7 @@ func TestRoomLimits(t *testing.T) {
 
 func mustID(t *testing.T, tok string) string {
 	t.Helper()
-	_, id, err := proto.ParseToken(tok)
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := tok
 	return id
 }
 

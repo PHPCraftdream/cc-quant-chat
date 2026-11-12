@@ -2,8 +2,6 @@ package broker
 
 import (
 	"time"
-
-	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
 // allow counts an action of a nick against a per-minute limit. The counters live in the broker,
@@ -80,20 +78,4 @@ func (ch *chat) rememberSent(nick, cid string, id int64) {
 		}
 	}
 	ch.sent[k] = id
-}
-
-// warnFor: the standing warning plus, for a client older than this broker, how to update.
-func (b *Broker) warnFor(clientProto int) string {
-	w := b.warning
-	if clientProto < proto.SigningProto {
-		if w != "" {
-			w += "; "
-		}
-		if clientProto < 2 {
-			w += "this session runs an older ccqc: restart Claude Code so delivery is confirmed and messages aren't lost or repeated across a broker restart"
-		} else {
-			w += "this session runs an older ccqc: restart Claude Code so your events are signed with your nick key"
-		}
-	}
-	return w
 }

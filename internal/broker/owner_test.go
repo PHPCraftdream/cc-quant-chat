@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	cl "github.com/PHPCraftdream/cc-quant-chat/internal/client"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
@@ -34,24 +35,21 @@ func register(t *testing.T, b *Broker, k ed25519.PrivateKey) string {
 	return pub
 }
 
-// ownerJoin joins under nick the way `ccqc owner say` of the previous level does: challenge, sign,
-// join; it doesn't sign its writes.
-func ownerJoin(t *testing.T, b *Broker, k ed25519.PrivateKey, tok, nick string, key ...string) (*client, string) {
+// ownerJoin joins under nick the way `ccqc owner say` does: challenge, sign, join; its writes are signed with the
+// owner's key.
+func ownerJoin(t *testing.T, b *Broker, k ed25519.PrivateKey, tok, nick string) (*client, string) {
 	t.Helper()
+	b.makeChat(t, tok)
 	c := b.connect(t)
 	var ch proto.Challenge
 	if code := c.call("challenge", nil, &ch); code != "" {
 		t.Fatalf("challenge: %q", code)
 	}
-	_, id, _ := proto.ParseToken(tok)
-	sig := owner.Encode(ed25519.Sign(k, proto.OwnerJoinMessage(id, nick, ch.Nonce)))
-	if len(key) > 0 {
-		c.key = key[0]
-	}
+	sig := owner.Encode(ed25519.Sign(k, proto.OwnerJoinMessage(tok, nick, ch.Nonce)))
 	var w proto.Welcome
-	code := c.call("join", proto.JoinArgs{Token: tok, Name: nick, Key: c.key, Proto: proto.LegacyProto, OwnerSig: sig}, &w)
-	if code == "" && w.Key != "" {
-		c.key = w.Key
+	code := c.call("join", proto.JoinArgs{Chat: tok, Name: nick, Proto: proto.ProtoVersion, OwnerSig: sig}, &w)
+	if code == "" {
+		c.sg = &cl.Signer{Priv: k, ChatID: tok, Origin: w.Origin}
 	}
 	return c, code
 }
@@ -117,8 +115,9 @@ func TestOwnerMarkNeedsAValidSignature(t *testing.T) {
 	register(t, b, k)
 
 	// No challenge at all, a signature by another key, a signature for another chat or nick.
+	b.makeChat(t, tok)
 	c := b.connect(t)
-	if code := c.call("join", proto.JoinArgs{Token: tok, Name: "owner", OwnerSig: owner.Encode(make([]byte, 64))}, nil); code != "bad_owner_sig" {
+	if code := c.call("join", proto.JoinArgs{Chat: tok, Name: "owner", Proto: proto.ProtoVersion, OwnerSig: owner.Encode(make([]byte, 64))}, nil); code != "bad_owner_sig" {
 		t.Fatalf("no challenge: %q", code)
 	}
 	if _, code := ownerJoin(t, b, other, tok, "owner"); code != "bad_owner_sig" {
@@ -149,7 +148,7 @@ func TestOwnerMarkNeedsAValidSignature(t *testing.T) {
 
 // try joins with a prepared signature on this connection and returns the error code.
 func (c *client) try(tok, nick, sig string) string {
-	return c.call("join", proto.JoinArgs{Token: tok, Name: nick, Proto: proto.ProtoVersion, OwnerSig: sig}, nil)
+	return c.call("join", proto.JoinArgs{Chat: tok, Name: nick, Proto: proto.ProtoVersion, OwnerSig: sig}, nil)
 }
 
 func TestChallengeIsOneTimeBoundToTheConnectionAndExpires(t *testing.T) {
@@ -159,6 +158,7 @@ func TestChallengeIsOneTimeBoundToTheConnectionAndExpires(t *testing.T) {
 	register(t, b, k)
 
 	// Replay on another connection.
+	b.makeChat(t, tok)
 	c1 := b.connect(t)
 	var ch proto.Challenge
 	c1.call("challenge", nil, &ch)
@@ -211,13 +211,16 @@ func TestClientsCannotClaimTheMarkThemselves(t *testing.T) {
 	register(t, b, newKey(t))
 
 	c := b.connect(t)
-	var w proto.Welcome
-	code := c.call("join", map[string]any{"token": tok, "name": "mallory", "owner": true, "owner_sig": "", "proto": 3}, &w)
-	if code != "" {
+	if _, code := c.join(tok, "mallory", proto.ProtoVersion); code != "" {
 		t.Fatalf("join: %q", code)
 	}
-	if code := c.call("send", map[string]any{"room": "common", "text": "I am the owner", "owner": true}, nil); code != "" {
-		t.Fatalf("send: %q", code)
+	// An extra field of the request that names the mark is no way to set it: it is the broker's, from a verified key.
+	claim := &struct {
+		proto.SendArgs
+		Owner bool `json:"owner"`
+	}{SendArgs: proto.SendArgs{Room: "common", Text: "I am the owner"}, Owner: true}
+	if err := c.sg.Write(c.callE, "send", "msg", claim, nil); err != nil {
+		t.Fatalf("send: %v", err)
 	}
 	if lastOwnerFlag(t, c) {
 		t.Fatal("a client set the owner mark with a field of its own")
@@ -255,8 +258,9 @@ func TestRegistrationRotationAndTheReservedNick(t *testing.T) {
 	}
 
 	// The nick is reserved.
+	b.makeChat(t, tok)
 	u := b.connect(t)
-	if _, code := u.join(tok, "owner", proto.ProtoVersion); code != "reserved" {
+	if code := u.call("join", proto.JoinArgs{Chat: tok, Name: "owner", Proto: proto.ProtoVersion}, nil); code != "reserved" {
 		t.Fatalf("unsigned join as owner: %q, want reserved", code)
 	}
 
@@ -311,7 +315,7 @@ func TestOwnerAndTheMarkSurviveABrokerRestart(t *testing.T) {
 	if !lastOwnerFlag(t, a) {
 		t.Fatal("the owner mark did not survive the restart")
 	}
-	if _, code := ownerJoin(t, b2, k, tok, "owner", o.key); code != "" {
+	if _, code := ownerJoin(t, b2, k, tok, "owner"); code != "" {
 		t.Fatalf("the owner key after a restart: %q", code)
 	}
 }

@@ -21,23 +21,18 @@ type Signer struct {
 // Callf is Conn.Call, or a wrapper of it that survives reconnects.
 type Callf func(op string, args, out any) error
 
-// JoinSigned joins with the nick's key: it asks for a challenge, signs it and joins. A broker
-// older than proto 4 has no use for the key; the join then goes by the secret in args.Key and the
-// returned signer is nil (such a broker stores events unsigned).
+// JoinSigned joins with the nick's key: it asks for a challenge, signs it and joins. The nick's key is a
+// protected one: the caller proved the client secret on this connection first (Unlock).
 func JoinSigned(call Callf, args proto.JoinArgs, priv ed25519.PrivateKey, chatID string, w *proto.Welcome) (*Signer, error) {
 	args.Proto = proto.ProtoVersion
 	var ch proto.Challenge
-	if err := call("challenge", nil, &ch); err == nil {
-		args.Pub = owner.Encode(priv.Public().(ed25519.PublicKey))
-		args.NickSig = owner.Encode(ed25519.Sign(priv, proto.NickJoinMessage(chatID, args.Name, args.Pub, ch.Nonce)))
-	} else if !proto.IsCode(err, "unknown_op") && !proto.IsCode(err, "not_joined") {
+	if err := call("challenge", nil, &ch); err != nil {
 		return nil, err
 	}
+	args.Pub = owner.Encode(priv.Public().(ed25519.PublicKey))
+	args.NickSig = owner.Encode(ed25519.Sign(priv, proto.NickJoinMessage(chatID, args.Name, args.Pub, ch.Nonce)))
 	if err := call("join", args, w); err != nil {
 		return nil, err
-	}
-	if args.Pub == "" || w.Proto < proto.SigningProto || w.Origin == "" {
-		return nil, nil
 	}
 	return &Signer{Priv: priv, ChatID: chatID, Origin: w.Origin}, nil
 }

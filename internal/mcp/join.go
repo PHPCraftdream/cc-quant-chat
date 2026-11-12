@@ -13,26 +13,12 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// joinTarget names the chat a join is for: an older chat by its token, a chat made for invitations by
-// its id (and name, which the chat tells and the invitation carries).
-type joinTarget struct{ token, id, name string }
+// joinTarget names the chat a join is for: its id, and its name (which the invitation carries).
+type joinTarget struct{ id, name string }
 
-// join enters a chat by its token under a nick and remembers it for this Claude Code session, so
-// resuming the session joins again. auto: called on session start; backlog goes out as events.
-func (s *Session) join(token, name, alias string, auto bool) (string, error) {
-	token = strings.TrimSpace(token)
-	chatName, chatID, err := proto.ParseToken(token)
-	if err != nil {
-		return "", err
-	}
-	return s.joinTo(joinTarget{token, chatID, chatName}, name, alias, auto, nil)
-}
-
-// joinEntry joins again a chat remembered for the session: by token, or by id and the nick's key.
+// joinEntry joins again a chat remembered for the session: by its id and the protected key of the nick (the proof
+// of the client secret first). auto: called on session start; backlog goes out as events.
 func (s *Session) joinEntry(e local.Entry) (string, error) {
-	if e.Token != "" {
-		return s.join(e.Token, e.Name, e.Alias, true)
-	}
 	return s.joinTo(joinTarget{id: e.ChatID, name: e.Chat}, e.Name, e.Alias, true, nil)
 }
 
@@ -62,7 +48,7 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	}
 	name = strings.TrimPrefix(strings.TrimSpace(name), "@")
 	if name == "" {
-		return "", errors.New("a nick is required: chat_join(token, name=<your nick>)")
+		return "", errors.New("a nick is required (an invitation has it)")
 	}
 	if !proto.ValidName(name) {
 		return "", fmt.Errorf("bad nick %q: want [a-z0-9-]{1,32}", name)
@@ -78,10 +64,6 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	}
 	s.mu.Unlock()
 
-	key := ""
-	if t.token != "" {
-		key = local.NickKey(chatID, name) // the nick's old secret: moves a legacy nick to its key
-	}
 	conn, err := client.Connect()
 	if err != nil {
 		return "", err
@@ -94,19 +76,7 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	}
 	signer, priv := kj.Signer, kj.Priv
 	keyNote := kj.Note
-	if w.Key != "" {
-		key = w.Key
-		if err := local.SetNickKey(chatID, name, key); err != nil {
-			log.Printf("save nick key: %v", err)
-			// The nick works for this session only; after that its key is lost.
-			keyNote = fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that `ccqc nick reset - %s` (token on stdin) is needed to use it again.\n\n", name, err, name)
-		}
-	}
-	brokerNote := ""
-	if w.Proto < proto.SigningProto {
-		brokerNote = "the broker runs an older ccqc that does not sign events: `ccqc broker restart` updates it (sessions reconnect by themselves; best done while the chats are quiet)"
-	}
-	cc := &chatConn{s: s, local: lname, token: t.token, id: chatID, name: name, key: key, priv: priv, auth: kj.Auth, signer: signer, conn: conn,
+	cc := &chatConn{s: s, local: lname, id: chatID, name: name, priv: priv, auth: kj.Auth, signer: signer, conn: conn,
 		role: w.State.MyRole, rooms: set(w.State.MyRooms)}
 
 	s.mu.Lock()
@@ -121,7 +91,7 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	// The backlog is handled before live events are read, so ids stay in order for the dedupe.
 	remembered := ""
 	if !auto {
-		remembered = s.remember(local.Entry{Token: t.token, ChatID: chatID, Chat: chatName, Name: name, Alias: alias})
+		remembered = s.remember(local.Entry{ChatID: chatID, Chat: chatName, Name: name, Alias: alias})
 	}
 	if kj.Protected { // the broker has the nick bound to this session now
 		if sid := s.sessionID(); sid != "" {
@@ -134,9 +104,6 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 		cc.presence(fmt.Sprintf("auto-joined /%s as @%s", lname, name))
 		if w.Warning != "" {
 			cc.presence("warning: " + w.Warning)
-		}
-		if brokerNote != "" {
-			cc.presence("warning: " + brokerNote)
 		}
 		for _, ev := range w.Backlog {
 			cc.onEvent(ev)
@@ -156,9 +123,6 @@ func (s *Session) joinTo(t joinTarget, name, alias string, auto bool, inv *invit
 	b.WriteString(keyNote)
 	if w.Warning != "" {
 		b.WriteString("warning: " + w.Warning + "\n\n")
-	}
-	if brokerNote != "" {
-		b.WriteString("warning: " + brokerNote + "\n\n")
 	}
 	b.WriteString(renderState(lname, &w.State))
 	if w.UnreadTotal > 0 {

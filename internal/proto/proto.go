@@ -3,10 +3,6 @@ package proto
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,58 +56,24 @@ func IsCode(err error, code string) bool {
 	return errors.As(err, &pe) && pe.Code == code
 }
 
-// NewToken returns "<chat>.<32 random bytes base64url>".
-func NewToken(chat string) (string, error) {
-	if !ValidName(chat) {
-		return "", fmt.Errorf("bad chat name %q: want [a-z0-9-]{1,32}", chat)
-	}
-	b := make([]byte, secretLen)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return chat + "." + base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// ParseToken returns the chat name and chat id (hex SHA-256 of the whole token).
-func ParseToken(tok string) (chat, id string, err error) {
-	tok = strings.TrimSpace(tok)
-	bad := errors.New("bad token format: want <chat>.<secret>")
-	i := strings.LastIndexByte(tok, '.')
-	if i <= 0 {
-		return "", "", bad
-	}
-	chat = tok[:i]
-	sec, derr := base64.RawURLEncoding.DecodeString(tok[i+1:])
-	if !ValidName(chat) || derr != nil || len(sec) != secretLen {
-		return "", "", bad
-	}
-	h := sha256.Sum256([]byte(tok))
-	return chat, hex.EncodeToString(h[:]), nil
-}
-
 type JoinArgs struct {
-	Token string `json:"token"`
-	Name  string `json:"name"`
-	Key   string `json:"key,omitempty"` // nick key, required once the nick is registered
-	// Proto: protocol level of the client. 2+ confirms delivery with "ack"; the broker then
-	// advances the nick's read cursor only on ack, not when the connection ends.
+	// Chat: the chat's id (64 hex). A chat is made by the owner (ccqc chat new), never by a join.
+	Chat string `json:"chat"`
+	Name string `json:"name"`
+	// Proto: protocol level of the client; a broker takes only its own (ProtoVersion).
 	Proto int `json:"proto,omitempty"`
 	// OwnerSig: base64 Ed25519 signature of OwnerJoinMessage(chat id, nick, nonce) with the owner's
 	// key, over a nonce from "challenge" on this connection. Valid: the broker marks the member
 	// as the owner. Invalid, or no owner registered: the join is refused (bad_owner_sig).
 	OwnerSig string `json:"owner_sig,omitempty"`
-	// Pub: base64 Ed25519 public key of the nick (proto 4+); NickSig proves the client holds it
-	// (a signature over NickJoinMessage with a nonce from "challenge"). A new nick is registered
-	// with Pub; a legacy nick is rebound once, presenting its old secret in Key as well.
+	// Pub: base64 Ed25519 public key of the nick, a protected one (see keys.go); NickSig proves the client
+	// holds it (a signature over NickJoinMessage with a nonce from "challenge"), after key_unlock on the connection.
 	Pub     string `json:"pub,omitempty"`
 	NickSig string `json:"nick_sig,omitempty"`
-	// Chat: the chat's id (64 hex), instead of a token (proto 5): for a nick that has a key, or with
-	// an invitation. A chat is never made by a join with an id.
-	Chat string `json:"chat,omitempty"`
-	// Invite: the use of a one-time invitation (proto 5): it registers Pub for the nick it was
-	// issued for, or replaces the key of that nick. Needs Pub and NickSig.
+	// Invite: the use of a one-time invitation: it enrolls Pub, a protected key, for the nick it was issued
+	// for, or replaces the key of that nick. Needs Pub, NickSig and Enroll.
 	Invite *JoinInvite `json:"invite,omitempty"`
-	// Enroll (proto 6): the key registered by this join is a protected one (see keys.go).
+	// Enroll: the key registered by this join is a protected one (see keys.go).
 	Enroll *JoinEnroll `json:"enroll,omitempty"`
 }
 
@@ -217,10 +179,6 @@ const OwnerNick = "owner"
 
 // ProtoVersion is the protocol level this build speaks.
 const ProtoVersion = KeysProto
-
-// LegacyProto is the last level whose clients do not sign: they join by their secret and their
-// events are stored unsigned.
-const LegacyProto = 3
 
 // AckArgs: everything visible to the nick up to message ID was delivered to the session.
 type AckArgs struct {
@@ -452,7 +410,6 @@ type Welcome struct {
 	State       State   `json:"state"`
 	Backlog     []Event `json:"backlog,omitempty"`      // unread since the nick was last online
 	UnreadTotal int     `json:"unread_total,omitempty"` // backlog may be cut to the newest
-	Key         string  `json:"key,omitempty"`          // set once, when the nick is registered
 	Warning     string  `json:"warning,omitempty"`      // e.g. history is not being saved
 	Proto       int     `json:"proto,omitempty"`        // protocol level of the broker; 0 = older than levels
 	Origin      string  `json:"origin,omitempty"`       // the broker's identity, for signed writes (proto 4)

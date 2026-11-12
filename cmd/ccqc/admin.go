@@ -55,29 +55,14 @@ func adminDo(c *client.Conn, op string, args any) (string, error) {
 	return r.Text, nil
 }
 
-// chatID finds the id of a chat by its name: the broker is asked; an older chat the broker does not
-// know by that name is found by the token from the user's sessions, else the token is asked for on
-// the console.
+// chatID finds the id of a chat by its name: the broker knows its chats by name (the id itself is taken as it is).
 func chatID(name string) (string, error) {
-	if c, err := client.Connect(); err == nil { // the broker knows its chats by name; no token is needed
-		id, ferr := findChat(c, name)
-		c.Close()
-		if ferr == nil {
-			return id, nil
-		}
-		if errors.Is(ferr, errSeveralChats) {
-			return "", ferr
-		}
+	c, err := client.Connect()
+	if err != nil {
+		return "", err
 	}
-	token, ok := local.FindChatToken(name)
-	if !ok {
-		var err error
-		if token, err = owner.ReadSecret(fmt.Sprintf("Token of chat /%s (not stored): ", name)); err != nil {
-			return "", err
-		}
-	}
-	_, id, err := proto.ParseToken(strings.TrimSpace(token))
-	return id, err
+	defer c.Close()
+	return findChat(c, name)
 }
 
 // runRole: ccqc role give <chat> <nick> <role> | take <chat> <nick>.

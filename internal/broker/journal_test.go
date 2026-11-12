@@ -119,7 +119,7 @@ func runScenario(t *testing.T) (*sqlite.DB, string, string, ed25519.PrivateKey) 
 	alice := b.mustJoin(t, tok, "alice", newKey(t)) // signs everything
 	consistent(t, db, "alice joins with a key")
 	bob := b.connect(t) // a client of the previous level: no key, no signatures
-	if _, code := bob.join(tok, "bob", proto.LegacyProto); code != "" {
+	if _, code := bob.join(tok, "bob", proto.ProtoVersion); code != "" {
 		t.Fatalf("bob joins: %q", code)
 	}
 	consistent(t, db, "bob joins by his secret")
@@ -422,7 +422,7 @@ func TestAdministratorEventsCarryTheOwnersSignatureAndVerifyChecksIt(t *testing.
 	register(t, b, k)
 	b.mustJoin(t, tok, "alice", newKey(t))
 	bob := b.connect(t)
-	if _, code := bob.join(tok, "bob", proto.LegacyProto); code != "" {
+	if _, code := bob.join(tok, "bob", proto.ProtoVersion); code != "" {
 		t.Fatalf("bob: %q", code)
 	}
 	bob.call("leave", nil, nil)

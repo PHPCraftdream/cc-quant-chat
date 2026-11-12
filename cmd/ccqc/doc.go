@@ -18,8 +18,7 @@ const docUsage = "usage: ccqc doc tree <chat> [prefix] | get <chat> <path> | put
 
 // runDoc: the chat's document tree from a terminal. With an owner on this machine it enters with the
 // owner's key (the password is asked for on the console) under --nick, "owner" by default; or with
-// --invite, an invitation of its own for another nick. Before there is an owner it is an ordinary
-// member by the chat's token (from your sessions' config, or asked for on the console).
+// --invite, an invitation of its own for another nick.
 func runDoc(args []string) error {
 	nick, invitation := "", ""
 	var rest []string
@@ -146,69 +145,34 @@ func exportDocs(call func(proto.DocArgs) (proto.DocReply, error), dir string) er
 	return nil
 }
 
-// joinForDoc enters a chat for the document commands: by an invitation, by the owner's key, or (no
-// owner on this machine) as before by the token.
+// joinForDoc enters a chat for the document commands: by an invitation (a protected nick of its own), as a protected
+// nick of this machine (--nick), or as the owner (the owner's key; the password is asked for on the console). What
+// is written is signed: by the nick's key, or by the owner's.
 func joinForDoc(chat, nick, invitation string) (*client.Conn, *client.Signer, func(), error) {
+	leave := func(c *client.Conn) func() { return func() { _ = c.Call("leave", nil, nil); c.Close() } }
 	if invitation != "" {
 		c, sg, err := joinInvited(invitation)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return c, sg, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+		return c, sg, leave(c), nil
 	}
-	if nick != "" && nick != proto.OwnerNick && nickKnownHere(nick) { // a nick of this machine (protected, or still plain): no password per command
+	if nick != "" && nick != proto.OwnerNick && nickKnownHere(nick) { // a protected nick of this machine: no password per command
 		c, sg, err := joinTerminal(chat, nick)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return c, sg, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+		return c, sg, leave(c), nil
 	}
-	if _, err := owner.Load(local.OwnerKeyPath()); err == nil {
-		if nick == "" {
-			nick = proto.OwnerNick
-		}
-		// Proto 3: the owner's writes from a terminal are unsigned, as they were.
-		c, _, _, _, err := joinOwner(chat, nick, proto.LegacyProto)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return c, nil, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+	if _, err := owner.Load(local.OwnerKeyPath()); err != nil {
+		return nil, nil, nil, errors.New("this machine has no owner key (ccqc owner init) and no protected nick of that name: pass --invite or --nick")
 	}
 	if nick == "" {
-		nick = "cli"
+		nick = proto.OwnerNick
 	}
-	c, leave, err := joinAsMember(chat, nick)
-	return c, nil, leave, err
-}
-
-// joinAsMember joins a chat as an ordinary member under nick (its key kept like any nick's) and
-// returns the connection and a function that leaves.
-func joinAsMember(chat, nick string) (*client.Conn, func(), error) {
-	token, ok := local.FindChatToken(chat)
-	if !ok {
-		var err error
-		if token, err = owner.ReadSecret(fmt.Sprintf("Token of chat /%s (not stored): ", chat)); err != nil {
-			return nil, nil, err
-		}
-	}
-	token = strings.TrimSpace(token)
-	_, chatID, err := proto.ParseToken(token)
+	c, chatID, priv, w, err := joinOwner(chat, nick)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	c, err := client.Connect()
-	if err != nil {
-		return nil, nil, err
-	}
-	var w proto.Welcome
-	if err := c.Call("join", proto.JoinArgs{Token: token, Name: nick, Key: local.NickKey(chatID, nick), Proto: proto.LegacyProto}, &w); err != nil {
-		c.Close()
-		return nil, nil, err
-	}
-	if w.Key != "" {
-		if err := local.SetNickKey(chatID, nick, w.Key); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: the key of nick @%s could not be saved (%v)\n", nick, err)
-		}
-	}
-	return c, func() { _ = c.Call("leave", nil, nil); c.Close() }, nil
+	return c, &client.Signer{Priv: priv, ChatID: chatID, Origin: w.Origin}, leave(c), nil
 }

@@ -9,7 +9,8 @@ import (
 // memStore keeps records like a database would, so a second broker can load them, and can be
 // told to fail.
 type memStore struct {
-	memSecrets // the broker's halves of protected keys (store.NickSecrets)
+	memSecrets    // the broker's halves of protected keys (store.NickSecrets)
+	store.Invites // only ChatName is answered (a chat is known once it has a record); an invitation needs the database
 
 	mu        sync.Mutex
 	recs      map[string][]store.Record
@@ -18,6 +19,16 @@ type memStore struct {
 	owner     []byte
 	settings  map[string]map[string]string
 	admin     []store.AdminEntry
+}
+
+// ChatName: the name of a chat that this store has records of.
+func (s *memStore) ChatName(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.recs[id]) > 0 {
+		return "team", nil
+	}
+	return "", nil
 }
 
 func newMemStore() *memStore { return &memStore{recs: map[string][]store.Record{}} }
