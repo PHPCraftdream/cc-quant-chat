@@ -117,14 +117,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
-      - name: live key store (secret-tool), a session bus and a keyring unlocked with an empty password
+      - name: live key store (secret-tool), a session bus and a keyring unlocked without a person
         env:
           CCQC_LIVE_KEYSTORE: secret-service
         run: |
-          dbus-run-session -- bash -c '
-            set -eu
-            eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets)"
-            export GNOME_KEYRING_CONTROL
-            secret-tool --version || true
-            go test ./internal/local -run TestLiveKeyStore -v -count=1
-          '
+          # The login keyring has to exist and be unlocked, or secret-tool asks a person (gcr-prompter wants a display).
+          # Several ways to make it, each in a session bus of its own; the job passes if one of them gives a keyring
+          # the test can use, and says which.
+          ok=0
+          try() {
+            name="$1"; shift
+            echo "::group::keyring recipe: $name"
+            if dbus-run-session -- bash -c "$*"; then echo "recipe $name: PASSED"; ok=1; else echo "recipe $name: failed"; fi
+            echo "::endgroup::"
+          }
+          T='go test ./internal/local -run TestLiveKeyStore -v -count=1'
+          try login-password "set -eu; eval \"\$(printf %s ci-test-password | gnome-keyring-daemon --daemonize --login --components=secrets)\"; export GNOME_KEYRING_CONTROL; $T"
+          try unlock-password "set -eu; eval \"\$(printf %s ci-test-password | gnome-keyring-daemon --unlock --components=secrets)\"; export GNOME_KEYRING_CONTROL; $T"
+          try start-then-unlock "set -eu; eval \"\$(gnome-keyring-daemon --start --components=secrets)\"; export GNOME_KEYRING_CONTROL; printf %s ci-test-password | gnome-keyring-daemon --unlock >/dev/null; $T"
+          try unlock-empty "set -eu; eval \"\$(echo -n '' | gnome-keyring-daemon --unlock --components=secrets)\"; export GNOME_KEYRING_CONTROL; $T"
+          test "$ok" = 1
