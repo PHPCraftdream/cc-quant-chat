@@ -296,15 +296,15 @@ func TestUnfinishedHandshakesAreCapped(t *testing.T) {
 		conns = append(conns, c)
 		t.Cleanup(func() { c.Close() })
 	}
-	time.Sleep(300 * time.Millisecond)
 	closed := 0
-	for _, c := range conns {
-		_ = c.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-		if _, err := c.Read(make([]byte, 1)); err != nil && !os.IsTimeout(err) {
-			closed++
+	eventually(t, wait, "the silent connections over the cap are dropped", func() bool {
+		closed = 0
+		for _, c := range conns {
+			_ = c.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
+			if _, err := c.Read(make([]byte, 1)); err != nil && !os.IsTimeout(err) {
+				closed++
+			}
 		}
-	}
-	if closed < 8 {
-		t.Fatalf("%d of %d silent connections were dropped, want at least 8", closed, len(conns))
-	}
+		return closed >= 8
+	})
 }

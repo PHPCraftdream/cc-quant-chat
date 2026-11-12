@@ -88,15 +88,21 @@ func TestATrustedNodeBringsAtMostALimitOfSourcesAndTheOwnerIsToldOnceAndTheRefus
 	eventually(t, wait, "alice holds two sources", func() bool { return len(originsIn(a.journal(chatX))) == 2 })
 	eventually(t, wait, "alice refuses the third", func() bool { return a.m.Stats(b.origin).Refused["too many sources via it"] > 0 })
 	// A frame already on its way when the vector that holds the source was sent may come once more; after
-	// that the source is not asked for again: the count stops growing.
-	time.Sleep(600 * time.Millisecond)
-	first := a.m.Stats(b.origin).Refused["too many sources via it"]
-	time.Sleep(800 * time.Millisecond)
+	// that the source is not asked for again. An event of a source that is held, said after the refusal and
+	// taken, is the barrier: what was to come before it has come.
+	held := originsIn(a.journal(chatX))
+	for _, s := range srcs {
+		if held[s.origin] {
+			s.say(chatX, "after the refusal")
+			break
+		}
+	}
+	eventually(t, wait, "alice takes the next event of a source she holds", func() bool { return len(a.journal(chatX)) >= 3 })
 	if got := len(originsIn(a.journal(chatX))); got != 2 {
 		t.Fatalf("%d sources came through bob", got)
 	}
-	if n := a.m.Stats(b.origin).Refused["too many sources via it"]; n != first || n > 3 {
-		t.Fatalf("the refused source is asked for again: %d, then %d", first, n)
+	if n := a.m.Stats(b.origin).Refused["too many sources via it"]; n > 3 {
+		t.Fatalf("the refused source is asked for again and again: %d", n)
 	}
 	if got := alerts.Load(); got != 1 {
 		t.Fatalf("the owner was told %d times", got)

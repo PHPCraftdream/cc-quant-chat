@@ -126,7 +126,7 @@ func TestStopFlushesWhatIsQueued(t *testing.T) {
 	}
 	stopped := make(chan struct{})
 	go func() { b.shutdown("test"); close(stopped) }()
-	time.Sleep(100 * time.Millisecond) // the stop is under way and waiting for the writers
+	eventually(t, "the stop is under way", b.stopping.Load) // it waits for the writers, who are held at the gate
 	close(gate)
 	select {
 	case <-stopped:

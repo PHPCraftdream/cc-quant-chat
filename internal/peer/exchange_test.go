@@ -254,12 +254,13 @@ func TestTwoNodesThatDialEachOtherEndUpWithOneSession(t *testing.T) {
 	must(a.m.Refresh())
 	must(b.m.Refresh())
 	eventually(t, wait, "the event arrives", func() bool { return len(b.journal(chatX)) == 1 })
-	time.Sleep(time.Second)
+	eventually(t, wait, "one session each", func() bool { return len(a.m.Sessions()) == 1 && len(b.m.Sessions()) == 1 })
+	b.say(chatX, "y")
+	eventually(t, wait, "and the way back", func() bool { return len(a.journal(chatX)) == 2 })
+	// The way back has gone over the session that is left: the duplicate was settled and nothing was closed after it.
 	if len(a.m.Sessions()) != 1 || len(b.m.Sessions()) != 1 {
 		t.Fatalf("sessions: a %v, b %v", a.m.Sessions(), b.m.Sessions())
 	}
-	b.say(chatX, "y")
-	eventually(t, wait, "and the way back", func() bool { return len(a.journal(chatX)) == 2 })
 }
 
 func TestOneConnectionInEitherDirectionIsEnoughAndTheOtherSideIsNotTried(t *testing.T) {

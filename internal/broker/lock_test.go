@@ -309,9 +309,12 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 	}
 	var stop atomic.Bool
 	var wg sync.WaitGroup
+	var worked atomic.Int64 // requests that were done, to stop the broker while the members are busy
 	ok := func(what, code string) {
 		switch code {
-		case "", "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "closed", "timeout", "role_taken", "no_pinned_role", "rate_limited", "no_such_room", "not_in_room", "room_exists":
+		case "":
+			worked.Add(1)
+		case "name_online", "no_such_member", "not_joined", "name_taken", "restarting", "closed", "timeout", "role_taken", "no_pinned_role", "rate_limited", "no_such_room", "not_in_room", "room_exists":
 		default:
 			t.Errorf("%s: unexpected %q", what, code)
 		}
@@ -362,7 +365,7 @@ func TestAdministratorOperationsAndShutdownWhileBusy(t *testing.T) {
 			ok("role_take", admin(c, "role_take", proto.AdminRole{Chat: chat, Nick: nickName}))
 		}
 	}()
-	time.Sleep(300 * time.Millisecond)
+	eventually(t, "the members are busy", func() bool { return worked.Load() >= 30 })
 	within(t, drainWait+5*time.Second, "shutdown", func() { b.shutdown("test") })
 	stop.Store(true)
 	done := make(chan struct{})
