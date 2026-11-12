@@ -81,8 +81,6 @@ type Enroll struct {
 	ChatID, Nick, SID string
 	A                 func() ([]byte, error) // the client secret; asked for only once the broker has shown it keeps protected keys
 	Invite            *invite.Invitation
-	OldKey            ed25519.PrivateKey
-	OldSecret         string
 	Token             string // a chat of tokens is joined by its token
 }
 
@@ -120,7 +118,7 @@ func JoinEnrolled(call Callf, e Enroll, w *proto.Welcome) (*Signer, ed25519.Priv
 	}
 	pub := owner.Encode(priv.Public().(ed25519.PublicKey))
 	authPub := owner.Encode(auth.Public().(ed25519.PublicKey))
-	args := proto.JoinArgs{Name: e.Nick, Pub: pub, Proto: proto.KeysProto, Key: e.OldSecret,
+	args := proto.JoinArgs{Name: e.Nick, Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(priv, proto.NickJoinMessage(e.ChatID, e.Nick, pub, ch.Nonce))),
 		Enroll:  &proto.JoinEnroll{AuthPub: authPub, SID: e.SID}}
 	if e.Token != "" {
@@ -131,8 +129,6 @@ func JoinEnrolled(call Callf, e Enroll, w *proto.Welcome) (*Signer, ed25519.Priv
 	switch {
 	case e.Invite != nil:
 		args.Invite = &proto.JoinInvite{ID: e.Invite.ID(), Sig: owner.Encode(e.Invite.Proof([]byte(ch.Nonce), proto.InviteSubject6(e.ChatID, e.Nick, pub, authPub)))}
-	case e.OldKey != nil:
-		args.Enroll.OldSig = owner.Encode(ed25519.Sign(e.OldKey, proto.KeyMoveMessage(e.ChatID, e.Nick, pub, authPub, ch.Nonce)))
 	}
 	if err := call("join", args, w); err != nil {
 		return nil, nil, err

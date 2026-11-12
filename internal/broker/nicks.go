@@ -106,11 +106,6 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 		return nil, e
 	}
 	switch {
-	case a.Enroll != nil && a.Invite == nil: // proto 6: the key of a nick that exists moves to a protected one (keys_move.go)
-		var e *proto.Error
-		if nk, pub, e = b.joinMove(ch, c, a, nk); e != nil {
-			return nil, e
-		}
 	case a.Invite != nil: // proto 5: a one-time invitation registers the key, or replaces the nick's
 		var e *proto.Error
 		if nk, pub, e = b.joinByInvite(ch, c, a, nk); e != nil {

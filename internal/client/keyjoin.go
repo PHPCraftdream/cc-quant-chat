@@ -64,7 +64,7 @@ func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error
 			return KeyJoin{}, err
 		}
 	}
-	return moveOrPlain(call, in, a, args, w)
+	return plain(call, in, args, w)
 }
 
 // secretSource hands out A when the join needs it: the one the client already has, or one made on the
@@ -94,34 +94,8 @@ func (s *secretSource) get() ([]byte, error) {
 	return a, nil
 }
 
-// moveOrPlain: the nick has no protected key yet. If the client holds its old key (or secret) the nick
-// moves to a protected one; else, or against a broker that can't keep one, the plain key is used as ever.
-func moveOrPlain(call Callf, in KeyJoinInput, a []byte, args proto.JoinArgs, w *proto.Welcome) (KeyJoin, error) {
-	seed, hasSeed, err := local.PlainNickKey(in.ChatID, in.Nick)
-	if err != nil {
-		return KeyJoin{}, fmt.Errorf("the nick key could not be read: %w", err)
-	}
-	note := ""
-	if hasSeed || (in.Token != "" && args.Key != "") {
-		src := &secretSource{a: a}
-		e := Enroll{ChatID: in.ChatID, Nick: in.Nick, SID: in.SID, A: src.get, Token: in.Token}
-		if hasSeed {
-			e.OldKey = ed25519.NewKeyFromSeed(seed)
-		} else {
-			e.OldSecret = args.Key
-		}
-		signer, priv, err := JoinEnrolled(call, e, w)
-		switch {
-		case err == nil:
-			return protectedIn(in, src.a, signer, priv, src.note+"The key of @"+in.Nick+" was moved to a protected key: the old one no longer works.\n\n"), nil
-		case errors.Is(err, errNoSecret):
-			note = "the nick key stays plain: the client secret could not be set up (" + src.err.Error() + ")\n\n"
-		case errors.Is(err, ErrNotProtected):
-			note = "the broker is older and keeps no protected keys: the nick key stays plain until `ccqc broker restart` updates it\n\n"
-		default:
-			return KeyJoin{}, err
-		}
-	}
+// plain: the nick has no protected key (yet): the plain key is used as ever.
+func plain(call Callf, in KeyJoinInput, args proto.JoinArgs, w *proto.Welcome) (KeyJoin, error) {
 	priv, err := local.NickPrivateKey(in.ChatID, in.Nick)
 	if err != nil {
 		return KeyJoin{}, fmt.Errorf("the nick key could not be read or saved: %w", err)
@@ -130,7 +104,7 @@ func moveOrPlain(call Callf, in KeyJoinInput, a []byte, args proto.JoinArgs, w *
 	if err != nil {
 		return KeyJoin{}, err
 	}
-	return KeyJoin{Signer: signer, Priv: priv, Note: note}, nil
+	return KeyJoin{Signer: signer, Priv: priv}, nil
 }
 
 // enrollWithInvitation: an invitation registers a protected key, or (broker too old, or no place for the

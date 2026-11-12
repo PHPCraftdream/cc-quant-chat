@@ -203,7 +203,10 @@ func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nic
 	if owner {
 		return nil
 	}
-	if a.Invite != nil || a.Enroll != nil { // a move is judged by joinMove: it needs the proof of the old key
+	if a.Enroll != nil && a.Invite == nil {
+		return proto.Errf("bad_args", "enroll needs an invitation")
+	}
+	if a.Invite != nil {
 		return b.refuseUnprotected(ch, a)
 	}
 	row, err := b.protectedRow(ch.id, a.Name)

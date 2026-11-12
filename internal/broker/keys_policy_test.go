@@ -8,6 +8,22 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
+// plainNick registers a nick with a plain key by an invitation (what every nick was before protected
+// keys) and leaves the chat; it returns the private key, as nick-keys.json would hold it.
+func (ic *invitedChat) plainNick(t *testing.T, nick string) ed25519.PrivateKey {
+	t.Helper()
+	in := ic.issue(t, nick)
+	k := newKey(t)
+	c := ic.b.connect(t)
+	if _, code := ic.join(t, c, nick, k, &in); code != "" {
+		t.Fatalf("plain nick: %q", code)
+	}
+	if code := c.call("leave", nil, nil); code != "" {
+		t.Fatalf("leave: %q", code)
+	}
+	return k
+}
+
 // plainJoin joins with a plain key at a level, no invitation.
 func (ic *invitedChat) plainJoin(t *testing.T, c *client, nick string, k ed25519.PrivateKey, level int) string {
 	t.Helper()
@@ -47,15 +63,10 @@ func TestWhenTheOwnerRequiresProtectedKeysOnlyProtectedKeysJoinAndTheWayToThemIs
 	if _, code := ic.join(t, ic.b.connect(t), "carol", newKey(t), &in); code != "key_protected" {
 		t.Fatalf("an invitation used for a plain key: %q", code)
 	}
-	// An invitation that enrolls a protected key, and the move of a plain nick, are the way in.
+	// An invitation that enrolls a protected key is the way in.
 	if c, _, _ := ic.enroll(t, "carol", secretOf(t)); c == nil {
 		t.Fatal("enroll")
 	}
-	mv := ic.b.connect(t)
-	if _, code := ic.move(t, mv, "bob", secretOf(t), plain); code != "" {
-		t.Fatalf("the move while protected keys are required: %q", code)
-	}
-	ic.leave(t, mv, "bob")
 	// A protected nick logs in as ever.
 	if _, _, code := ic.login(t, "alice", a); code != "" {
 		t.Fatalf("a protected nick: %q", code)

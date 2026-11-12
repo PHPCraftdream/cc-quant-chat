@@ -49,9 +49,6 @@ type KeyUnlockReply struct {
 type JoinEnroll struct {
 	AuthPub string `json:"auth_pub"`
 	SID     string `json:"sid,omitempty"` // the session the nick is bound to; "" for a terminal nick
-	// OldSig moves a nick that exists (no invitation): the signature of KeyMoveMessage with the nick's
-	// current key. A nick of the time of secrets (no key yet) moves with its old secret in JoinArgs.Key.
-	OldSig string `json:"old_sig,omitempty"`
 }
 
 // KeyUnlockMessage is what a client signs with its auth key to be given B.
@@ -62,11 +59,4 @@ func KeyUnlockMessage(chatID, nick, nonce string) []byte {
 // InviteSubject6 is InviteSubject for a join that enrolls a protected key: it covers the auth key too.
 func InviteSubject6(chatID, nick, pub, authPub string) []byte {
 	return []byte(strings.Join([]string{"ccqc/v1/invite-use-protected", chatID, nick, pub, authPub}, "\n"))
-}
-
-// KeyMoveMessage is what the holder of a nick's current key signs to move the nick to a protected key:
-// the chat, the nick, the new key and its auth key, over the nonce of the connection. Whoever has the
-// old private key already has everything the nick is; this lets it move the nick without the owner.
-func KeyMoveMessage(chatID, nick, newPub, authPub, nonce string) []byte {
-	return []byte(strings.Join([]string{"ccqc/v1/key-move", chatID, nick, newPub, authPub, nonce}, "\n"))
 }
