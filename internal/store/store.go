@@ -115,11 +115,9 @@ type NodeStore interface {
 }
 
 // Journal is the optional part of a backend that keeps the journal of events: SetNode gives it
-// the identity its events are signed with; BackfillEvents moves the rows that predate the
-// journal into it (once; it reports how many chats and events this run moved).
+// the identity its events are signed with.
 type Journal interface {
 	SetNode(origin string, priv ed25519.PrivateKey)
-	BackfillEvents() (chats, events int, err error)
 }
 
 // ErrOwnerExists: an owner is registered already.

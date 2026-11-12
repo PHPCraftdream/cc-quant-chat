@@ -6,8 +6,7 @@ import (
 
 var _ store.NodeStore = (*DB)(nil)
 
-// RegisterOrigin records this node's identity (origin and public key) in node.db. Rows that
-// predate it get it when a database of earlier versions is laid out into chat files.
+// RegisterOrigin records this node's identity (origin and public key) in node.db.
 func (d *DB) RegisterOrigin(origin string, pub []byte) error {
 	_, err := d.node.Exec(`INSERT OR IGNORE INTO origins (origin, pubkey, created_at) VALUES (?, ?, ?)`, origin, pub, now())
 	return err

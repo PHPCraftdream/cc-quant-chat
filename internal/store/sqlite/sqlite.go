@@ -30,7 +30,7 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
-//go:embed migrations_legacy/*.sql migrations_node/*.sql migrations_chat/*.sql
+//go:embed migrations_node/*.sql migrations_chat/*.sql
 var migrationFS embed.FS
 
 // NodeMigrations: the schema of node.db.
@@ -43,16 +43,9 @@ func ChatMigrations() ([]migrate.Migration, error) {
 	return migrate.Load(migrationFS, "migrations_chat")
 }
 
-// LegacyMigrations: the schema of the single database of earlier versions, which is only read to
-// lay it out into chat files (see layout.go).
-func LegacyMigrations() ([]migrate.Migration, error) {
-	return migrate.Load(migrationFS, "migrations_legacy")
-}
-
 // DefaultPath: CCQC_DB or <user config dir>/ccqc/ccqc.db. Without a config dir it falls back to
 // ~/.ccqc/ccqc.db, never to a shared temp folder; "" when no private location exists (Open then
-// asks for CCQC_DB). The file is the database of earlier versions (read once, to lay it out);
-// its directory is the data directory.
+// asks for CCQC_DB). Its directory is the data directory.
 func DefaultPath() string {
 	if p := os.Getenv("CCQC_DB"); p != "" {
 		return p
@@ -76,15 +69,12 @@ func DefaultDir() string {
 
 // DB is the store of a broker: node.db and the chat databases it has open.
 type DB struct {
-	dir    string
-	legacy string // the single database of earlier versions (may not exist)
-	node   *sql.DB
+	dir  string
+	node *sql.DB
 
 	mu    sync.Mutex
 	chats map[string]*chatDB
 	key   *nodeKey // signs events; see SetNode
-
-	afterLayoutChat func(i int) error // test hook: called after each chat is laid out
 
 	onEvents atomic.Pointer[func(chatID string)] // see OnEvents
 	pending  map[*chatDB]struct{}                // databases of released chats that are waiting to be closed (under mu)
@@ -144,9 +134,7 @@ func openMigrated(path string, ms func() ([]migrate.Migration, error)) (*sql.DB,
 	return db, nil
 }
 
-// Open opens the data directory of the broker whose single database of earlier versions is (or
-// was) at path: node.db and chats/ are beside it. Nothing is read from that file here; the broker
-// lays it out once it has the node key (BackfillEvents).
+// Open opens the data directory of the broker: node.db and chats/ are beside path (only its folder is used).
 func Open(path string) (*DB, error) {
 	if path == "" {
 		return nil, errors.New("no private place for the database: set CCQC_DB")
@@ -167,14 +155,7 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &DB{dir: dir, legacy: path, node: node, chats: map[string]*chatDB{}}
-	// Without a database of earlier versions there is nothing to lay out.
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		if _, err := node.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'done')`, metaLayout); err != nil {
-			node.Close()
-			return nil, err
-		}
-	}
+	d := &DB{dir: dir, node: node, chats: map[string]*chatDB{}}
 	if err := d.adoptStrays(); err != nil {
 		node.Close()
 		return nil, err
@@ -267,9 +248,6 @@ func (d *DB) chat(id, name string, create bool) (*chatDB, error) {
 	}
 	if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
 		return nil, fmt.Errorf("sqlite: %q is not a chat id", id)
-	}
-	if d.layoutPending() {
-		return nil, errors.New("the database of earlier versions has not been laid out into chat files yet: start the broker once")
 	}
 	path := d.chatPath(id)
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) && !create {

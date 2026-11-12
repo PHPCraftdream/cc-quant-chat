@@ -78,11 +78,6 @@ func dbStatus(only string) error {
 	if err := fileStatus("node.db", filepath.Join(dir, "node.db"), sqlite.NodeMigrations); err != nil {
 		return err
 	}
-	if legacy := sqlite.DefaultPath(); legacy != "" {
-		if _, err := os.Stat(legacy); err == nil {
-			fmt.Printf("single database of earlier versions: %s (laid out into chat files when the broker starts)\n", legacy)
-		}
-	}
 	entries, err := os.ReadDir(filepath.Join(dir, "chats"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err

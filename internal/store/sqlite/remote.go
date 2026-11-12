@@ -348,8 +348,5 @@ func (c *chatDB) upgradeRefs() error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if done, err := c.complete(); err != nil || !done {
-		return err // the rows that predate the journal are not in it yet: the backfill does it
-	}
 	return c.inTx(derivedRefs)
 }

@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,18 +43,6 @@ func (r RebuildReport) Total() int {
 	return n
 }
 
-const metaBackfill = "events_backfill"
-
-// complete reports whether every row of the chat that predates its journal is in the journal.
-func (c *chatDB) complete() (bool, error) {
-	var v string
-	err := c.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, metaBackfill).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return v == "done", err
-}
-
 func (c *chatDB) columns(schema, table string, skip []string) ([]string, error) {
 	rows, err := c.db.Query(`SELECT name FROM pragma_table_info(?, ?)`, table, schema)
 	if err != nil {
@@ -86,9 +73,6 @@ func (d *DB) Rebuild(chatID string, dryRun bool) (RebuildReport, error) {
 	}
 	if c == nil {
 		return rep, fmt.Errorf("no chat %.8s", chatID)
-	}
-	if done, err := c.complete(); err != nil || !done {
-		return rep, fmt.Errorf("the rows that predate the journal have not been moved into it yet: start the broker once, then rebuild (%v)", err)
 	}
 	dir, err := os.MkdirTemp("", "ccqc-rebuild-")
 	if err != nil {
