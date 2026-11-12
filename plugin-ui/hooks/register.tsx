@@ -31,10 +31,15 @@ const KEEP_CHARS = 60000
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
-function rowText(content: ReadonlyArray<{ type: string; text?: string }>): string {
-  return content
-    .filter(b => b.type === 'text' && typeof b.text === 'string')
-    .map(b => b.text)
+// The text of a row's content. The engine's type says a list of blocks, but a notification row (a Stop hook's
+// text, delivered as a task notification) keeps its content as one string, as the transcript file shows; with
+// `.filter` on a string the hook threw, nothing was stored and the card had no text. A list is read as before.
+function rowText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return (content as ReadonlyArray<{ type?: string; text?: unknown }>)
+    .filter(b => b?.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text as string)
     .join('\n')
 }
 
@@ -71,7 +76,7 @@ function heading(kind: ToolKind, input: Record<string, unknown>): { title: strin
 
 export const register: Register = on => {
   on('session.append', async ($, e, next) => {
-    const text = rowText(e.message.content as ReadonlyArray<{ type: string; text?: string }>)
+    const text = rowText(e.message.content)
     if (BATCH_TEXT.test(text)) {
       const at = text.search(BATCH_TEXT)
       await update($, stored, list =>
@@ -86,8 +91,9 @@ export const register: Register = on => {
     if (e.props.isExpanded) return next(e)
     let batch: Batch | null = BATCH_TEXT.test(e.props.text) ? parseBatch(e.props.text) : null
     let raw = e.props.text
+    const seen = batch ? [] : await read($, stored)
     if (!batch) {
-      const hit = (await read($, stored)).find(s => s.id === e.requestId)
+      const hit = seen.find(s => s.id === e.requestId)
       if (hit) {
         batch = parseBatch(hit.text)
         raw = hit.text
@@ -99,7 +105,18 @@ export const register: Register = on => {
       // state lost), say so rather than leave a bare summary that looks like nothing was said.
       if (e.props.origin?.kind === 'task-notification' && /^Stop hook feedback/.test(e.props.text)) {
         const ui = $.ui.resolve(e) as UI
-        return Plain(ui, { title: 'Stop hook feedback', color: 'gray', text: 'the chat cards do not have the text of this row (ctrl+o shows it)', dim: true })
+        // What a person can send back when it still happens: no secret in it (ids cut to eight characters, no text).
+        const debug = [
+          `row ${String(e.requestId).slice(0, 8)}, text ${e.props.text.length} chars, props: ${Object.keys(e.props).join(',')}`,
+          `origin ${JSON.stringify(e.props.origin)}, task ${JSON.stringify(e.props.task ?? null)}`,
+          `batches seen by session.append: ${seen.length}${seen.length ? ' [' + seen.map(s => s.id.slice(0, 8)).join(' ') + ']' : ''}`,
+        ].join('\n')
+        return Plain(ui, {
+          title: 'Stop hook feedback',
+          color: 'gray',
+          text: 'the chat cards do not have the text of this row (ctrl+o shows it)\n' + debug,
+          dim: true,
+        })
       }
       return next(e)
     }

@@ -368,3 +368,33 @@ test('a chat call is a card whether or not its row is expanded; its result row i
     await search.unmount()
   }
 })
+
+// In the live engine the row of a Stop hook's text keeps its content as one string (the transcript file shows it), not
+// as a list of blocks: session.append then threw on `.filter`, nothing was stored and the card had no text.
+test('a notification row whose content is one string is stored and drawn as a card', async ($, on) => {
+  let uuid = ''
+  on('session.append', ($, e, next) => {
+    uuid = e.uuid
+    return next(e)
+  })
+  await $.session.append({
+    message: { type: 'user', content: notificationContent },
+    door: 'delivery',
+    origin: { kind: 'hook', event: 'Stop' },
+    uuid: 'notification-string-1',
+  } as never)
+  const props = { text: 'Stop hook feedback', origin: notificationOrigin, isExpanded: false }
+  const ui = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: uuid, surface: 'terminal', props } as never)
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(all.includes('ccqc in 2')).toBe(true)
+  expect(all.includes('do not have the text')).toBe(false)
+  await ui.unmount()
+
+  // When the text still is not there, the row says what it knows (no text of the chat in it).
+  const lost = await $.ui.mount({ plugin: 'quant-ui', component: 'UserMessage', requestId: 'never-appended-2', surface: 'terminal', props } as never)
+  const text = (await lost.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(text.includes('do not have the text of this row')).toBe(true)
+  expect(text.includes('row never-ap')).toBe(true)
+  expect(text.includes('batches seen by session.append: 1')).toBe(true)
+  await lost.unmount()
+})
