@@ -34,6 +34,11 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 // The text of a row's content. The engine's type says a list of blocks, but a notification row (a Stop hook's
 // text, delivered as a task notification) keeps its content as one string, as the transcript file shows; with
 // `.filter` on a string the hook threw, nothing was stored and the card had no text. A list is read as before.
+// sameRow: two ids that name one row, one holding the other (both whole ids, not a short stub).
+function sameRow(a: string, b: string): boolean {
+  return typeof a === 'string' && typeof b === 'string' && a.length >= 32 && b.length >= 32 && (a.includes(b) || b.includes(a))
+}
+
 function rowText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -92,12 +97,12 @@ export const register: Register = on => {
     let batch: Batch | null = BATCH_TEXT.test(e.props.text) ? parseBatch(e.props.text) : null
     let raw = e.props.text
     const seen = batch ? [] : await read($, stored)
-    if (!batch) {
-      const hit = seen.find(s => s.id === e.requestId)
-      if (hit) {
-        batch = parseBatch(hit.text)
-        raw = hit.text
-      }
+    // The row's id and the id session.append saw name one row; they are matched whole first, then as one holding the
+    // other (an id of a row may carry a prefix or a suffix at a drawing that the stored one has not).
+    const hit = batch ? undefined : (seen.find(s => s.id === e.requestId) ?? seen.find(s => sameRow(s.id, e.requestId)))
+    if (hit) {
+      batch = parseBatch(hit.text)
+      raw = hit.text
     }
     if (!batch) {
       // A Stop hook's text arrives as a task notification: the row's text is its summary alone, the batch
@@ -109,7 +114,10 @@ export const register: Register = on => {
         const debug = [
           `row ${String(e.requestId).slice(0, 8)}, text ${e.props.text.length} chars, props: ${Object.keys(e.props).join(',')}`,
           `origin ${JSON.stringify(e.props.origin)}, task ${JSON.stringify(e.props.task ?? null)}`,
-          `batches seen by session.append: ${seen.length}${seen.length ? ' [' + seen.map(s => s.id.slice(0, 8)).join(' ') + ']' : ''}`,
+          `batches seen by session.append: ${seen.length}${seen.length ? ' [' + seen.map(s => s.id.slice(0, 8)).join(' ') + ']' : ''}; id lengths: row ${String(e.requestId).length}, stored ${seen.map(s => s.id.length).join(' ')}`,
+          hit
+            ? `matched a stored batch of ${hit.text.length} chars, starts ${JSON.stringify(hit.text.slice(0, 60))}; read as ${batch ? 'a batch' : 'null'}`
+            : 'no stored batch matched this row',
         ].join('\n')
         return Plain(ui, {
           title: 'Stop hook feedback',
