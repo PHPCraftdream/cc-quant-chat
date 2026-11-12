@@ -81,3 +81,50 @@ jobs:
           claude plugin validate .
       - name: mod tests
         run: claude plugin test plugin-ui
+
+  # The client secret A in the key stores of macOS and Linux, against the real tools (the unit tests only stand in for
+  # them). CCQC_LIVE_KEYSTORE says which store the test is to use; if it does not work the job fails, it is not skipped.
+  keystore-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: a keychain of its own, unlocked, the default one
+        run: |
+          set -eu
+          kc="$RUNNER_TEMP/ccqc-test.keychain-db"
+          security create-keychain -p "" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "" "$kc"
+          security default-keychain -d user -s "$kc"
+          security list-keychains -d user -s "$kc"
+          security list-keychains -d user
+      - name: live key store (security)
+        env:
+          CCQC_LIVE_KEYSTORE: keychain
+        run: go test ./internal/local -run TestLiveKeyStore -v -count=1
+
+  keystore-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: libsecret-tools and gnome-keyring
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
+      - name: live key store (secret-tool), a session bus and a keyring unlocked with an empty password
+        env:
+          CCQC_LIVE_KEYSTORE: secret-service
+        run: |
+          dbus-run-session -- bash -c '
+            set -eu
+            eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets)"
+            export GNOME_KEYRING_CONTROL
+            secret-tool --version || true
+            go test ./internal/local -run TestLiveKeyStore -v -count=1
+          '
