@@ -2,8 +2,6 @@ package local
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"crypto/rand"
 	"fmt"
 	"os"
 	"strings"
@@ -177,17 +175,5 @@ func TestAChatForInvitationsIsRememberedWithoutAnythingThatLetsAStrangerIn(t *te
 	raw, err := os.ReadFile(folderPath(folder))
 	if err == nil && bytes.Contains(raw, []byte("token")) {
 		t.Errorf("a chat without a token is remembered with a token field: %s", raw)
-	}
-	// An invitation for a nick that exists replaces its key.
-	_, first, _ := ed25519.GenerateKey(rand.Reader)
-	_, second, _ := ed25519.GenerateKey(rand.Reader)
-	if err := SetNickPrivateKey(e.ChatID, "bob", first); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetNickPrivateKey(e.ChatID, "bob", second); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := NickPrivateKey(e.ChatID, "bob"); err != nil || !got.Equal(second) {
-		t.Fatalf("the key after a replacement: %v", err)
 	}
 }

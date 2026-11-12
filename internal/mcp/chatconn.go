@@ -149,7 +149,13 @@ func (cc *chatConn) reconnect() *client.Conn {
 				_ = local.SetBinding(local.ProjectDir(), ids.SID, cc.local)
 			}
 		}
-		signer, err := client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
+		var signer *client.Signer
+		if cc.priv == nil { // the old secret of a chat of tokens: no key, unsigned events
+			args.Proto = proto.LegacyProto
+			err = conn.Call("join", args, &w)
+		} else {
+			signer, err = client.JoinSigned(conn.Call, args, cc.priv, cc.chatID(), &w)
+		}
 		if err != nil {
 			conn.Close()
 			log.Printf("rejoin /%s: %v", cc.local, err)

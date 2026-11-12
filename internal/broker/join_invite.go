@@ -85,10 +85,10 @@ func (b *Broker) joinByInvite(ch *chat, c *conn, a proto.JoinArgs, nk *nick) (*n
 	if sig := decodeSig(a.NickSig); sig == nil || !ed25519.Verify(pub, proto.NickJoinMessage(ch.id, a.Name, a.Pub, nonce), sig) {
 		return nil, nil, proto.Errf("bad_nick_sig", "the signature does not verify for this chat, nick, key and challenge")
 	}
-	subject := proto.InviteSubject(ch.id, a.Name, a.Pub)
-	if a.Enroll != nil { // the proof covers the auth key as well
-		subject = proto.InviteSubject6(ch.id, a.Name, a.Pub, a.Enroll.AuthPub)
+	if a.Enroll == nil {
+		return nil, nil, proto.Errf("key_protected", "an invitation enrolls a protected key: update ccqc")
 	}
+	subject := proto.InviteSubject6(ch.id, a.Name, a.Pub, a.Enroll.AuthPub) // the proof covers the auth key as well
 	proof := decodeSig(a.Invite.Sig)
 	proofOK := func(r invite.Record) bool {
 		return r.Kind == invite.KindChat && r.Scope == a.Name && proof != nil &&
@@ -98,29 +98,21 @@ func (b *Broker) joinByInvite(ch *chat, c *conn, a proto.JoinArgs, nk *nick) (*n
 	if nk != nil {
 		rec = store.Record{T: "nick_key", Nick: a.Name, Hash: nk.hash, Pub: a.Pub}
 	}
-	// A protected key: its pending row is written before the key reaches the chat (and dropped if the
-	// invitation does not work), the active one replaces the old after. A key that is not protected
-	// takes the nick's old row away: the nick is no longer a protected one.
-	var secrets store.NickSecrets
-	if a.Enroll != nil {
-		var e *proto.Error
-		if secrets, e = b.prepareEnroll(c, ch, a); e != nil {
-			return nil, nil, e
-		}
+	// The protected key: its pending row is written before the key reaches the chat (and dropped if the
+	// invitation does not work), the active one replaces the old (if any) after.
+	if a.Enroll == nil {
+		return nil, nil, proto.Errf("key_protected", "an invitation enrolls a protected key: update ccqc")
+	}
+	secrets, e := b.prepareEnroll(c, ch, a)
+	if e != nil {
+		return nil, nil, e
 	}
 	used, err := is.JoinByInvite(ch.id, a.Invite.ID, time.Now(), a.Pub, proofOK, rec)
-	if ss, ok := b.nickSecrets(); ok {
-		switch {
-		case secrets != nil && err != nil:
-			err2 := ss.DropPendingNickSecret(ch.id, a.Name)
-			logIf("drop the pending secret", err2)
-		case secrets != nil:
-			_, err2 := ss.ActivateNickSecret(ch.id, a.Name)
-			logIf("activate the secret", err2) // a pending row is settled at the next start
-		case err == nil:
-			_, err2 := ss.DeleteNickSecrets(ch.id, a.Name)
-			logIf("remove the secret of a key that is not protected", err2)
-		}
+	if err != nil {
+		logIf("drop the pending secret", secrets.DropPendingNickSecret(ch.id, a.Name))
+	} else {
+		_, err2 := secrets.ActivateNickSecret(ch.id, a.Name)
+		logIf("activate the secret", err2) // a pending row is settled at the next start
 	}
 	var bad *invite.BadProof
 	switch {
@@ -141,19 +133,12 @@ func (b *Broker) joinByInvite(ch *chat, c *conn, a proto.JoinArgs, nk *nick) (*n
 		nk = &nick{pub: a.Pub, seen: ch.nextID}
 		ch.nicks[a.Name] = nk
 		ch.rooms[proto.RoomCommon].members[a.Name] = true
-		b.inviteNotice(ch, "invite.use", used.ID, a.Name, fmt.Sprintf("@%s joined the chat by an invitation (%s)%s", a.Name, invite.Short(used.ID), protectedNote(a)))
+		b.inviteNotice(ch, "invite.use", used.ID, a.Name, fmt.Sprintf("@%s joined the chat by an invitation (%s); the key is protected", a.Name, invite.Short(used.ID)))
 	} else {
 		nk.pub = a.Pub
-		b.inviteNotice(ch, "invite.use", used.ID, a.Name, fmt.Sprintf("the key of @%s was replaced by an invitation (%s): the old key no longer works%s", a.Name, invite.Short(used.ID), protectedNote(a)))
+		b.inviteNotice(ch, "invite.use", used.ID, a.Name, fmt.Sprintf("the key of @%s was replaced by an invitation (%s): the old key no longer works; the key is protected", a.Name, invite.Short(used.ID)))
 	}
 	return nk, pub, nil
-}
-
-func protectedNote(a proto.JoinArgs) string {
-	if a.Enroll != nil {
-		return "; the key is protected"
-	}
-	return ""
 }
 
 func logIf(what string, err error) {

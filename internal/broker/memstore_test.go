@@ -9,6 +9,8 @@ import (
 // memStore keeps records like a database would, so a second broker can load them, and can be
 // told to fail.
 type memStore struct {
+	memSecrets // the broker's halves of protected keys (store.NickSecrets)
+
 	mu        sync.Mutex
 	recs      map[string][]store.Record
 	loadErr   error

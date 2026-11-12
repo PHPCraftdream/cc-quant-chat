@@ -61,19 +61,29 @@ func (ic *invitedChat) issue(t *testing.T, nick string) invite.Invitation {
 	return in
 }
 
-// join does what a session does: a challenge, the nick's signature, and (if in is not nil) the
-// invitation's proof over the same challenge.
+// join does what a session does: with an invitation, key_prepare and the enrolment of the nick's key (its test
+// auth key goes with it); without one, the proof of that auth key and the join. The nick's signature is over
+// the same challenge.
 func (ic *invitedChat) join(t *testing.T, c *client, nick string, key ed25519.PrivateKey, in *invite.Invitation) (proto.Welcome, string) {
 	t.Helper()
+	pub := owner.Encode(key.Public().(ed25519.PublicKey))
+	a := proto.JoinArgs{Chat: ic.chat, Name: nick, Pub: pub, Proto: proto.KeysProto}
+	if in != nil {
+		if code := c.call("key_prepare", proto.KeyPrepareArgs{Chat: ic.chat, Nick: nick}, nil); code != "" {
+			return proto.Welcome{}, code
+		}
+	} else if code := unlockAs(t, c, ic.chat, nick, key); code != "" {
+		return proto.Welcome{}, code
+	}
 	var ch proto.Challenge
 	if code := c.call("challenge", nil, &ch); code != "" {
 		t.Fatalf("challenge: %q", code)
 	}
-	pub := owner.Encode(key.Public().(ed25519.PublicKey))
-	a := proto.JoinArgs{Chat: ic.chat, Name: nick, Pub: pub, Proto: proto.InviteProto,
-		NickSig: owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(ic.chat, nick, pub, ch.Nonce)))}
+	a.NickSig = owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(ic.chat, nick, pub, ch.Nonce)))
 	if in != nil {
-		a.Invite = &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, nick, pub)))}
+		authPub := owner.Encode(testAuth(key).Public().(ed25519.PublicKey))
+		a.Enroll = &proto.JoinEnroll{AuthPub: authPub, SID: ic.sid}
+		a.Invite = &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, nick, pub, authPub)))}
 	}
 	var w proto.Welcome
 	code := c.call("join", a, &w)
@@ -89,7 +99,7 @@ func TestAnInvitationLetsOneNickInOnceAndTheKeyAloneLetsItInAfter(t *testing.T) 
 	bobKey := newKey(t)
 
 	// Without an invitation a new nick has no way in.
-	if _, code := ic.join(t, ic.b.connect(t), "bob", bobKey, nil); code != "invite_required" {
+	if _, code := ic.join(t, ic.b.connect(t), "bob", bobKey, nil); code != "unlock_unknown" {
 		t.Fatalf("without an invitation: %q", code)
 	}
 	first := ic.b.connect(t)
@@ -108,7 +118,7 @@ func TestAnInvitationLetsOneNickInOnceAndTheKeyAloneLetsItInAfter(t *testing.T) 
 	if _, code := ic.join(t, again, "bob", bobKey, nil); code != "" {
 		t.Fatalf("rejoining by the key: %q", code)
 	}
-	if _, code := ic.join(t, ic.b.connect(t), "mallory", newKey(t), nil); code != "invite_required" {
+	if _, code := ic.join(t, ic.b.connect(t), "mallory", newKey(t), nil); code != "unlock_unknown" {
 		t.Fatalf("another nick without an invitation: %q", code)
 	}
 
@@ -200,14 +210,17 @@ func TestInvitationsThatDoNotWork(t *testing.T) {
 		in := burn
 		c := ic.b.connect(t)
 		var ch proto.Challenge
+		c.call("key_prepare", proto.KeyPrepareArgs{Chat: ic.chat, Nick: "gina"}, nil)
 		c.call("challenge", nil, &ch)
 		key := newKey(t)
 		pub := owner.Encode(key.Public().(ed25519.PublicKey))
+		authPub := owner.Encode(testAuth(key).Public().(ed25519.PublicKey))
 		_ = w
 		var out proto.Welcome
-		code := c.call("join", proto.JoinArgs{Chat: ic.chat, Name: "gina", Pub: pub, Proto: proto.InviteProto,
+		code := c.call("join", proto.JoinArgs{Chat: ic.chat, Name: "gina", Pub: pub, Proto: proto.KeysProto,
 			NickSig: owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(ic.chat, "gina", pub, ch.Nonce))),
-			Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(wrong.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, "gina", pub)))}}, &out)
+			Enroll:  &proto.JoinEnroll{AuthPub: authPub},
+			Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(wrong.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, "gina", pub, authPub)))}}, &out)
 		if code != "invite_invalid" {
 			t.Fatalf("wrong proof %d: %q", i, code)
 		}
@@ -282,7 +295,7 @@ func TestAnInvitationForANickThatExistsReplacesItsKeyAndTheOldKeyStopsWorking(t 
 	}
 	replaced.close()
 	ic.b.waitOffline(t, ic.b.chatOf(ic.chat), "bob")
-	if _, code := ic.join(t, ic.b.connect(t), "bob", oldKey, nil); code != "name_taken" {
+	if _, code := ic.join(t, ic.b.connect(t), "bob", oldKey, nil); code != "unlock_denied" {
 		t.Fatalf("the old key after the replacement: %q", code)
 	}
 	if _, code := ic.join(t, ic.b.connect(t), "bob", newK, nil); code != "" {
@@ -303,44 +316,6 @@ func TestAnInvitationForANickThatExistsReplacesItsKeyAndTheOldKeyStopsWorking(t 
 	consistent(t, ic.db, "a key replaced")
 }
 
-func TestAnOlderChatKeepsWorkingForItsNicksAndAfterAnOwnerOnlyAnInvitationAddsNew(t *testing.T) {
-	b, db, _, _ := journalBroker(t)
-	b.lenientEntry = false
-	tok, id := token(t)
-	// Before an owner: as it is today. The nick has a key.
-	alice := b.mustJoin(t, tok, "alice", newKey(t))
-	aliceKey := alice.priv
-	bobSecret := b.connect(t)
-	if _, code := bobSecret.join(tok, "bob", proto.LegacyProto); code != "" { // an older client, by its secret
-		t.Fatalf("an older client before the owner: %q", code)
-	}
-	k := newKey(t)
-	register(t, b, k)
-	alice.close()
-	b.waitOffline(t, b.chatOf(id), "alice")
-
-	// With an owner: the nick that has a key enters as before; a new nick needs an invitation.
-	if _, err := b.keyedJoin(t, tok, "alice", aliceKey, ""); err != nil {
-		t.Fatalf("alice again: %v", err)
-	}
-	if _, err := b.keyedJoin(t, tok, "newcomer", newKey(t), ""); codeOf(err) != "invite_required" {
-		t.Fatalf("a new nick by token with an owner: %v", err)
-	}
-	other, _ := token(t)
-	if _, err := b.keyedJoin(t, other, "alice", aliceKey, ""); codeOf(err) != "no_such_chat" {
-		t.Fatalf("a token of no chat with an owner: %v", err)
-	}
-	if ids, _ := db.ChatIDs(); len(ids) != 1 {
-		t.Fatalf("a join made a chat: %v", ids)
-	}
-	// A chat that is not there is not made by a join with an id either.
-	var w proto.Welcome
-	c := b.connect(t)
-	if code := c.call("join", proto.JoinArgs{Chat: strings.Repeat("d", 64), Name: "alice", Proto: proto.InviteProto}, &w); code != "no_such_chat" {
-		t.Fatalf("a join by the id of no chat: %q", code)
-	}
-}
-
 func TestTooManyInvitationsOnOneConnectionAreRefusedWhatEverTheirIds(t *testing.T) {
 	ic := newInvitedChat(t)
 	c := ic.b.connect(t)
@@ -359,23 +334,28 @@ func TestTooManyInvitationsOnOneConnectionAreRefusedWhatEverTheirIds(t *testing.
 
 // The client's own code (what a session runs) makes the proof the broker wants.
 func TestTheProofOfTheClientCodeIsTheOneTheBrokerChecks(t *testing.T) {
+	t.Setenv("CCQC_HOME", t.TempDir())
+	t.Setenv("CCQC_SECRET_DIR", t.TempDir())
+	t.Setenv("CCQC_KEYSTORE", "file")
 	ic := newInvitedChat(t)
 	in := ic.issue(t, "kim")
-	key := newKey(t)
+	enroll := func(c *client, nick string, in invite.Invitation, w *proto.Welcome) error {
+		_, _, err := cl.JoinEnrolled(c.callE, cl.Enroll{ChatID: ic.chat, Nick: nick, A: func() ([]byte, error) { return secretOf(t), nil }, Invite: &in}, w)
+		return err
+	}
 	c := ic.b.connect(t)
 	var w proto.Welcome
-	signer, err := cl.JoinInvited(c.callE, "kim", key, in, &w)
-	if err != nil || signer == nil || w.State.Me != "kim" {
-		t.Fatalf("%v %v %+v", signer, err, w.State)
+	if err := enroll(c, "kim", in, &w); err != nil || w.State.Me != "kim" {
+		t.Fatalf("%v %+v", err, w.State)
 	}
 	c.close()
 	ic.b.waitOffline(t, ic.b.chatOf(ic.chat), "kim")
 	var w2 proto.Welcome
-	if _, err := cl.JoinInvited(ic.b.connect(t).callE, "kim", newKey(t), in, &w2); codeOf(err) != "invite_invalid" {
+	if err := enroll(ic.b.connect(t), "kim", in, &w2); codeOf(err) != "invite_invalid" {
 		t.Fatalf("the same invitation again: %v", err)
 	}
 	wrongNick := ic.issue(t, "lee")
-	if _, err := cl.JoinInvited(ic.b.connect(t).callE, "kim", newKey(t), wrongNick, &w2); codeOf(err) != "invite_invalid" {
+	if err := enroll(ic.b.connect(t), "kim", wrongNick, &w2); codeOf(err) != "invite_invalid" {
 		t.Fatalf("an invitation for another nick: %v", err)
 	}
 }

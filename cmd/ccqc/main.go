@@ -62,7 +62,7 @@ Nicks:
                             a new key. Anyone with the token can do this, and the chat is told.
 
   ccqc keys status          where the client secret of your nick keys is kept (the store of the OS, or a
-                            file with a warning), which nicks are protected and which are not yet
+                            file with a warning), and which nicks are protected
   ccqc keys revoke <chat> <nick>   (owner) a protected nick whose client secret is lost or stolen: its
                             broker half is deleted, the nick is freed, every copy of the secret is dead; it
                             comes back by an invitation

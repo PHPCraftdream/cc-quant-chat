@@ -2,7 +2,6 @@ package client
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
 	"errors"
 	"fmt"
 
@@ -12,13 +11,10 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// How a client gets into a chat under a nick, with protected keys (docs/design-keys.md): the key of a
-// nick is derived from the client secret A and the broker's B. The way in is the proof of A, then the
-// join with the derived key; a nick that still has a plain key moves to a protected one at its next
-// join, with the proof of the old key; an invitation enrolls a protected key straight away. Against a
-// broker that does not know protected keys everything goes as before. The order is the one that can't
-// lose a nick: A is made and read back before the broker is asked, and the plain key is removed only
-// after the broker has the protected one.
+// How a client gets into a chat under a nick (docs/design-keys.md): the key of a nick is derived from the
+// client secret A and the broker's B. A nick enters by an invitation, which enrolls its protected key; after
+// that the way in is the proof of A, then the join with the derived key. The order can't lose a nick: A is made
+// and read back before the broker is asked.
 
 // KeyJoinInput says what to join and who is joining.
 type KeyJoinInput struct {
@@ -33,8 +29,8 @@ type KeyJoinInput struct {
 // KeyJoin is what getting in brought back.
 type KeyJoin struct {
 	Signer    *Signer
-	Priv      ed25519.PrivateKey // the key of the nick, for the writes and for the next connection
-	Auth      ed25519.PrivateKey // for a protected nick: proves A on every connection (nil: a plain key)
+	Priv      ed25519.PrivateKey // the key of the nick, for the writes and for the next connection (nil: the old secret)
+	Auth      ed25519.PrivateKey // for a protected nick: proves A on every connection
 	Protected bool
 	Note      string // for the person: what happened to the keys, or a warning
 }
@@ -47,7 +43,6 @@ func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error
 	args := proto.JoinArgs{Name: in.Nick}
 	if in.Token != "" {
 		args.Token = in.Token
-		args.Key = local.NickKey(in.ChatID, in.Nick) // the old secret: a nick of the time of secrets moves with it
 	} else {
 		args.Chat = in.ChatID
 	}
@@ -64,19 +59,30 @@ func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error
 			return KeyJoin{}, err
 		}
 	}
-	return plain(call, in, args, w)
+	if in.Token != "" { // a chat of tokens, before the owner decides about them: the old secret of the nick
+		return oldSecret(call, in, w)
+	}
+	return KeyJoin{}, fmt.Errorf("@%s has no protected key in this chat: ask the owner for an invitation (ccqc invite <chat> %s)", in.Nick, in.Nick)
+}
+
+// oldSecret joins a chat of tokens as before the keys: by the token and the nick's secret (the first
+// join of a nick makes it, and the broker hands it back to be kept). The events of such a nick are unsigned.
+func oldSecret(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error) {
+	args := proto.JoinArgs{Token: in.Token, Name: in.Nick, Key: local.NickKey(in.ChatID, in.Nick), Proto: proto.LegacyProto}
+	if err := call("join", args, w); err != nil {
+		return KeyJoin{}, err
+	}
+	return KeyJoin{}, nil
 }
 
 // secretSource hands out A when the join needs it: the one the client already has, or one made on the
 // spot, and only after the broker has shown that it keeps protected keys (no secret is made for a broker
-// that can't use it). what says why a failure matters to the person.
+// that can't use it).
 type secretSource struct {
 	a    []byte
 	note string // a warning about the place A is kept in
 	err  error  // why it could not be had
 }
-
-var errNoSecret = errors.New("no client secret")
 
 func (s *secretSource) get() ([]byte, error) {
 	if s.a != nil {
@@ -85,7 +91,7 @@ func (s *secretSource) get() ([]byte, error) {
 	a, ks, err := local.ClientSecret()
 	if err != nil {
 		s.err = err
-		return nil, fmt.Errorf("%w: %v", errNoSecret, err)
+		return nil, fmt.Errorf("the client secret could not be set up: %w", err)
 	}
 	s.a = a
 	if ks.Warning != "" {
@@ -94,58 +100,24 @@ func (s *secretSource) get() ([]byte, error) {
 	return a, nil
 }
 
-// plain: the nick has no protected key (yet): the plain key is used as ever.
-func plain(call Callf, in KeyJoinInput, args proto.JoinArgs, w *proto.Welcome) (KeyJoin, error) {
-	priv, err := local.NickPrivateKey(in.ChatID, in.Nick)
-	if err != nil {
-		return KeyJoin{}, fmt.Errorf("the nick key could not be read or saved: %w", err)
-	}
-	signer, err := JoinSigned(call, args, priv, in.ChatID, w)
-	if err != nil {
-		return KeyJoin{}, err
-	}
-	return KeyJoin{Signer: signer, Priv: priv}, nil
-}
-
-// enrollWithInvitation: an invitation registers a protected key, or (broker too old, or no place for the
-// client secret) a plain one as before; that one is kept in nick-keys.json.
+// enrollWithInvitation: an invitation enrolls a protected key.
 func enrollWithInvitation(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error) {
 	src := &secretSource{}
 	signer, priv, err := JoinEnrolled(call, Enroll{ChatID: in.ChatID, Nick: in.Nick, SID: in.SID, A: src.get, Invite: in.Invite}, w)
-	note := ""
 	switch {
 	case err == nil:
 		return protectedIn(in, src.a, signer, priv, src.note), nil
-	case errors.Is(err, errNoSecret):
-		note = "the nick key is a plain one: the client secret could not be set up (" + src.err.Error() + ")\n\n"
 	case errors.Is(err, ErrNotProtected):
-		note = "the broker is older and keeps no protected keys: the nick key is a plain one until `ccqc broker restart` updates it\n\n"
-	default:
-		return KeyJoin{}, err
+		return KeyJoin{}, errors.New("the broker keeps no protected keys: run `ccqc broker restart` to update it")
 	}
-	_, fresh, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return KeyJoin{}, err
-	}
-	plain, err := JoinInvited(call, in.Nick, fresh, *in.Invite, w)
-	if err != nil {
-		return KeyJoin{}, err
-	}
-	if err := local.SetNickPrivateKey(in.ChatID, in.Nick, fresh); err != nil {
-		note += fmt.Sprintf("WARNING: the key of nick @%s could not be saved (%v). It works until this session ends; after that the owner must issue a new invitation.\n\n", in.Nick, err)
-	}
-	return KeyJoin{Signer: plain, Priv: fresh, Note: note}, nil
+	return KeyJoin{}, err
 }
 
-// protectedIn records what the client keeps of a protected nick: that it is one, and nothing of the old
-// plain key (the broker has the new one, so the old no longer opens the nick: it goes only now).
+// protectedIn records what the client keeps of a protected nick: that it is one.
 func protectedIn(in KeyJoinInput, a []byte, signer *Signer, priv ed25519.PrivateKey, note string) KeyJoin {
 	auth, _ := keys.AuthKey(a, in.ChatID, in.Nick)
 	if err := local.MarkProtected(in.ChatID, in.Nick); err != nil {
 		note += "WARNING: could not record that @" + in.Nick + " is protected (" + err.Error() + ")\n\n"
-	}
-	if err := local.DropNickKeys(in.ChatID, in.Nick); err != nil {
-		note += "WARNING: the old plain key of @" + in.Nick + " could not be removed from nick-keys.json (" + err.Error() + "): it no longer opens the nick\n\n"
 	}
 	return KeyJoin{Signer: signer, Priv: priv, Auth: auth, Protected: true, Note: note}
 }

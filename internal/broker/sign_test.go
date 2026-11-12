@@ -20,21 +20,25 @@ type signedPeer struct {
 	w    proto.Welcome
 }
 
-// keyedJoin joins the way the MCP client does: challenge, signature, join. secret is the nick's
-// old secret, presented to move a legacy nick to the key.
-func (b *Broker) keyedJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey, secret string) (*signedPeer, error) {
+// keyedJoin enters the way a session does: the nick is a protected one (seeded, if it is not there yet), the
+// proof of its auth key, then challenge, signature, join. The secret of the old days is no way in any more.
+func (b *Broker) keyedJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey) (*signedPeer, error) {
 	t.Helper()
 	c := b.connect(t)
 	_, id, _ := proto.ParseToken(tok)
+	b.seedProtected(t, tok, nick, priv)
 	p := &signedPeer{client: c, priv: priv}
+	if code := unlockAs(t, c, id, nick, priv); code != "" {
+		return p, &proto.Error{Code: code}
+	}
 	var err error
-	p.sg, err = cl.JoinSigned(c.callE, proto.JoinArgs{Token: tok, Name: nick, Key: secret}, priv, id, &p.w)
+	p.sg, err = cl.JoinSigned(c.callE, proto.JoinArgs{Token: tok, Name: nick}, priv, id, &p.w)
 	return p, err
 }
 
 func (b *Broker) mustJoin(t *testing.T, tok, nick string, priv ed25519.PrivateKey) *signedPeer {
 	t.Helper()
-	p, err := b.keyedJoin(t, tok, nick, priv, "")
+	p, err := b.keyedJoin(t, tok, nick, priv)
 	if err != nil || p.sg == nil {
 		t.Fatalf("join @%s: %v (signer %v)", nick, err, p != nil && p.sg != nil)
 	}

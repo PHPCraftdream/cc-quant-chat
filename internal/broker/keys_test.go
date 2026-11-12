@@ -340,13 +340,13 @@ func TestAnInvitationThatDoesNotWorkLeavesNoSecretAndANewInvitationReplacesTheOl
 	}
 }
 
-func TestAKeyThatIsNotProtectedTakesTheNicksProtectionAwayAndEnrollNeedsItsProofs(t *testing.T) {
+func TestEnrollNeedsAnInvitationAndAPreparedBAndAnInvitationThatDoesNotEnrollIsRefused(t *testing.T) {
 	ic := newInvitedChat(t)
 	a := secretOf(t)
 	c, _, _ := ic.enroll(t, "bob", a)
 	ic.leave(t, c, "bob")
 
-	// A join that says enroll without an invitation is refused (the other proofs come with the move).
+	// A join that says enroll without an invitation is refused: an invitation is the only way to enroll.
 	e := ic.b.connect(t)
 	var rep proto.KeyPrepareReply
 	e.call("key_prepare", proto.KeyPrepareArgs{Chat: ic.chat, Nick: "bob"}, &rep)
@@ -370,15 +370,20 @@ func TestAKeyThatIsNotProtectedTakesTheNicksProtectionAwayAndEnrollNeedsItsProof
 		t.Fatalf("the invitation was spent by a refused enroll: %q", code)
 	}
 
-	// An invitation used the old way (a plain key) replaces the protected key and the nick is no
-	// longer protected: its old row is gone.
-	in2 := ic.issue(t, "bob")
-	plain := ic.b.connect(t)
-	if _, code := ic.join(t, plain, "bob", newKey(t), &in2); code != "" {
-		t.Fatalf("plain replacement: %q", code)
+	// An invitation that does not enroll a protected key (a client of the old way) is refused and not spent.
+	in2 := ic.issue(t, "erin")
+	var ch2 proto.Challenge
+	old := ic.b.connect(t)
+	old.call("challenge", nil, &ch2)
+	okey := newKey(t)
+	opub := owner.Encode(okey.Public().(ed25519.PublicKey))
+	if code := old.call("join", proto.JoinArgs{Chat: ic.chat, Name: "erin", Pub: opub, Proto: proto.InviteProto,
+		NickSig: owner.Encode(ed25519.Sign(okey, proto.NickJoinMessage(ic.chat, "erin", opub, ch2.Nonce))),
+		Invite:  &proto.JoinInvite{ID: in2.ID(), Sig: owner.Encode(in2.Proof([]byte(ch2.Nonce), proto.InviteSubject(ic.chat, "erin", opub)))}}, nil); code != "key_protected" {
+		t.Fatalf("an invitation without enroll: %q", code)
 	}
-	if row, _ := ic.db.ActiveNickSecret(ic.chat, "bob"); row != nil {
-		t.Fatalf("the old secret stayed: %+v", row)
+	if _, code := ic.join(t, ic.b.connect(t), "erin", newKey(t), &in2); code != "" {
+		t.Fatalf("the invitation was spent by a refused join: %q", code)
 	}
 }
 

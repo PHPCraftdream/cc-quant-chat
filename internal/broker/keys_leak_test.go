@@ -13,6 +13,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
+	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/store/sqlite"
 )
 
@@ -106,7 +107,7 @@ func TestTheBrokersSecretStaysInItsOwnTableOfNodeDB(t *testing.T) {
 
 // A broker without the SQLite store has nowhere to keep the secrets: it says so and enrolls nobody.
 func TestABrokerWithoutTheDatabaseRefusesProtectedKeysAndSaysWhy(t *testing.T) {
-	b := newTestBroker(newMemStore())
+	b := newTestBroker(&noSecrets{newMemStore()})
 	c := b.connect(t)
 	chat := strings.Repeat("a", 64)
 	if code := c.call("key_prepare", proto.KeyPrepareArgs{Chat: chat, Nick: "bob"}, nil); code != "keys_unavailable" {
@@ -118,30 +119,6 @@ func TestABrokerWithoutTheDatabaseRefusesProtectedKeysAndSaysWhy(t *testing.T) {
 }
 
 // Nothing changes for a nick whose key is not protected, whatever the level of the client.
-func TestANickThatIsNotProtectedJoinsAsBeforeAtTheOldAndTheNewLevel(t *testing.T) {
-	ic := newInvitedChat(t)
-	in := ic.issue(t, "bob")
-	k := newKey(t)
-	c := ic.b.connect(t)
-	if _, code := ic.join(t, c, "bob", k, &in); code != "" {
-		t.Fatalf("invited: %q", code)
-	}
-	ic.leave(t, c, "bob")
-	for _, level := range []int{proto.InviteProto, proto.KeysProto} {
-		cl := ic.b.connect(t)
-		var ch proto.Challenge
-		cl.call("challenge", nil, &ch)
-		pub := owner.Encode(k.Public().(ed25519.PublicKey))
-		var w proto.Welcome
-		code := cl.call("join", proto.JoinArgs{Chat: ic.chat, Name: "bob", Pub: pub, Proto: level,
-			NickSig: owner.Encode(ed25519.Sign(k, proto.NickJoinMessage(ic.chat, "bob", pub, ch.Nonce)))}, &w)
-		if code != "" || w.State.Me != "bob" {
-			t.Fatalf("level %d: %q", level, code)
-		}
-		ic.leave(t, cl, "bob")
-	}
-}
-
 // The protection is never dropped silently: when the chat holds another key for a protected nick than
 // the one the broker has the secret for (a way that is not an invitation changed it), a login is
 // refused, the administrator log has it and the chat is told. An invitation of the owner is the way out.
@@ -200,3 +177,6 @@ func TestTheOwnersResetOfAProtectedNickTakesItsSecretAwayToo(t *testing.T) {
 		t.Fatalf("unlock after the reset: %q", code)
 	}
 }
+
+// noSecrets is a store that keeps no secrets of protected keys (the interface hides what a memory store has).
+type noSecrets struct{ store.Backend }

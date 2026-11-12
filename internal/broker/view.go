@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/store"
 )
 
 func eventFrame(ev proto.Event) proto.Frame {
@@ -43,16 +42,12 @@ func (ch *chat) state(me *member) proto.State {
 		if nk := ch.nicks[n]; nk != nil && nk.pub == "" && n != proto.OwnerNick {
 			mi.Unsigned = true // no signing key: its events are stored unsigned
 		}
-		if nk := ch.nicks[n]; nk != nil && nk.pub != "" && n != proto.OwnerNick && ch.plainKey(n, nk) {
-			mi.KeyPlain = true
-		}
 		if m := ch.members[n]; m != nil {
 			mi.Role, mi.Online = m.role, m.conn != nil
 			m.fill(&mi)
 			mi.Owner = m.owner
 			if m.owner {
 				mi.Unsigned = false // signs with the owner key
-				mi.KeyPlain = false
 			}
 			if nkk := ch.nicks[n]; nkk != nil && nkk.pinned != "" && m.role == nkk.pinned {
 				mi.RolePinned = true
@@ -135,15 +130,4 @@ func tail(s []proto.Message, n int) []proto.Message {
 		s = s[len(s)-n:]
 	}
 	return append([]proto.Message{}, s...)
-}
-
-// plainKey: the nick has a key and the broker, which keeps protected keys, holds none for it: the key is
-// a plain one. False when the store keeps no secrets at all (nothing is protected there).
-func (ch *chat) plainKey(name string, nk *nick) bool {
-	ss, ok := ch.store.(store.NickSecrets)
-	if !ok {
-		return false
-	}
-	row, err := ss.ActiveNickSecret(ch.id, name)
-	return err == nil && (row == nil || row.SignPub != nk.pub)
 }

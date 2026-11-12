@@ -41,28 +41,8 @@ func runKeys(args []string) error {
 			fmt.Printf("  %s  @%s\n", k[:min(8, len(k))], k[strings.LastIndexByte(k, '/')+1:])
 		}
 	}
-	refs, err := local.NickKeyRefs()
-	if err != nil {
-		return err
-	}
-	if len(refs) == 0 {
-		fmt.Println("nicks not protected: none in nick-keys.json")
-		return nil
-	}
-	fmt.Println("nicks NOT protected, in nick-keys.json (chat id, nick); `ccqc keys migrate` moves them:")
-	for _, r := range refs {
-		what := "old secret only"
-		if r.Seed {
-			what = "private key in the clear: not protected"
-			if r.Secret {
-				what += ", and the old secret"
-			}
-		}
-		id := r.ChatID
-		if len(id) > 8 {
-			id = id[:8]
-		}
-		fmt.Printf("  %s  @%s  %s\n", id, r.Nick, what)
+	if prot, _ := local.ProtectedNicks(); len(prot) == 0 {
+		fmt.Println("protected nicks: none")
 	}
 	return nil
 }

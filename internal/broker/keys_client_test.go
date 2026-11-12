@@ -44,9 +44,6 @@ func TestASessionEntersByInvitationWithAProtectedKeyAndLogsInAfterwardsAndLeaves
 	if !strings.Contains(kj.Note, "WARNING") { // the file store is weaker and says so
 		t.Fatalf("no warning about the place of the secret: %q", kj.Note)
 	}
-	if refs, _ := local.NickKeyRefs(); len(refs) != 0 {
-		t.Fatalf("a plain key was kept: %+v", refs)
-	}
 	if got, _ := local.ProtectedNicks(); len(got) != 1 || got[0] != ic.chat+"/bob" {
 		t.Fatalf("protected nicks: %v", got)
 	}
@@ -64,9 +61,6 @@ func TestASessionEntersByInvitationWithAProtectedKeyAndLogsInAfterwardsAndLeaves
 	kj2, _, err := ic.enter(t, c2, "bob", &cl.KeyJoinInput{SID: sidA, IDs: cl.SessionIDs{SID: sidA}})
 	if err != nil || !kj2.Protected || !kj2.Priv.Equal(kj.Priv) {
 		t.Fatalf("login: %v", err)
-	}
-	if refs, _ := local.NickKeyRefs(); len(refs) != 0 {
-		t.Fatalf("a plain key appeared at login: %+v", refs)
 	}
 	c2.call("leave", nil, nil)
 

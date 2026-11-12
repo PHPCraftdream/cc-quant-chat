@@ -196,9 +196,10 @@ func (c *conn) markUnlocked(chatID, nick string) {
 	c.unlocked[pairID(chatID, nick)] = true
 }
 
-// protectedJoinCheck: a nick whose key is protected joins only on a connection that proved A (and
-// only with a client that knows how). An invitation is the way to replace the key, so it needs no
-// proof of the old one; the owner proves itself by its own key.
+// protectedJoinCheck: a nick enters by invitation, and after that only by its protected key: on a connection that
+// proved A (key_unlock), with a client that knows how. An invitation enrolls a protected key (it is also the
+// way to replace one, so it needs no proof of the old); the owner proves itself by its own key. What is no key at
+// all (the old secret of a chat of tokens) is not judged here.
 func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nick, owner bool) *proto.Error {
 	if owner {
 		return nil
@@ -207,14 +208,20 @@ func (b *Broker) protectedJoinCheck(ch *chat, c *conn, a proto.JoinArgs, nk *nic
 		return proto.Errf("bad_args", "enroll needs an invitation")
 	}
 	if a.Invite != nil {
-		return b.refuseUnprotected(ch, a)
+		if a.Enroll == nil {
+			return proto.Errf("key_protected", "an invitation enrolls a protected key: update ccqc")
+		}
+		return nil
+	}
+	if a.Pub == "" {
+		return nil
 	}
 	row, err := b.protectedRow(ch.id, a.Name)
 	if err != nil {
 		return proto.Errf("store_failed", "%v", err)
 	}
-	if row == nil {
-		return b.refuseUnprotected(ch, a)
+	if row == nil { // no protected key: the only way in is an invitation
+		return inviteRequired(ch, a.Name)
 	}
 	if nk == nil || nk.pub != row.SignPub { // fail closed: the protection is never dropped without a word
 		b.keyMismatch(ch, c, row, nk)
@@ -334,23 +341,6 @@ func (b *Broker) dropSecrets(chatID, nick string) {
 		_, err := ss.DeleteNickSecrets(chatID, nick)
 		logIf("remove the secret of a nick that was reset", err)
 	}
-}
-
-// refuseUnprotected is the rule of keys.require_protected: once the owner turned it on, only protected
-// keys join. A client that can't enroll (an earlier level), an invitation used for a plain key and a nick
-// with a plain key are refused with what to do; an invitation or a move that enrolls a protected key is
-// the way in.
-func (b *Broker) refuseUnprotected(ch *chat, a proto.JoinArgs) *proto.Error {
-	if !b.requireProtected() {
-		return nil
-	}
-	if a.Enroll != nil {
-		return nil
-	}
-	if a.Proto < proto.KeysProto {
-		return proto.Errf("key_protected", "this broker accepts protected keys only: update ccqc (a client of an earlier level can't join)")
-	}
-	return proto.Errf("key_unprotected", "this broker accepts protected keys only: @%s has a plain key; `ccqc keys migrate` (or the next join with an updated ccqc) moves it, an invitation of the owner enrolls a new one", a.Name)
 }
 
 // revokeKey is the owner's operation for a protected nick whose client secret is lost or stolen: the

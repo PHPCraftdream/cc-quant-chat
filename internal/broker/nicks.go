@@ -111,13 +111,13 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 		if nk, pub, e = b.joinByInvite(ch, c, a, nk); e != nil {
 			return nil, e
 		}
-	case a.Pub != "": // proto 4: the nick is its Ed25519 key
+	case a.Pub != "": // a protected nick: its key, after key_unlock (protectedJoinCheck has seen to that and to the key)
 		var e *proto.Error
 		if pub, e = b.verifyNick(c, id, a); e != nil {
 			return nil, e
 		}
-		if nk, e = b.bindPub(ch, a, nk, signed); e != nil {
-			return nil, e
+		if nk == nil || nk.pub != a.Pub {
+			return nil, proto.Errf("name_taken", "nick @%s is registered in this chat under another key", a.Name)
 		}
 	case nk != nil && nk.pub != "":
 		return nil, proto.Errf("name_taken", "nick @%s joins with a signing key and this client has none: update ccqc (the secret alone no longer opens it)", a.Name)
@@ -172,43 +172,6 @@ func (b *Broker) joinIn(ch *chat, c *conn, a proto.JoinArgs, signed bool) (any, 
 	}
 	c.ch, c.m = ch, m
 	return proto.Welcome{State: ch.state(m), Backlog: backlog, UnreadTotal: total, Key: issued, Warning: b.warnFor(a.Proto), Proto: proto.ProtoVersion, Origin: b.origin}, nil
-}
-
-// bindPub binds the key a client proved to hold to its nick. A new nick is registered with it; a
-// legacy nick (or one freed by `ccqc nick reset`) moves to it once, a legacy nick only for the
-// holder of its old secret; a nick that has a key takes only that key.
-func (b *Broker) bindPub(ch *chat, a proto.JoinArgs, nk *nick, owner bool) (*nick, *proto.Error) {
-	taken := func(why string) *proto.Error {
-		return proto.Errf("name_taken", "nick @%s is registered in this chat %s; pick another nick (or, if it is yours and its key was lost, `ccqc nick reset - %s` (token on stdin))", a.Name, why, a.Name)
-	}
-	// Once the machine has an owner, a new nick and a nick that moves to a key are made by invitation
-	// only; the owner enters as before (it proves itself by its key).
-	byToken := b.entryByInviteOnly() && !owner
-	switch {
-	case nk == nil && byToken:
-		return nil, inviteRequired(ch, a.Name)
-	case nk != nil && nk.pub == "" && byToken && nk.pub != a.Pub:
-		return nil, inviteRequired(ch, a.Name)
-	case nk == nil:
-		fresh := &nick{pub: a.Pub, seen: ch.nextID} // nothing is "unread" for a new nick
-		if e := ch.save(store.Record{T: "nick", Nick: a.Name, Pub: a.Pub, ID: fresh.seen}); e != nil {
-			return nil, e
-		}
-		ch.nicks[a.Name] = fresh
-		ch.rooms[proto.RoomCommon].members[a.Name] = true
-		return fresh, nil
-	case nk.pub == a.Pub:
-		return nk, nil
-	case nk.pub != "":
-		return nil, taken("under another key")
-	case nk.hash != "" && !nk.check(a.Key):
-		return nil, taken("by another session (moving it to a key takes its old secret)")
-	}
-	if e := ch.save(store.Record{T: "nick_key", Nick: a.Name, Hash: nk.hash, Pub: a.Pub}); e != nil {
-		return nil, e
-	}
-	nk.pub = a.Pub
-	return nk, nil
 }
 
 // nickReset frees a registered nick whose key is lost: the next join binds a new key, and the

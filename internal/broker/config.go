@@ -28,7 +28,6 @@ var configKeys = []configKey{
 	{"peer.advertise", false, "the address other nodes reach this broker at (host:port): what a node invitation carries; empty: give --addr to `ccqc peer invite`"},
 	{"peer.listen", false, "where this broker accepts other nodes of the exchange of chats, host:port; empty: it accepts no one (applies at the next start of the broker)"},
 	{"keys.bind_session", false, "on (default): a protected nick enrolled by a session is given its key only to that session (or its continuation after /clear or a compaction); off: another session is let in, and the chat is told (an emergency switch)"},
-	{"keys.require_protected", false, "off (default): nicks with a plain key still join as before; on: only protected keys join (a plain one is moved by `ccqc keys migrate` or the next join of a new client; older clients are refused); turned on by the owner when every client is updated"},
 	{"board.manager_role", true, "pinned role that may move tasks to other states, start/close sprints, change the process and revert; empty: everyone"},
 }
 
@@ -133,7 +132,7 @@ func validateSetting(k configKey, value string) (string, *proto.Error) {
 			}
 		}
 		return value, nil
-	case "keys.bind_session", "keys.require_protected":
+	case "keys.bind_session":
 		if value != "on" && value != "off" {
 			return "", proto.Errf("bad_args", "%s wants on or off, got %q", k.name, value)
 		}
@@ -211,11 +210,6 @@ func (b *Broker) configList(chatID string) proto.ConfigList {
 			it.Default, it.Value, it.Source = "on", "on", b.source(scope, k.name, false)
 			if !b.bindSession() {
 				it.Value = "off"
-			}
-		case "keys.require_protected":
-			it.Default, it.Value, it.Source = "off", "off", b.source(scope, k.name, false)
-			if b.requireProtected() {
-				it.Value = "on"
 			}
 		case "board.manager_role":
 			it.Default, it.Value, it.Source = "", b.managerRole(scope), b.source(scope, k.name, false)

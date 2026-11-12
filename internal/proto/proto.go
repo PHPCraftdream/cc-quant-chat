@@ -410,7 +410,6 @@ type MemberInfo struct {
 	RoleExclusive bool   `json:"role_exclusive,omitempty"`
 	Online        bool   `json:"online"`
 	Unsigned      bool   `json:"unsigned,omitempty"`    // present without a signing key (older client)
-	KeyPlain      bool   `json:"key_plain,omitempty"`   // has a key that is not a protected one (the broker keeps protected keys)
 	Owner         bool   `json:"owner,omitempty"`       // an owner-verified connection
 	Quarantined   bool   `json:"quarantined,omitempty"` // a member of a node in quarantine
 	RolePinned    bool   `json:"role_pinned,omitempty"`

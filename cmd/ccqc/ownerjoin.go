@@ -143,15 +143,8 @@ func joinTerminal(chat, nick string) (*client.Conn, *client.Signer, error) {
 	return c, kj.Signer, nil
 }
 
-// nickKnownHere: this machine holds a key (protected, or a plain one) for a nick of that name.
+// nickKnownHere: this machine holds a protected key for a nick of that name.
 func nickKnownHere(nick string) bool {
-	if refs, err := local.NickKeyRefs(); err == nil {
-		for _, r := range refs {
-			if r.Nick == nick {
-				return true
-			}
-		}
-	}
 	if got, err := local.ProtectedNicks(); err == nil {
 		for _, k := range got {
 			if strings.HasSuffix(k, "/"+nick) {

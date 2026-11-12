@@ -36,12 +36,12 @@ func TestNewNickIsRegisteredWithItsKeyAndNoSecretIsIssued(t *testing.T) {
 
 	// The same key joins again, also on a restarted broker (the key came back from the store).
 	b2 := newTestBroker(be)
-	if _, err := b2.keyedJoin(t, tok, "alice", k, ""); err != nil {
+	if _, err := b2.keyedJoin(t, tok, "alice", k); err != nil {
 		t.Fatalf("rejoin with the key: %v", err)
 	}
-	// Another key cannot take the nick over, and the secret alone is not a key.
+	// Another key cannot take the nick over (it cannot prove the auth key), and the secret alone is not a key.
 	b3 := newTestBroker(be)
-	if _, err := b3.keyedJoin(t, tok, "alice", newKey(t), ""); codeOf(err) != "name_taken" {
+	if _, err := b3.keyedJoin(t, tok, "alice", newKey(t)); codeOf(err) != "unlock_denied" {
 		t.Fatalf("another key: %v", err)
 	}
 	old := b3.connect(t)
@@ -62,7 +62,12 @@ func TestJoinNeedsAFreshChallengeSignedByTheKeyItPresents(t *testing.T) {
 		return owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(id, "alice", pub, nonce)))
 	}
 
+	b.seedProtected(t, tok, "alice", k)
+	b.seedProtected(t, tok, "bob", k)
 	c := b.connect(t)
+	if code := unlockAs(t, c, id, "alice", k); code != "" {
+		t.Fatalf("unlock: %q", code)
+	}
 	if code := join(c, sign(k, "nonce")); code != "bad_nick_sig" { // no challenge was asked for
 		t.Fatalf("no challenge: %q", code)
 	}
@@ -81,6 +86,9 @@ func TestJoinNeedsAFreshChallengeSignedByTheKeyItPresents(t *testing.T) {
 
 	// A challenge belongs to its connection.
 	c1, c2 := b.connect(t), b.connect(t)
+	if code := unlockAs(t, c2, id, "bob", k); code != "" {
+		t.Fatalf("unlock: %q", code)
+	}
 	c1.call("challenge", nil, &ch)
 	if code := c2.call("join", proto.JoinArgs{Token: tok, Name: "bob", Proto: proto.ProtoVersion, Pub: pub,
 		NickSig: owner.Encode(ed25519.Sign(k, proto.NickJoinMessage(id, "bob", pub, ch.Nonce)))}, nil); code != "bad_nick_sig" {
@@ -88,74 +96,22 @@ func TestJoinNeedsAFreshChallengeSignedByTheKeyItPresents(t *testing.T) {
 	}
 }
 
-func TestLegacyNickMovesToAKeyOnceAndItsSecretIsThenRefused(t *testing.T) {
+func TestResetFreesAProtectedNickAndItsSecretAndAPlainKeyIsNoWayBackIn(t *testing.T) {
 	be := newMemStore()
 	b := newTestBroker(be)
-	tok, _ := token(t)
-
-	// A client of the previous level registers by secret.
-	old := b.connect(t)
-	if w, code := old.join(tok, "bob", proto.LegacyProto); code != "" || w.Key == "" {
-		t.Fatalf("legacy join: %q key %q", code, w.Key)
-	}
-	secret := old.key
-	old.call("leave", nil, nil)
-
-	// Still unbound: the secret keeps working for old clients ...
-	again := b.connect(t)
-	again.key = secret
-	if _, code := again.join(tok, "bob", proto.LegacyProto); code != "" {
-		t.Fatalf("legacy rejoin: %q", code)
-	}
-	again.call("leave", nil, nil)
-
-	// ... but nobody else can move it to their key without that secret.
-	if _, err := b.keyedJoin(t, tok, "bob", newKey(t), ""); codeOf(err) != "name_taken" {
-		t.Fatalf("a key without the secret: %v", err)
-	}
-	if _, err := b.keyedJoin(t, tok, "bob", newKey(t), "wrong-secret"); codeOf(err) != "name_taken" {
-		t.Fatalf("a key with a wrong secret: %v", err)
-	}
-
-	// The owner of the secret moves the nick to a key: once.
+	tok, id := token(t)
 	k := newKey(t)
-	p, err := b.keyedJoin(t, tok, "bob", k, secret)
-	if err != nil || p.sg == nil {
-		t.Fatalf("rebind: %v", err)
-	}
-	p.leaveChat()
-
-	// Replaying the old secret now fails: alone, and with another key.
-	replay := b.connect(t)
-	replay.key = secret
-	if _, code := replay.join(tok, "bob", proto.LegacyProto); code != "name_taken" {
-		t.Fatalf("old secret, no key: %q", code)
-	}
-	if _, err := b.keyedJoin(t, tok, "bob", newKey(t), secret); codeOf(err) != "name_taken" {
-		t.Fatalf("old secret with another key: %v", err)
-	}
-	// The binding is stored: the same holds on the next broker.
-	b2 := newTestBroker(be)
-	if _, code := b2.connect(t).join(tok, "bob", proto.LegacyProto); code != "name_taken" {
-		t.Fatalf("after a restart, old secret: %q", code)
-	}
-	if _, err := b2.keyedJoin(t, tok, "bob", k, secret); err != nil {
-		t.Fatalf("after a restart, the key: %v", err)
-	}
-}
-
-func TestResetFreesAKeyedNickForANewKey(t *testing.T) {
-	be := newMemStore()
-	b := newTestBroker(be)
-	tok, _ := token(t)
-	p := b.mustJoin(t, tok, "carol", newKey(t))
+	p := b.mustJoin(t, tok, "carol", k)
 	p.leaveChat()
 	if _, perr := b.nickReset(proto.NickResetArgs{Token: tok, Name: "carol"}); perr != nil {
 		t.Fatalf("reset: %v", perr)
 	}
-	k2 := newKey(t)
-	if _, err := b.keyedJoin(t, tok, "carol", k2, ""); err != nil {
-		t.Fatalf("a new key after the reset: %v", err)
+	if row, _ := be.ActiveNickSecret(id, "carol"); row != nil {
+		t.Fatalf("the secret stayed after the reset: %+v", row)
+	}
+	// The key is gone with its secret: it opens nothing (no protected key, so only an invitation lets in).
+	if _, err := b.keyedJoin(t, tok, "carol", newKey(t)); codeOf(err) == "" {
+		t.Fatal("a key joined a nick that was reset")
 	}
 }
 
