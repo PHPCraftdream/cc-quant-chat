@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
@@ -272,5 +273,40 @@ func TestPathWithURICharacters(t *testing.T) {
 	db.Close()
 	if _, err := os.Stat(filepath.Join(dir, "node.db")); err != nil {
 		t.Fatalf("database not in the requested directory: %v", err)
+	}
+}
+
+// A write that is still on its way when the store is closed (a session of a peer, a goroutine of a test) must not open
+// the chat file again: it would bring a -wal and a -shm back into a directory that is being removed.
+func TestAClosedStoreOpensNoChatFileAndMakesNoNewOne(t *testing.T) {
+	db, path := openTemp(t)
+	if _, err := db.Load(chatID, "one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(filepath.Dir(path), "chats")
+	names := func() string {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range entries {
+			out = append(out, e.Name())
+		}
+		return strings.Join(out, ",")
+	}
+	before := names()
+	m := &proto.Message{ID: 1, TS: "2026-01-01T00:00:00Z", Room: proto.RoomCommon, From: "a", Text: "late"}
+	if err := db.Append(chatID, store.Record{T: "msg", Key: "r:common", Msg: m}); err == nil {
+		t.Fatal("a write into the chat of a closed store was taken")
+	}
+	if _, err := db.Load(chatID2, "two"); err == nil {
+		t.Fatal("a chat was made in a closed store")
+	}
+	if after := names(); after != before {
+		t.Fatalf("the chat directory changed after the store was closed: %q, was %q", after, before)
 	}
 }

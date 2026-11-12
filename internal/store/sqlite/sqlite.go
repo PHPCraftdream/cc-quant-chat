@@ -72,9 +72,10 @@ type DB struct {
 	dir  string
 	node *sql.DB
 
-	mu    sync.Mutex
-	chats map[string]*chatDB
-	key   *nodeKey // signs events; see SetNode
+	mu     sync.Mutex
+	closed bool // Close was called: no chat file is opened or made any more (a late write must not bring one back)
+	chats  map[string]*chatDB
+	key    *nodeKey // signs events; see SetNode
 
 	onEvents atomic.Pointer[func(chatID string)] // see OnEvents
 	pending  map[*chatDB]struct{}                // databases of released chats that are waiting to be closed (under mu)
@@ -212,6 +213,7 @@ func (d *DB) adoptStrays() error {
 func (d *DB) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.closed = true
 	var first error
 	shut := func(c *chatDB) {
 		c.life.Lock()
@@ -245,6 +247,9 @@ func (d *DB) chat(id, name string, create bool) (*chatDB, error) {
 	defer d.mu.Unlock()
 	if c := d.chats[id]; c != nil {
 		return c, nil
+	}
+	if d.closed {
+		return nil, errors.New("sqlite: the store is closed")
 	}
 	if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
 		return nil, fmt.Errorf("sqlite: %q is not a chat id", id)
