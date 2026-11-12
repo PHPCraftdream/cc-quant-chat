@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strconv"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/events"
@@ -235,40 +234,6 @@ func noteBoard(tx *sql.Tx, e events.Event, imgs []image) error {
 	for _, fc := range boardChanges(imgs) {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO board_stamps (kind, id, field, lamport, origin) VALUES (?, ?, ?, ?, ?)`,
 			fc.kind, fc.id, fc.field, e.Lamport, e.Origin); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// deriveBoardRefs does noteBoard for the board events of a chat written before the names existed.
-func deriveBoardRefs(tx *sql.Tx) error {
-	rows, err := tx.Query(`SELECT origin, seq, lamport, assigned FROM events
-		WHERE remote = 0 AND hidden = '' AND (kind LIKE 'task.%' OR kind LIKE 'sprint.%' OR kind LIKE 'workflow.%' OR kind = 'revert' OR kind = 'import.board')
-		ORDER BY ord`)
-	if err != nil {
-		return err
-	}
-	var evs []events.Event
-	for rows.Next() {
-		var e events.Event
-		if err := rows.Scan(&e.Origin, &e.Seq, &e.Lamport, &e.Assigned); err != nil {
-			rows.Close()
-			return err
-		}
-		evs = append(evs, e)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, e := range evs {
-		a, err := parseBoard(e.Assigned)
-		if err != nil {
-			return fmt.Errorf("event %s#%d: assigned: %w", e.Origin, e.Seq, err)
-		}
-		if err := noteBoard(tx, e, a.Rows); err != nil {
 			return err
 		}
 	}

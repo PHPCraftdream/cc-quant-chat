@@ -40,7 +40,7 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 1 { // a new chat: every change it will have is an event, in the second version of the journal
-		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?), (?, ?)`, metaJournal, journalVersion, metaRefs, refsDone); err != nil {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)`, metaJournal, journalVersion); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -58,14 +58,6 @@ func (d *DB) openChat(id, name, path string) (*chatDB, error) {
 	if _, err := db.Exec(`INSERT OR IGNORE INTO rooms (room) VALUES (?)`, proto.RoomCommon); err != nil {
 		db.Close()
 		return nil, err
-	}
-	if err := c.upgradeJournal(d.key); err != nil { // d.mu is held by the caller: read the key without it
-		db.Close()
-		return nil, fmt.Errorf("chat %.8s: %w", id, err)
-	}
-	if err := c.upgradeRefs(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("chat %.8s: %w", id, err)
 	}
 	if err := db.QueryRow(`SELECT name, created_at FROM chat WHERE id = 1`).Scan(&name, &created); err != nil {
 		db.Close()

@@ -26,9 +26,6 @@ import (
 // broker must learn of, as records, in the numbers of this node.
 
 const (
-	metaRefs = "refs_version"
-	refsDone = "1"
-
 	placeholderLamport = math.MaxInt64 // a room that a message or a member named before its creation arrived
 	placeholderOrigin  = "~"
 )
@@ -312,41 +309,4 @@ func upsertRoom(tx *sql.Tx, room, topic, by string, lamport int64, origin string
 		WHERE rooms.origin <> '' AND (excluded.lamport, excluded.origin) < (rooms.lamport, rooms.origin)`,
 		room, topic, by, lamport, origin)
 	return err
-}
-
-// derivedRefs fills what is derived from the events of a chat written before there were events of
-// other nodes: the global names of messages and the stamps of rooms. It runs once for such a chat,
-// after the rows that predate the journal are in it.
-func derivedRefs(tx *sql.Tx) error {
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO entity_refs (kind, id, origin, seq, num)
-		SELECT 'msg', CAST(json_extract(assigned, '$.id') AS INTEGER), origin, seq, CAST(json_extract(assigned, '$.id') AS INTEGER) FROM events
-		WHERE kind = 'msg' AND remote = 0 AND hidden = '' AND json_extract(assigned, '$.id') IS NOT NULL`); err != nil {
-		return err
-	}
-	if err := deriveBoardRefs(tx); err != nil {
-		return err
-	}
-	if err := deriveDocRefs(tx); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`UPDATE rooms SET
-		lamport = COALESCE((SELECT e.lamport FROM events e WHERE e.kind = 'room.create' AND json_extract(e.payload, '$.room') = rooms.room ORDER BY e.ord LIMIT 1), 0),
-		origin = COALESCE((SELECT e.origin FROM events e WHERE e.kind = 'room.create' AND json_extract(e.payload, '$.room') = rooms.room ORDER BY e.ord LIMIT 1), '')`); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`, metaRefs, refsDone)
-	return err
-}
-
-// upgradeRefs runs derivedRefs for a chat that has not had it.
-func (c *chatDB) upgradeRefs() error {
-	var v string
-	err := c.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, metaRefs).Scan(&v)
-	if err == nil && v == refsDone {
-		return nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	return c.inTx(derivedRefs)
 }

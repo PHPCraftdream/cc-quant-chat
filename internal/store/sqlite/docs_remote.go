@@ -144,39 +144,6 @@ func replaceHeads(tx *sql.Tx, path string, ver int64, parents []eventRef) error 
 	return err
 }
 
-// deriveDocRefs names the versions of a chat written before the names existed, in the order they
-// were applied; each was written over what was the page then.
-func deriveDocRefs(tx *sql.Tx) error {
-	rows, err := tx.Query(`SELECT origin, seq, lamport, assigned FROM events WHERE remote = 0 AND hidden = '' AND kind LIKE 'doc.%' ORDER BY ord`)
-	if err != nil {
-		return err
-	}
-	var evs []events.Event
-	for rows.Next() {
-		var e events.Event
-		if err := rows.Scan(&e.Origin, &e.Seq, &e.Lamport, &e.Assigned); err != nil {
-			rows.Close()
-			return err
-		}
-		evs = append(evs, e)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, e := range evs {
-		a, err := parseDocs(e.Assigned)
-		if err != nil {
-			return fmt.Errorf("event %s#%d: assigned: %w", e.Origin, e.Seq, err)
-		}
-		if err := noteDocs(tx, e, a.Rows, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ---- the document events of other nodes ----
 
 func remoteDoc(tx *sql.Tx, e events.Event, self string) error {
