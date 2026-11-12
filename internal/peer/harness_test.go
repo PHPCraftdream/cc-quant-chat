@@ -36,6 +36,8 @@ type tnode struct {
 	mu   sync.Mutex
 	logs []string
 	ids  map[string]int64
+
+	writing sync.Mutex // what the chat's lock is to a broker: one writer of messages at a time
 }
 
 func newTnode(t *testing.T, name string) *tnode {
@@ -54,6 +56,12 @@ func newTnode(t *testing.T, name string) *tnode {
 	}
 	db.SetNode(n.origin, priv)
 	n.m = New(db, n.origin, priv, n.logf)
+	n.m.Accept = func(chatID string, e events.Event) error { // like the broker's acceptRemote: under the writers' lock
+		n.writing.Lock()
+		defer n.writing.Unlock()
+		_, err := db.AcceptEvent(chatID, e)
+		return err
+	}
 	db.OnEvents(n.m.Notify)
 	t.Cleanup(func() { n.m.Close(); db.Close() })
 	return n
@@ -106,8 +114,17 @@ func (n *tnode) chat(id string) {
 }
 
 // say writes a message of this node to the chat (an event of its journal).
+//
+// The broker numbers the messages of its chat under the chat's lock, and takes the events of other
+// nodes under the same lock (broker.acceptRemote), so the number it gives a message of its own is
+// never taken from under it. The nodes of these tests have no broker: a remote event applied by the
+// manager takes MAX(id)+1 in its own transaction, and could land between the read of the newest id
+// below and the append of this message (UNIQUE messages.id). The two share one lock here, as they do
+// there (n.writing, also taken around the manager's Accept: see newTnode).
 func (n *tnode) say(chat, text string) {
 	n.t.Helper()
+	n.writing.Lock()
+	defer n.writing.Unlock()
 	// The broker numbers messages after the newest one the store holds, those of other nodes included.
 	recs, err := n.db.Load(chat, "")
 	if err != nil {
