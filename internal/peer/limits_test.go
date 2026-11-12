@@ -139,11 +139,13 @@ func TestAnOverLimitSourceIsRefusedWithoutEndingTheSessionAndAnHonestOneGoesOn(t
 	befriendAt(t, c, b, "trusted", chatX)
 	befriendAt(t, a, b, "trusted", chatX)
 	eventually(t, wait, "a session", func() bool { return len(a.m.Sessions()) == 1 })
-	for i := 0; i < 8; i++ { // bob, over the limit that alice set for a source
+	// The limit counts per calendar minute, so a flood that straddles a minute boundary is split in two: with
+	// 11 events one minute always gets 6 or more, and at most 2*5 are taken.
+	for i := 0; i < 11; i++ { // bob, over the limit that alice set for a source
 		b.say(chatX, "flood")
 	}
 	eventually(t, wait, "alice refuses some", func() bool { return a.m.Stats(b.origin).Refused["over a limit"] > 0 })
-	if got := len(a.journal(chatX)); got > 5 {
+	if got := len(a.journal(chatX)); got > 10 {
 		t.Fatalf("alice took %d events of a source with a limit of 5 a minute", got)
 	}
 	if len(a.m.Sessions()) != 1 {
