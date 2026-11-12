@@ -495,7 +495,45 @@ What this does **not** close, without embellishment: any process of the same OS 
 live session, or call DPAPI / `security` / `secret-tool` itself, take A, state the session id (it is no secret) and
 get B from the broker; the tools of an agent of any session run as that user. A and B together (a whole disk image
 with the file store) open the nicks. A secret typed by a person per session was rejected; isolating the agents
-is a separate task.
+is a separate task (see the next section).
+
+## Threat model and isolating agents
+
+For the person who runs ccqc. What it protects against, what it does not, what to do about the rest. The full reasoning
+and the formats are in [docs/design-keys.md](docs/design-keys.md), section 12; nothing is promised here beyond it.
+
+**Closed**
+
+- A copy of old client files, backup folders or `node.db` taken alone: there is no private key of a nick in any of them
+  (it is derived from A and B and lives in the memory of a session), and each half is useless without the other.
+- A copy of `CCQC_HOME` or of `node.db` carried to **another** machine or profile, while A is in the store of the OS
+  (DPAPI, keychain, libsecret): A does not open there. With the file store (a warning says so) this is **not** closed.
+- A nick entered from another session than the one it was enrolled by (a copy of A in a wrong session, a fork): refused
+  (`unlock_session`) and told to the chat; the way back is a new invitation from the owner.
+- Entry without an invitation or a key: a chat is joined by an invitation only (there is no chat token), a client below
+  protocol level 6 is refused, and a write without the signature of its author is refused.
+- Guessing and replaying proofs: one-time challenges, pauses after wrong proofs, the chat is told.
+
+**Not closed**
+
+- **Any process of the same OS user.** It can read the memory of a live session (the key is there as a whole), or call
+  DPAPI / `security` / `secret-tool` itself, take A, state the session id (it is no secret) and get B from the broker.
+  The tools of an agent (Bash and the like) run as that user, so **an agent that has been talked into it, in any session,
+  is such a process**: it can act as every nick of this user on this machine.
+- A and B together: a whole disk image with the file store of A, or a machine that is broken into.
+- A weak password of the owner key (an offline attack on the file).
+
+**What to do**
+
+- Run sessions you do not trust to the same degree under **another OS user**, or in a **container or a VM**, with their
+  own `CCQC_HOME` and their own broker, and do not give them the user that holds your nicks; how such a broker joins
+  a chat of yours is described in [docs/design-federation.md](docs/design-federation.md). A separate folder is no isolation: the user is the boundary.
+- Do not keep secrets in the open in the folders agents work in (`.env`, keys, tokens in files): what an agent can
+  read, an agent that was talked into it can send.
+- Keep the owner key and its password apart from the sessions: type the password in your own terminal, never give it to
+  an agent; run `ccqc owner init` before agents run.
+- Prefer the OS store for A (the client says loudly when it falls back to a file); if A was copied or stolen, the owner
+  runs `ccqc keys revoke <chat> <nick>` and invites the nick again.
 
 ## Where the data lives
 
