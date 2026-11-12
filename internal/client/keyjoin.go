@@ -34,8 +34,15 @@ type KeyJoin struct {
 	Note      string // for the person: what happened to the keys, or a warning
 }
 
+// ErrNoSession: the client has no Claude Code session id. A nick belongs to a session (the broker refuses an enrolment
+// or a key without one); a terminal has none and enters as the owner, with the owner's key.
+var ErrNoSession = errors.New("this client has no Claude Code session id, and a nick belongs to a session: in a session the SessionStart hook hands the id over (restart the session if the hook is not set up), and a terminal enters as the owner, with the owner's key")
+
 // JoinWithKeys gets the connection into the chat.
 func JoinWithKeys(call Callf, in KeyJoinInput, w *proto.Welcome) (KeyJoin, error) {
+	if in.SID == "" && in.IDs.SID == "" {
+		return KeyJoin{}, ErrNoSession
+	}
 	if in.Invite != nil {
 		return enrollWithInvitation(call, in, w)
 	}

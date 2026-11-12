@@ -60,17 +60,27 @@ func (b *Broker) nickOnline(chatID, nick string) bool {
 }
 
 // checkSession runs after the proof of A. The caller holds keyMu.
+//
+// A protected nick belongs to a Claude Code session. A key that is asked for with no session id, or for a nick that
+// has none bound (a terminal nick, as an earlier version let one be enrolled), is refused, whatever the switch
+// keys.bind_session says: that switch is about another session, not about no session. The way back is a new
+// invitation, enrolled from a session.
 func (b *Broker) checkSession(ss store.NickSecrets, c *conn, row *store.NickSecret, a proto.KeyUnlockArgs) *proto.Error {
-	if row.SIDHash == "" { // a terminal nick: not bound
-		return nil
+	if a.SID == "" || row.SIDHash == "" {
+		why := "no session id given"
+		if row.SIDHash == "" {
+			why = "the nick is bound to no session"
+		}
+		b.logSession("key.unlock", row, a, c, "refused: "+why)
+		return proto.Errf("unlock_session", "@%s is a protected nick of a Claude Code session: %s; a new invitation from the owner, used in a session, enrolls it (ccqc invite %s %s)", row.Nick, why, row.ChatID[:8], row.Nick)
 	}
 	now := sidHash(a.SID)
-	if now != "" && now == row.SIDHash {
+	if now == row.SIDHash {
 		return nil
 	}
 	// One step along the chain: the client says which id it had and that the session went on after /clear or
 	// a compaction. Only the id the broker has counts, not "one of the earlier ones".
-	if now != "" && sidHash(a.PrevSID) == row.SIDHash && (a.Source == "clear" || a.Source == "compact") {
+	if sidHash(a.PrevSID) == row.SIDHash && (a.Source == "clear" || a.Source == "compact") {
 		if _, err := ss.NickSecretRebind(row.ChatID, row.Nick, now); err != nil {
 			return proto.Errf("store_failed", "%v", err)
 		}

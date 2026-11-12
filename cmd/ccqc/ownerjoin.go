@@ -3,19 +3,16 @@ package main
 import (
 	"crypto/ed25519"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/PHPCraftdream/cc-quant-chat/internal/client"
-	"github.com/PHPCraftdream/cc-quant-chat/internal/invite"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/local"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/owner"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-// How a terminal enters a chat: with the owner's key (the password is typed on the console), or as a protected
-// nick of this machine (by an invitation of its own the first time). The chat is found by its name through the
-// broker.
+// How a terminal enters a chat: with the owner's key, the password typed on the console, and in no other way: a
+// terminal has no Claude Code session to bind a nick to, and a nick without a session or a password would be a
+// door for any program of the user. The chat is found by its name through the broker.
 
 // chatForJoin gives the id of a chat by its name (or takes the id itself).
 func chatForJoin(c *client.Conn, chat string) (string, error) { return findChat(c, chat) }
@@ -61,60 +58,4 @@ func joinOwner(chat, nick string) (*client.Conn, string, ed25519.PrivateKey, pro
 		return fail(err)
 	}
 	return c, chatID, priv, w, nil
-}
-
-// joinInvited enters a chat with an invitation of the terminal's own: the key it registers is a
-// protected one (derived from the client secret and the broker's), kept nowhere in the clear. The
-// invitation is not stored anywhere. The nick has no session: it is not bound to one.
-func joinInvited(line string) (*client.Conn, *client.Signer, error) {
-	in, err := invite.Parse(line)
-	if err != nil {
-		return nil, nil, err
-	}
-	c, err := client.Connect()
-	if err != nil {
-		return nil, nil, err
-	}
-	var w proto.Welcome
-	kj, err := client.JoinWithKeys(c.Call, client.KeyJoinInput{ChatID: in.ChatID, Nick: in.Nick, Invite: &in}, &w)
-	if err != nil {
-		c.Close()
-		return nil, nil, err
-	}
-	fmt.Fprint(os.Stderr, kj.Note)
-	return c, kj.Signer, nil
-}
-
-// joinTerminal enters a chat as a nick of this machine whose key is protected (or still plain and moved at
-// this join), the way a session does but without one: the client secret proves it, no password is typed.
-func joinTerminal(chat, nick string) (*client.Conn, *client.Signer, error) {
-	c, err := client.Connect()
-	if err != nil {
-		return nil, nil, err
-	}
-	chatID, err := chatForJoin(c, chat)
-	if err != nil {
-		c.Close()
-		return nil, nil, err
-	}
-	var w proto.Welcome
-	kj, err := client.JoinWithKeys(c.Call, client.KeyJoinInput{ChatID: chatID, Nick: nick}, &w)
-	if err != nil {
-		c.Close()
-		return nil, nil, err
-	}
-	fmt.Fprint(os.Stderr, kj.Note)
-	return c, kj.Signer, nil
-}
-
-// nickKnownHere: this machine holds a protected key for a nick of that name.
-func nickKnownHere(nick string) bool {
-	if got, err := local.ProtectedNicks(); err == nil {
-		for _, k := range got {
-			if strings.HasSuffix(k, "/"+nick) {
-				return true
-			}
-		}
-	}
-	return false
 }

@@ -93,7 +93,7 @@ func TestTheSameSessionPassesAndAnotherOneIsRefusedAndToldToTheChat(t *testing.T
 	log := adminLog(t, ic)
 	refused := 0
 	for _, l := range log {
-		if strings.Contains(l, "refused: another session") && strings.Contains(l, `"peer"`) {
+		if strings.Contains(l, "refused: ") && strings.Contains(l, `"peer"`) { // another session, and no id at all
 			refused++
 		}
 	}
@@ -164,36 +164,67 @@ func TestTheBindingMovesOnlyForTheHolderOfAAndOnlyForANickThatIsOffline(t *testi
 	}
 }
 
-func TestATerminalNickIsNotBoundAndTheEmergencySwitchLetsAnotherSessionInAndTellsTheChat(t *testing.T) {
+// A protected nick belongs to a session. A terminal has none: an enrolment without a session id is refused (and the
+// invitation is not spent), a key is not given for no id, and a nick that an earlier version enrolled with no session
+// (the terminal nick "cli") is not given its key either, whatever the emergency switch says: that switch lets another
+// session in, it does not let no session in.
+func TestANickWithNoSessionIsNeitherEnrolledNorGivenItsKeyAndTheEmergencySwitchOnlyLetsAnotherSessionIn(t *testing.T) {
 	ic := newInvitedChat(t)
-	term := ic.session(t, "cli", "") // enrolled from a terminal: no session
-	for _, sid := range []string{"", sidA, sidB} {
-		if _, code := ic.unlockIn(t, ic.b.connect(t), "cli", term, sid, "", ""); code != "" {
-			t.Fatalf("a terminal nick from %q: %q", sid, code)
+	a := secretOf(t)
+
+	in := ic.issue(t, "cli")
+	c := ic.b.connect(t)
+	var rep proto.KeyPrepareReply
+	if code := c.call("key_prepare", proto.KeyPrepareArgs{Chat: ic.chat, Nick: "cli"}, &rep); code != "" {
+		t.Fatalf("key_prepare: %q", code)
+	}
+	ic.sid = ""
+	if _, code := ic.enrollJoin(t, c, "cli", a, b64(t, rep.B), &in); code != "session_required" {
+		t.Fatalf("an enrolment from a terminal: %q, want session_required", code)
+	}
+	// The invitation was not spent: from a session it enrols.
+	ic.sid = sidA
+	c2 := ic.b.connect(t)
+	if code := c2.call("key_prepare", proto.KeyPrepareArgs{Chat: ic.chat, Nick: "cli"}, &rep); code != "" {
+		t.Fatalf("key_prepare: %q", code)
+	}
+	if _, code := ic.enrollJoin(t, c2, "cli", a, b64(t, rep.B), &in); code != "" {
+		t.Fatalf("the same invitation from a session: %q", code)
+	}
+	ic.leave(t, c2, "cli")
+
+	// The key is not given for no session id, with the binding on or off.
+	for _, state := range []string{"on", "off"} {
+		adminSet(t, ic, "keys.bind_session", state)
+		if _, code := ic.unlockIn(t, ic.b.connect(t), "cli", a, "", "", ""); code != "unlock_session" {
+			t.Fatalf("no session id, binding %s: %q", state, code)
 		}
 	}
-
-	a := ic.session(t, "bob", sidA)
-	watch := ic.watcher(t)
-	if _, code := ic.unlockIn(t, ic.b.connect(t), "bob", a, sidB, "", ""); code != "unlock_session" {
-		t.Fatalf("binding on: %q", code)
-	}
-	adminSet(t, ic, "keys.bind_session", "off")
-	if _, code := ic.unlockIn(t, ic.b.connect(t), "bob", a, sidC, "", ""); code != "" {
-		t.Fatalf("binding off: %q", code)
-	}
-	if heard := watch.heard(t, "let in", 3*time.Second); !strings.Contains(heard, "@bob") {
-		t.Fatalf("the chat was not told that a session was let in: %q", heard)
-	}
-	if log := strings.Join(adminLog(t, ic), " | "); !strings.Contains(log, "allowed: another session (binding is off)") {
-		t.Fatalf("log: %s", log)
+	// With the emergency switch off another session is let in (and told to the chat), as before.
+	if _, code := ic.unlockIn(t, ic.b.connect(t), "cli", a, sidB, "", ""); code != "" {
+		t.Fatalf("another session, binding off: %q", code)
 	}
 	adminSet(t, ic, "keys.bind_session", "on")
-	if _, code := ic.unlockIn(t, ic.b.connect(t), "bob", a, sidD, "", ""); code != "unlock_session" {
-		t.Fatalf("binding on again: %q", code)
+
+	// A nick that an earlier version enrolled with no session: its row has no binding.
+	ss, ok := ic.b.nickSecrets()
+	if !ok {
+		t.Fatal("no secrets")
 	}
-	if _, code := adminCall(t, ic.adm, ic.ownk, "config_set", proto.AdminConfig{Key: "keys.bind_session", Value: "maybe"}); code == "" {
-		t.Fatal("a value that is neither on nor off was accepted")
+	if _, err := ss.NickSecretRebind(ic.chat, "cli", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"on", "off"} {
+		adminSet(t, ic, "keys.bind_session", state)
+		for _, sid := range []string{"", sidA, sidB} {
+			if _, code := ic.unlockIn(t, ic.b.connect(t), "cli", a, sid, "", ""); code != "unlock_session" {
+				t.Fatalf("a nick bound to no session, binding %s, session %q: %q", state, sid, code)
+			}
+		}
+	}
+	log := strings.Join(adminLog(t, ic), " | ")
+	if !strings.Contains(log, "refused: no session id given") || !strings.Contains(log, "refused: the nick is bound to no session") {
+		t.Fatalf("the refusals are not in the administrator log: %s", log)
 	}
 }
 

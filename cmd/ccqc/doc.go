@@ -14,22 +14,16 @@ import (
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
-const docUsage = "usage: ccqc doc tree <chat> [prefix] | get <chat> <path> | put <chat> <path> <file|-> | export <chat> <dir>   [--nick NAME | --invite LINE]"
+const docUsage = "usage: ccqc doc tree <chat> [prefix] | get <chat> <path> | put <chat> <path> <file|-> | export <chat> <dir>   [--nick NAME]"
 
-// runDoc: the chat's document tree from a terminal. With an owner on this machine it enters with the
-// owner's key (the password is asked for on the console) under --nick, "owner" by default; or with
-// --invite, an invitation of its own for another nick.
+// runDoc: the chat's document tree from a terminal, as the owner: the owner's key, the password asked for on the
+// console, under --nick ("owner" by default). There is no other way in from a terminal.
 func runDoc(args []string) error {
-	nick, invitation := "", ""
+	nick := ""
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--nick" && i+1 < len(args) {
 			nick = strings.TrimPrefix(args[i+1], "@")
-			i++
-			continue
-		}
-		if args[i] == "--invite" && i+1 < len(args) {
-			invitation = args[i+1]
 			i++
 			continue
 		}
@@ -39,7 +33,7 @@ func runDoc(args []string) error {
 		return errors.New(docUsage)
 	}
 	cmd, chat := rest[0], strings.Trim(rest[1], "/")
-	c, signer, leave, err := joinForDoc(chat, nick, invitation)
+	c, signer, leave, err := joinForDoc(chat, nick)
 	if err != nil {
 		return err
 	}
@@ -142,27 +136,12 @@ func exportDocs(call func(proto.DocArgs) (proto.DocReply, error), dir string) er
 	return nil
 }
 
-// joinForDoc enters a chat for the document commands: by an invitation (a protected nick of its own), as a protected
-// nick of this machine (--nick), or as the owner (the owner's key; the password is asked for on the console). What
-// is written is signed: by the nick's key, or by the owner's.
-func joinForDoc(chat, nick, invitation string) (*client.Conn, *client.Signer, func(), error) {
+// joinForDoc enters a chat for the document commands as the owner: the owner's key, the password asked for on the
+// console, under nick ("owner" by default). What is written is signed with the owner's key.
+func joinForDoc(chat, nick string) (*client.Conn, *client.Signer, func(), error) {
 	leave := func(c *client.Conn) func() { return func() { _ = c.Call("leave", nil, nil); c.Close() } }
-	if invitation != "" {
-		c, sg, err := joinInvited(invitation)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return c, sg, leave(c), nil
-	}
-	if nick != "" && nick != proto.OwnerNick && nickKnownHere(nick) { // a protected nick of this machine: no password per command
-		c, sg, err := joinTerminal(chat, nick)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return c, sg, leave(c), nil
-	}
 	if _, err := owner.Load(local.OwnerKeyPath()); err != nil {
-		return nil, nil, nil, errors.New("this machine has no owner key (ccqc owner init) and no protected nick of that name: pass --invite or --nick")
+		return nil, nil, nil, errors.New("this machine has no owner key: run `ccqc owner init` (the document commands of a terminal run as the owner)")
 	}
 	if nick == "" {
 		nick = proto.OwnerNick

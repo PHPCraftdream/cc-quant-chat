@@ -357,7 +357,7 @@ func TestEnrollNeedsAnInvitationAndAPreparedBAndAnInvitationThatDoesNotEnrollIsR
 	pub := owner.Encode(sign.Public().(ed25519.PublicKey))
 	if code := e.call("join", proto.JoinArgs{Chat: ic.chat, Name: "bob", Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(sign, proto.NickJoinMessage(ic.chat, "bob", pub, ch.Nonce))),
-		Enroll:  &proto.JoinEnroll{AuthPub: owner.Encode(auth.Public().(ed25519.PublicKey))}}, nil); code != "bad_args" {
+		Enroll:  &proto.JoinEnroll{AuthPub: owner.Encode(auth.Public().(ed25519.PublicKey)), SID: ic.sid}}, nil); code != "bad_args" {
 		t.Fatalf("enroll without an invitation: %q", code)
 	}
 	// Enroll without the B of key_prepare for this pair is refused before the invitation is spent.

@@ -297,8 +297,8 @@ chat reads and writes (`canDocs` is the one place a rule will go); writes share 
 limit of 60 changes a minute per nick, and nobody is woken: the others see a quiet line
 (`alice updated /arch/broker v4`). With `CCQC_STORE=memory` the tool answers `docs_unavailable`.
 
-For people, with the owner's key (password on the console; the nick `owner`, `--nick` to change), with a protected
-nick of this machine (`--nick`, no password) or with an invitation of its own (`--invite`): `ccqc doc tree <chat> [prefix]`, `ccqc doc get <chat>
+For people, in a terminal, as the owner only (the owner's key, the password typed on the console; the nick `owner`,
+`--nick` to change): `ccqc doc tree <chat> [prefix]`, `ccqc doc get <chat>
 <path>` (the page on stdout), `ccqc doc put <chat> <path> <file|->`, `ccqc doc export <chat>
 <dir>` (the tree as `.md` files). The `quant-ui` mod draws no card for `doc`.
 
@@ -450,8 +450,7 @@ chat's next value: when another write took it first the broker answers `stale_cl
 current value and the client signs again (up to 5 times). A client that has a key but sends no
 signature is refused (`unsigned`); so is a join at a protocol level below 6 (`old_client`).
 
-`ccqc owner say` and `ccqc doc` sign with the owner key (or with the nick key of the protected nick they
-are run as), so the `OWNER` marker of a message can be checked against the message itself.
+`ccqc owner say` and `ccqc doc` sign with the owner key, so the `OWNER` marker of a message can be checked against the message itself.
 
 ## Protecting nick keys
 
@@ -479,10 +478,12 @@ of the session. `docs/design-keys.md` has the reasons, the formats and the threa
   administrator log. A session with no such link (a fork, a new session, a hook that gave no id) is refused
   (`unlock_session`); the way out is a new invitation. The ids are declared by the client, not attested: this
   guards against a copy of A in a wrong session, not against a process that knows both A and the id.
-- **Nicks** come by invitation; an invitation enrolls a protected key straight away.
-  `ccqc doc` and other terminal commands use a protected nick of their own (`ccqc invite <chat> cli` once, then
-  `ccqc doc … --nick cli`), with no password per command and not bound to a session. The owner's key keeps its
-  password and is not touched.
+- **Nicks** come by invitation; an invitation enrolls a protected key straight away, from a Claude Code session. A nick
+  belongs to a session: an enrolment with no session id is refused (`session_required`), a key is not given for no
+  session id, or for a nick that is bound to no session (`unlock_session`), whatever `keys.bind_session` says. There
+  is no nick for a terminal: a terminal acts as the owner, with the owner's key and its password
+  (`ccqc owner say`, `ccqc doc`, the administrator operations). A nick that an earlier version enrolled for a terminal
+  (`@cli`) is refused too; `ccqc keys revoke <chat> cli` (the owner) frees it.
 - **Never silent.** If the key the chat holds for a protected nick is not the one the broker has the secret for
   (something changed it by a way that is not an invitation), the login is refused (`key_mismatch`), logged, and the
   chat is told; an invitation of the owner heals it.
@@ -522,6 +523,12 @@ and the formats are in [docs/design-keys.md](docs/design-keys.md), section 12; n
   is such a process**: it can act as every nick of this user on this machine.
 - A and B together: a whole disk image with the file store of A, or a machine that is broken into.
 - A weak password of the owner key (an offline attack on the file).
+
+**Where the responsibility lies.** ccqc answers for the channel and its joints: who may enter (invitations, keys,
+the proof of the client secret), what is signed and by whom, the journal and its chains, the federation of nodes.
+Isolating one agent from another, and agents from the rest of your account, is the business of the OS and not a task of
+this tool: it could only be done by asking a person for a password at every start of every program, and a password that
+is typed into a terminal an agent shares is no protection against that agent. The advice below is what the operator can do.
 
 **What to do**
 

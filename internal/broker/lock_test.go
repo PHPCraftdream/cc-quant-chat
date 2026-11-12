@@ -199,7 +199,7 @@ func TestTheReplyToAJoinComesBeforeTheEventsOfTheChat(t *testing.T) {
 			_ = json.Unmarshal(call("challenge", nil).Data, &ch)
 			return ch.Nonce
 		}
-		call("key_unlock", proto.KeyUnlockArgs{Chat: tok, Nick: "bob",
+		call("key_unlock", proto.KeyUnlockArgs{Chat: tok, Nick: "bob", SID: testSID,
 			AuthSig: owner.Encode(ed25519.Sign(testAuth(bobKey), proto.KeyUnlockMessage(tok, "bob", nonce())))})
 		bobPub := pubOf(bobKey)
 		id := bob.send("join", proto.JoinArgs{Chat: tok, Name: "bob", Pub: bobPub, Proto: proto.ProtoVersion,

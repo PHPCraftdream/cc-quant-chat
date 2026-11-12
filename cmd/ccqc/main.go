@@ -31,7 +31,7 @@ Administrator operations (signed with the owner key; the owner password is typed
   ccqc config list|get [<key>] [--chat NAME]
   ccqc config set <key> <value> [--chat NAME]
                             settings applied without a restart: broker.idle, broker.grace,
-                            limits.messages_per_minute, keys.bind_session, keys.require_protected,
+                            limits.messages_per_minute, keys.bind_session,
                             board.manager_role (per chat)
 
 Chats and invitations (administrator operations; people are let in only by an invitation):
@@ -48,7 +48,7 @@ makes this broker accept nodes; nothing leaves unless a chat is shared):
                             (the events of its own), trusted (also the sources it brings); the chats are told
   ccqc peer share|unshare <chat> <origin>
 
-Documents (the chat's shared page tree; as a protected nick of this machine, or as the owner):
+Documents (the chat's shared page tree; from a terminal as the owner only: the password is typed on the console, --nick NAME to change the nick):
   ccqc doc tree <chat> [prefix]         paths, titles and sizes
   ccqc doc get <chat> <path>            the page to stdout
   ccqc doc put <chat> <path> <file|->   create or replace a page

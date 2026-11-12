@@ -18,6 +18,10 @@ import (
 // alone can prove it. (The broker never checks that the key is derived from A and B: it checks the proof of A,
 // the signature of the key and what it has registered.)
 
+// testSID is the session a test nick belongs to: a protected nick belongs to a Claude Code session, and the broker
+// refuses an enrolment or a key without one.
+const testSID = "99999999-tttt-4ttt-8ttt-tttttttttttt"
+
 // testAuth is the auth key of a test nick key.
 func testAuth(k ed25519.PrivateKey) ed25519.PrivateKey {
 	h := sha256.Sum256(append([]byte("test-auth|"), k.Seed()...))
@@ -34,7 +38,7 @@ func unlockAs(t *testing.T, c *client, chatID, nick string, k ed25519.PrivateKey
 		}
 		t.Fatalf("challenge: %q", code)
 	}
-	return c.call("key_unlock", proto.KeyUnlockArgs{Chat: chatID, Nick: nick,
+	return c.call("key_unlock", proto.KeyUnlockArgs{Chat: chatID, Nick: nick, SID: testSID,
 		AuthSig: owner.Encode(ed25519.Sign(testAuth(k), proto.KeyUnlockMessage(chatID, nick, ch.Nonce)))}, nil)
 }
 
@@ -80,7 +84,7 @@ func (b *Broker) seedProtectedIn(t *testing.T, id, chatName, who string, k ed255
 		return nil
 	}
 	bsec, _ := keys.NewSecret()
-	row := store.NickSecret{ChatID: id, Nick: who, B: bsec, AuthPub: testAuth(k).Public().(ed25519.PublicKey), SignPub: pubOf(k)}
+	row := store.NickSecret{ChatID: id, Nick: who, B: bsec, AuthPub: testAuth(k).Public().(ed25519.PublicKey), SignPub: pubOf(k), SIDHash: sidHash(testSID)}
 	if err := ss.PutPendingNickSecret(row); err != nil {
 		t.Fatal(err)
 	}

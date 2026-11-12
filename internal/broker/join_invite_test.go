@@ -44,7 +44,7 @@ func newInvitedChat(t *testing.T) *invitedChat {
 	}
 	var found proto.ChatFindReply
 	adm.call("chat_find", proto.ChatFindArgs{Name: "team"}, &found)
-	return &invitedChat{b: b, db: db, path: path, ownk: k, adm: adm, chat: found.Chats[0].ID}
+	return &invitedChat{b: b, db: db, path: path, ownk: k, adm: adm, chat: found.Chats[0].ID, sid: testSID}
 }
 
 func (ic *invitedChat) issue(t *testing.T, nick string) invite.Invitation {
@@ -218,7 +218,7 @@ func TestInvitationsThatDoNotWork(t *testing.T) {
 		var out proto.Welcome
 		code := c.call("join", proto.JoinArgs{Chat: ic.chat, Name: "gina", Pub: pub, Proto: proto.KeysProto,
 			NickSig: owner.Encode(ed25519.Sign(key, proto.NickJoinMessage(ic.chat, "gina", pub, ch.Nonce))),
-			Enroll:  &proto.JoinEnroll{AuthPub: authPub},
+			Enroll:  &proto.JoinEnroll{AuthPub: authPub, SID: ic.sid},
 			Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(wrong.Proof([]byte(ch.Nonce), proto.InviteSubject(ic.chat, "gina", pub, authPub)))}}, &out)
 		if code != "invite_invalid" {
 			t.Fatalf("wrong proof %d: %q", i, code)
@@ -339,7 +339,7 @@ func TestTheProofOfTheClientCodeIsTheOneTheBrokerChecks(t *testing.T) {
 	ic := newInvitedChat(t)
 	in := ic.issue(t, "kim")
 	enroll := func(c *client, nick string, in invite.Invitation, w *proto.Welcome) error {
-		_, _, err := cl.JoinEnrolled(c.callE, cl.Enroll{ChatID: ic.chat, Nick: nick, A: func() ([]byte, error) { return secretOf(t), nil }, Invite: &in}, w)
+		_, _, err := cl.JoinEnrolled(c.callE, cl.Enroll{ChatID: ic.chat, Nick: nick, A: func() ([]byte, error) { return secretOf(t), nil }, Invite: &in, SID: testSID}, w)
 		return err
 	}
 	c := ic.b.connect(t)

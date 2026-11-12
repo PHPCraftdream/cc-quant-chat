@@ -281,6 +281,9 @@ func (b *Broker) prepareEnroll(c *conn, ch *chat, a proto.JoinArgs) (store.NickS
 	if a.Proto < proto.KeysProto {
 		return nil, proto.Errf("bad_args", "enroll is for clients of level %d and above", proto.KeysProto)
 	}
+	if a.Enroll.SID == "" {
+		return nil, proto.Errf("session_required", "a protected nick is enrolled from a Claude Code session: the client gave no session id (a terminal has none, and a terminal does not enter by a nick; the owner's key with its password is the way for one)")
+	}
 	authPub, err := owner.Decode(a.Enroll.AuthPub)
 	if err != nil || len(authPub) != ed25519.PublicKeySize {
 		return nil, proto.Errf("bad_args", "enroll.auth_pub is not a base64 Ed25519 public key")
