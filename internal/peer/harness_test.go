@@ -173,6 +173,16 @@ func eventually(t *testing.T, d time.Duration, what string, ok func() bool) {
 	t.Fatalf("not within %v: %s", d, what)
 }
 
+// refused is how many events of from this node has turned away for that reason.
+func (n *tnode) refused(from *tnode, why string) int { return n.m.Stats(from.origin).Refused[why] }
+
+// awaitRefused waits until this node has turned away an event of from for the reason, more than before: the
+// event has come and was refused, which is what an absence check has to wait for (a sleep only hopes).
+func (n *tnode) awaitRefused(t *testing.T, from *tnode, why string, before int) {
+	t.Helper()
+	eventually(t, wait, n.name+" refuses an event of "+from.name+": "+why, func() bool { return n.refused(from, why) > before })
+}
+
 // journal is every event of a chat the node holds, by (origin, seq), as the ID of the event.
 func (n *tnode) journal(chat string) map[string]string {
 	n.t.Helper()

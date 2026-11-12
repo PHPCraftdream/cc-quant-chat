@@ -4,7 +4,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func originsIn(j map[string]string) map[string]bool {
@@ -51,7 +50,7 @@ func TestASourceThatIsANeighborHereAtLevelReadIsNotTakenThroughATrustedNode(t *t
 	b.say(chatX, "bob, a source of his own")
 	eventually(t, wait, "alice holds bob's event", func() bool { return originsIn(a.journal(chatX))[b.origin] })
 	eventually(t, wait, "bob holds carol's", func() bool { return originsIn(b.journal(chatX))[c.origin] })
-	time.Sleep(500 * time.Millisecond)
+	a.awaitRefused(t, b, "source that is read or pending here", 0)
 	if originsIn(a.journal(chatX))[c.origin] {
 		t.Fatal("a source that is read here came through a trusted node")
 	}

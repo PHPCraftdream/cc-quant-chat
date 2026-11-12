@@ -179,7 +179,7 @@ func TestQuarantineStopsNewEventsKeepsWhatWasTakenAndTheOwnerLiftsIt(t *testing.
 	c.say(chatX, "carol two")
 	b.say(chatX, "bob two")
 	eventually(t, wait, "bob's second", func() bool { return len(a.journal(chatX)) >= 3 })
-	time.Sleep(500 * time.Millisecond)
+	a.awaitRefused(t, b, "source in quarantine", 0)
 	if got := a.journal(chatX); len(got) != 3 || !originsIn(got)[c.origin] {
 		t.Fatalf("%v", got)
 	}

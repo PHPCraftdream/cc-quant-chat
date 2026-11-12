@@ -66,7 +66,8 @@ func TestOnlyTheChatsSharedByBothAreExchanged(t *testing.T) {
 	a.m.Refresh()
 	b.m.Refresh()
 	eventually(t, wait, "X arrives", func() bool { return len(b.journal(chatX)) == 1 })
-	time.Sleep(300 * time.Millisecond) // enough for Y to have gone, were it going to
+	a.say(chatX, "after Y") // what is said after Y was written has come over the same session: Y would have gone before it
+	eventually(t, wait, "X goes on arriving", func() bool { return len(b.journal(chatX)) == 2 })
 	if got := b.journal(chatY); len(got) != 0 {
 		t.Fatalf("a chat that b did not share was given to it: %v", got)
 	}
@@ -75,10 +76,9 @@ func TestOnlyTheChatsSharedByBothAreExchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.m.Refresh()
-	time.Sleep(300 * time.Millisecond)
+	eventually(t, wait, "nothing is shared, so no session is left", func() bool { return len(a.m.Sessions()) == 0 && len(b.m.Sessions()) == 0 })
 	a.say(chatX, "after the share ended")
-	time.Sleep(500 * time.Millisecond)
-	if got := b.journal(chatX); len(got) != 1 {
+	if got := b.journal(chatX); len(got) != 2 {
 		t.Fatalf("an unshared chat went on being given: %v", got)
 	}
 }
@@ -208,8 +208,7 @@ func TestACertificateOfAnotherKeyIsRefused(t *testing.T) {
 	impostor.say(chatX, "lies")
 	a.m.Refresh()
 	impostor.m.Refresh()
-	eventually(t, wait, "a refusal is logged", func() bool { return a.logged("not the expected") })
-	time.Sleep(200 * time.Millisecond)
+	eventually(t, wait, "a refusal is logged", func() bool { return a.logged("not the expected") }) // at the handshake, before any frame
 	if len(a.journal(chatX)) != 0 || len(a.m.Sessions()) != 0 {
 		t.Fatal("alice took events from a node that is not the one she added")
 	}
