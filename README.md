@@ -461,7 +461,9 @@ of events and everything downstream are as before; the private key is nowhere as
 of the session. `docs/design-keys.md` has the reasons, the formats and the threat model.
 
 - **A** is kept in the store of the OS: Windows DPAPI (a sealed blob of the current user), the macOS keychain
-  (`security`), libsecret on Linux (`secret-tool`, the secret goes through stdin). With none of them
+  (`security`), libsecret on Linux (`secret-tool`, the secret goes through stdin). Each of the three is tried against the
+  real tool in CI (`TestLiveKeyStore`; on Linux with an unlocked login keyring, which needs a non-empty password to come up).
+  A Linux server with no desktop and no D-Bus session has no keyring that comes up: A goes to a file then, with a warning. With none of them
   (a server without a keyring) it is a file with mode 0600 **outside** `CCQC_HOME` (`CCQC_SECRET_DIR`,
   `%LOCALAPPDATA%\ccqc`, `$XDG_STATE_HOME/ccqc` or `~/.local/state/ccqc`) and ccqc says so loudly: that is weaker,
   a copy of both folders opens your nicks. A is made and read back before the broker is asked; a secret that
