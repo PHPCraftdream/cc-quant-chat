@@ -2,11 +2,8 @@ package local
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -125,31 +122,6 @@ func TestTouchSessionOnlyTouchesExisting(t *testing.T) {
 	}
 }
 
-// The bridge for the deployment of KEY-7: an entry that a session remembered by a token becomes the entry of its chat
-// (id = the SHA-256 of the token, name = its prefix) the first time the folder is read, and the token is erased from the file.
-func TestAnEntryOfATokenBecomesTheEntryOfItsChatAndTheTokenIsErasedFromTheFile(t *testing.T) {
-	t.Setenv("CCQC_HOME", t.TempDir())
-	folder := t.TempDir()
-	token := "team.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	p := folderPath(folder)
-	old := `{"folder":"x","sessions":{"sid":{"used":"2026-11-12T10:00:00Z","chats":[{"token":"` + token + `","name":"alice"}]}}}`
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(old), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := SessionChats(folder, "sid")
-	h := sha256.Sum256([]byte(token))
-	if err != nil || len(got) != 1 || got[0].ChatID != hex.EncodeToString(h[:]) || got[0].Chat != "team" || got[0].Token != "" || got[0].Local() != "team" {
-		t.Fatalf("%+v %v", got, err)
-	}
-	raw, _ := os.ReadFile(p)
-	if bytes.Contains(raw, []byte("AAAAAAAAAA")) || bytes.Contains(raw, []byte("token")) {
-		t.Fatalf("the token is still in the file: %s", raw)
-	}
-}
-
 func TestAChatForInvitationsIsRememberedWithoutAnythingThatLetsAStrangerIn(t *testing.T) {
 	t.Setenv("CCQC_HOME", t.TempDir())
 	folder := t.TempDir()
@@ -161,7 +133,7 @@ func TestAChatForInvitationsIsRememberedWithoutAnythingThatLetsAStrangerIn(t *te
 		t.Fatal(err)
 	}
 	got, err := SessionChats(folder, "sid")
-	if err != nil || len(got) != 1 || got[0].ChatID != e.ChatID || got[0].Token != "" {
+	if err != nil || len(got) != 1 || got[0].ChatID != e.ChatID {
 		t.Fatalf("%+v %v", got, err)
 	}
 	raw, err := os.ReadFile(folderPath(folder))

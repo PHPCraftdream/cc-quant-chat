@@ -20,7 +20,6 @@ import (
 // Entry: a chat a session joins automatically: by its id (ChatID) and the protected key of the nick; nothing
 // that lets a stranger in is kept here.
 type Entry struct {
-	Token  string `json:"token,omitempty"` // only to be read once and erased (bridge.go)
 	ChatID string `json:"chat_id,omitempty"`
 	Chat   string `json:"chat,omitempty"` // the chat's name
 	Name   string `json:"name"`
@@ -161,7 +160,6 @@ func updateLocked(folder string, fn func(f *folderFile)) error {
 	if err := readJSON(p, &f); err != nil {
 		return err
 	}
-	bridgeFolder(&f) // the rewrite below erases the tokens
 	if f.Sessions == nil {
 		f.Sessions = map[string]*session{}
 	}
@@ -197,16 +195,7 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 // SessionChats: chats the session joins automatically.
 func SessionChats(folder, sessionID string) ([]Entry, error) {
 	var f folderFile
-	if err := withLock(func() error {
-		p := folderPath(folder)
-		if err := readJSON(p, &f); err != nil {
-			return err
-		}
-		if bridgeFolder(&f) { // tokens of the days before KEY-7: made entries of chats, and erased from the file
-			return writeJSON(p, f)
-		}
-		return nil
-	}); err != nil {
+	if err := withLock(func() error { return readJSON(folderPath(folder), &f) }); err != nil {
 		return nil, err
 	}
 	if s := f.Sessions[sessionID]; s != nil {
