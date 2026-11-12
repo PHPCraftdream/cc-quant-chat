@@ -49,6 +49,10 @@ type Manager struct {
 	wg     sync.WaitGroup
 	wake   chan string
 
+	// clock is the time the limits count by; nil is the wall clock. Tests set it, before the first session, to
+	// put the calendar minute and day where they want them.
+	clock func() time.Time
+
 	smu       sync.Mutex
 	strangers []time.Time // when connections of unknown keys were served, the last minute
 

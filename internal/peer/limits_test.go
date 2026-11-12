@@ -39,6 +39,56 @@ func TestASourceAtThreeHundredAMinuteIsNotInBreachAndTheNextIsRefused(t *testing
 	}
 }
 
+// The minute and the day are calendar ones: the last instant of one and the first of the next are told apart exactly.
+func TestTheMinuteAndTheDayEndExactlyAtTheirBoundary(t *testing.T) {
+	n := newTnode(t, "alice")
+	l := DefaultLimits
+	l.EventsPerMin = 2
+	n.m.SetLimits(l) // the bytes of a day are far away here
+	endOfMinute := time.Date(2026, 3, 1, 12, 0, 59, 999999999, time.UTC)
+	for i := 0; i < 2; i++ {
+		if why, _ := feed(n.m, ev("min", 1), 0, endOfMinute); why != "" {
+			t.Fatalf("event %d in the last instant of the minute: %q", i+1, why)
+		}
+	}
+	if why, _ := feed(n.m, ev("min", 1), 0, endOfMinute); !strings.Contains(why, "2 events a minute") {
+		t.Fatalf("the third in the same minute: %q", why)
+	}
+	for i := 0; i < 2; i++ { // 12:01:00.000000000 is the next minute: it begins afresh
+		if why, _ := feed(n.m, ev("min", 1), 0, endOfMinute.Add(time.Nanosecond)); why != "" {
+			t.Fatalf("event %d in the first instant of the next minute: %q", i+1, why)
+		}
+	}
+	if why, _ := feed(n.m, ev("min", 1), 0, endOfMinute.Add(time.Nanosecond)); !strings.Contains(why, "2 events a minute") {
+		t.Fatalf("the third in the next minute: %q", why)
+	}
+
+	l = DefaultLimits
+	l.BytesPerDay = 1000
+	n.m.SetLimits(l)
+	big := events.Event{Origin: "day", Lamport: 1, Payload: strings.Repeat("x", 300)} // counts 556
+	endOfDay := time.Date(2026, 3, 1, 23, 59, 59, 999999999, time.UTC)
+	if why, _ := feed(n.m, big, 0, endOfDay); why != "" {
+		t.Fatal(why)
+	}
+	if why, _ := feed(n.m, big, 0, endOfDay); !strings.Contains(why, "a day") {
+		t.Fatalf("a second one in the same day: %q", why)
+	}
+	if why, _ := feed(n.m, big, 0, endOfDay.Add(time.Nanosecond)); why != "" { // 00:00:00 of the next day, UTC
+		t.Fatalf("the first instant of the next day: %q", why)
+	}
+	// The day is the UTC one, whatever the zone of the time that is given: these two are on different days in a zone
+	// 14 hours east, and on one UTC day.
+	east := time.FixedZone("east", 14*3600)
+	zone := events.Event{Origin: "zone", Lamport: 1, Payload: strings.Repeat("x", 300)}
+	if why, _ := feed(n.m, zone, 0, time.Date(2026, 3, 1, 22, 0, 0, 0, east)); why != "" { // 08:00 UTC on the 1st
+		t.Fatal(why)
+	}
+	if why, _ := feed(n.m, zone, 0, time.Date(2026, 3, 2, 1, 0, 0, 0, east)); !strings.Contains(why, "a day") { // 11:00 UTC on the 1st
+		t.Fatalf("the same UTC day, another day in the zone: %q", why)
+	}
+}
+
 func TestOnlyTheExcessOfTheClockOverOursCountsAndHonestSourcesDoNotBreachItButOneThatJumpsDoes(t *testing.T) {
 	n := newTnode(t, "alice")
 	// Honest: 300 events whose clock follows ours by one: no excess at all.
@@ -136,16 +186,15 @@ func TestAnOverLimitSourceIsRefusedWithoutEndingTheSessionAndAnHonestOneGoesOn(t
 	l := DefaultLimits
 	l.EventsPerMin = 5
 	a.m.SetLimits(l)
+	a.m.clock = func() time.Time { return t0 } // the limit counts per calendar minute: a flood must not be split by a boundary
 	befriendAt(t, c, b, "trusted", chatX)
 	befriendAt(t, a, b, "trusted", chatX)
 	eventually(t, wait, "a session", func() bool { return len(a.m.Sessions()) == 1 })
-	// The limit counts per calendar minute, so a flood that straddles a minute boundary is split in two: with
-	// 11 events one minute always gets 6 or more, and at most 2*5 are taken.
-	for i := 0; i < 11; i++ { // bob, over the limit that alice set for a source
+	for i := 0; i < 8; i++ { // bob, over the limit that alice set for a source
 		b.say(chatX, "flood")
 	}
 	eventually(t, wait, "alice refuses some", func() bool { return a.m.Stats(b.origin).Refused["over a limit"] > 0 })
-	if got := len(a.journal(chatX)); got > 10 {
+	if got := len(a.journal(chatX)); got > 5 {
 		t.Fatalf("alice took %d events of a source with a limit of 5 a minute", got)
 	}
 	if len(a.m.Sessions()) != 1 {

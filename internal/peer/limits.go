@@ -160,7 +160,15 @@ func (m *Manager) took(e events.Event, clock int64, now time.Time) {
 }
 
 // DayStats is what is recorded of a source today.
-func (m *Manager) DayStats(origin string) store.DayStats { return m.DayStatsAt(origin, time.Now()) }
+func (m *Manager) DayStats(origin string) store.DayStats { return m.DayStatsAt(origin, m.now()) }
+
+// now is the time the limits count by (see clock).
+func (m *Manager) now() time.Time {
+	if m.clock != nil {
+		return m.clock()
+	}
+	return time.Now()
+}
 
 // DayStatsAt is DayStats for the day of the given time.
 func (m *Manager) DayStatsAt(origin string, now time.Time) store.DayStats {

@@ -48,7 +48,7 @@ func (s *session) receive(f Frame) error {
 			s.m.noteRefused(s.peer, why)
 			continue
 		}
-		now := time.Now()
+		now := s.m.now()
 		if why, q := s.m.overLimit(e, clock, now); why != "" { // over a limit: refused, the session goes on
 			blocked[e.Origin] = true
 			s.m.noteRefused(s.peer, "over a limit")
