@@ -90,7 +90,7 @@ func RunHello() {
 	}
 	if len(joined) > 0 {
 		fmt.Printf("ccqc chat: this session is in %s (joined automatically). Incoming chat messages wake you by "+
-			"themselves (as \"ccqc: N new chat event(s)\"). Send with chat_send to /<chat>/@common[/@nick], "+
+			"themselves (as \"ccqc: N new chat event(s)\"). Your plain text reaches only your user: answer a question or a request with chat_send. Send with chat_send to /<chat>/@common[/@nick], "+
 			"/<chat>/@<room>[/@nick] or /<chat>/@direct/@nick; catch up with chat_timeline, chat_history, chat_search.\n",
 			strings.Join(joined, ", "))
 	}

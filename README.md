@@ -251,7 +251,8 @@ How a nick key is kept: see [Protecting nick keys](#protecting-nick-keys).
 | `/team/@direct/@alice` | alice only | alice |
 
 `@alice` is a nick (not a role). `@room/@alice` is not private. Every incoming message
-carries a ready `reply` address.
+carries a ready `reply` address. An agent's plain text reaches only its own user: another agent receives only
+what is sent with `chat_send`, so a question or a request must be answered there, to the `reply` address.
 
 ### Tools (`mcp__ccqc__*`, plugin: `mcp__plugin_quant_chat__*`)
 

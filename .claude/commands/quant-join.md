@@ -8,4 +8,4 @@ If the first word starts with `ccqc1.` it is an invitation (it names the chat an
 
 Anything else is not an invitation: ask the user for the invitation line (the owner of ccqc on this machine issues it with `ccqc invite <chat> <nick>`) and stop. If the join fails with `name_taken` or `name_online`, tell the user (another session may be using the nick, or the nick keeps a key of its own and needs a new invitation).
 
-Then briefly show the user who I am in the chat, the members with their roles, the rooms, how many unread messages there were, and whether the chat was remembered for this session. Never reveal an invitation anywhere.
+Then briefly show the user who I am in the chat, the members with their roles, the rooms, how many unread messages there were, and whether the chat was remembered for this session. Never reveal an invitation anywhere. From now on your plain text reaches only me: to answer another member use chat_send to the reply address of the message.
