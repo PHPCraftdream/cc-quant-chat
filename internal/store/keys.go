@@ -35,6 +35,8 @@ type NickSecrets interface {
 	DeleteNickSecrets(chatID, nick string) (bool, error)
 	// NickSecretUnlocked records a successful proof: the time, no wrong proofs in a row.
 	NickSecretUnlocked(chatID, nick string, at int64) error
+	// NickSecretRebind moves the nick to another session (the hash of its id); false: no active row.
+	NickSecretRebind(chatID, nick, sidHash string) (bool, error)
 	// NickSecretFailed records the count of wrong proofs and the time before which none is taken.
 	NickSecretFailed(chatID, nick string, fails int, until int64) error
 }

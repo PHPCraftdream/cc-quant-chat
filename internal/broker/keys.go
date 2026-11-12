@@ -101,6 +101,9 @@ func (b *Broker) keyUnlock(c *conn, a proto.KeyUnlockArgs) (any, *proto.Error) {
 	if e := validPair(a.Chat, a.Nick); e != nil {
 		return nil, e
 	}
+	if b.nickOnline(a.Chat, a.Nick) { // B is not given for a nick that is present, nor is its binding moved
+		return nil, proto.Errf("name_online", "nick @%s is already online in this chat", a.Nick)
+	}
 	b.keyMu.Lock()
 	defer b.keyMu.Unlock()
 	row, err := ss.ActiveNickSecret(a.Chat, a.Nick)
@@ -120,18 +123,21 @@ func (b *Broker) keyUnlock(c *conn, a proto.KeyUnlockArgs) (any, *proto.Error) {
 	}
 	sig := decodeSig(a.AuthSig)
 	if sig == nil || !ed25519.Verify(ed25519.PublicKey(row.AuthPub), proto.KeyUnlockMessage(a.Chat, a.Nick, nonce), sig) {
-		return nil, b.keyFailed(ss, row, now)
+		return nil, b.keyFailed(ss, c, row, now)
+	}
+	if e := b.checkSession(ss, c, row, a); e != nil {
+		return nil, e
 	}
 	if err := ss.NickSecretUnlocked(a.Chat, a.Nick, now.Unix()); err != nil {
 		return nil, proto.Errf("store_failed", "%v", err)
 	}
 	c.markUnlocked(a.Chat, a.Nick)
-	b.logKey("key.unlock", a.Chat, a.Nick, "ok")
+	b.logKey("key.unlock", a.Chat, a.Nick, c, "ok")
 	return proto.KeyUnlockReply{B: owner.Encode(row.B)}, nil
 }
 
 // keyFailed counts a wrong proof; the caller holds keyMu.
-func (b *Broker) keyFailed(ss store.NickSecrets, row *store.NickSecret, now time.Time) *proto.Error {
+func (b *Broker) keyFailed(ss store.NickSecrets, c *conn, row *store.NickSecret, now time.Time) *proto.Error {
 	fails := row.Fails + 1
 	var until int64
 	if fails >= keyFailsFree {
@@ -144,7 +150,7 @@ func (b *Broker) keyFailed(ss store.NickSecrets, row *store.NickSecret, now time
 	if err := ss.NickSecretFailed(row.ChatID, row.Nick, fails, until); err != nil {
 		log.Printf("broker: nick secret: %v", err)
 	}
-	b.logKey("key.unlock", row.ChatID, row.Nick, "refused: the proof does not verify")
+	b.logKey("key.unlock", row.ChatID, row.Nick, c, "refused: the proof does not verify")
 	if fails >= keyAlertAfter {
 		pair := pairID(row.ChatID, row.Nick)
 		if b.keyAlerts == nil {
@@ -159,9 +165,13 @@ func (b *Broker) keyFailed(ss store.NickSecrets, row *store.NickSecret, now time
 }
 
 // logKey writes to the administrator log what happened to the key of a nick: the chat's first
-// characters and the nick, nothing secret.
-func (b *Broker) logKey(op, chatID, nick, result string) {
-	args, _ := json.Marshal(map[string]string{"chat": chatID[:8], "nick": nick})
+// characters, the nick and who the kernel says asked (the program's name and pid), nothing secret.
+func (b *Broker) logKey(op, chatID, nick string, c *conn, result string) {
+	b.logAdminMap(op, map[string]string{"chat": chatID[:8], "nick": nick, "peer": c.peer.String()}, result)
+}
+
+func (b *Broker) logAdminMap(op string, m map[string]string, result string) {
+	args, _ := json.Marshal(m)
 	b.logAdmin(op, args, result)
 }
 
@@ -245,7 +255,7 @@ func (b *Broker) prepareEnroll(c *conn, ch *chat, a proto.JoinArgs) (store.NickS
 		return nil, proto.Errf("key_not_prepared", "enroll needs the B of key_prepare for this chat and nick on this connection")
 	}
 	c.prep = nil
-	row := store.NickSecret{ChatID: ch.id, Nick: a.Name, B: p.b, AuthPub: authPub, SignPub: a.Pub, CreatedAt: time.Now().Unix()}
+	row := store.NickSecret{ChatID: ch.id, Nick: a.Name, B: p.b, AuthPub: authPub, SignPub: a.Pub, SIDHash: sidHash(a.Enroll.SID), CreatedAt: time.Now().Unix()}
 	if err := ss.PutPendingNickSecret(row); err != nil {
 		return nil, proto.Errf("store_failed", "%v", err)
 	}

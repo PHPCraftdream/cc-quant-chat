@@ -27,6 +27,7 @@ var configKeys = []configKey{
 	{"limits.messages_per_minute", false, "messages per minute per nick (whole number)"},
 	{"peer.advertise", false, "the address other nodes reach this broker at (host:port): what a node invitation carries; empty: give --addr to `ccqc peer invite`"},
 	{"peer.listen", false, "where this broker accepts other nodes of the exchange of chats, host:port; empty: it accepts no one (applies at the next start of the broker)"},
+	{"keys.bind_session", false, "on (default): a protected nick enrolled by a session is given its key only to that session (or its continuation after /clear or a compaction); off: another session is let in, and the chat is told (an emergency switch)"},
 	{"board.manager_role", true, "pinned role that may move tasks to other states, start/close sprints, change the process and revert; empty: everyone"},
 }
 
@@ -131,6 +132,11 @@ func validateSetting(k configKey, value string) (string, *proto.Error) {
 			}
 		}
 		return value, nil
+	case "keys.bind_session":
+		if value != "on" && value != "off" {
+			return "", proto.Errf("bad_args", "%s wants on or off, got %q", k.name, value)
+		}
+		return value, nil
 	case "board.manager_role":
 		if value != "" && !proto.ValidName(value) {
 			return "", proto.Errf("bad_args", "%s wants a role name [a-z0-9-]{1,32} or empty, got %q", k.name, value)
@@ -200,6 +206,11 @@ func (b *Broker) configList(chatID string) proto.ConfigList {
 		case "peer.listen", "peer.advertise":
 			v, _ := b.setting("", k.name)
 			it.Default, it.Value, it.Source = "", v, b.source(scope, k.name, false)
+		case "keys.bind_session":
+			it.Default, it.Value, it.Source = "on", "on", b.source(scope, k.name, false)
+			if !b.bindSession() {
+				it.Value = "off"
+			}
 		case "board.manager_role":
 			it.Default, it.Value, it.Source = "", b.managerRole(scope), b.source(scope, k.name, false)
 		default:

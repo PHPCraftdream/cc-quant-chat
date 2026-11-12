@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PHPCraftdream/cc-quant-chat/internal/ipc"
 	"github.com/PHPCraftdream/cc-quant-chat/internal/proto"
 )
 
@@ -31,6 +32,7 @@ type conn struct {
 	prep     *prepared
 	prepares int
 	unlocked map[string]bool
+	peer     ipc.Peer // who the kernel says is at the other end (zero for a connection that can't tell)
 }
 
 func (c *conn) close() {
@@ -111,6 +113,7 @@ func (c *conn) writer() {
 func (b *Broker) serve(nc net.Conn) {
 	defer b.serving.Done()
 	c := &conn{nc: nc, out: make(chan []byte, outQueue), done: make(chan struct{})}
+	c.peer, _ = ipc.PeerOf(nc)
 	b.mu.Lock()
 	if b.stopping.Load() { // shutdown already collected its connections: don't outlive it
 		b.mu.Unlock()

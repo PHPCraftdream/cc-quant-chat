@@ -68,7 +68,7 @@ func (ic *invitedChat) enrollJoin(t *testing.T, c *client, nick string, a, bsec 
 	args := proto.JoinArgs{Chat: ic.chat, Name: nick, Pub: pub, Proto: proto.KeysProto,
 		NickSig: owner.Encode(ed25519.Sign(sign, proto.NickJoinMessage(ic.chat, nick, pub, ch.Nonce))),
 		Invite:  &proto.JoinInvite{ID: in.ID(), Sig: owner.Encode(in.Proof([]byte(ch.Nonce), proto.InviteSubject6(ic.chat, nick, pub, authPub)))},
-		Enroll:  &proto.JoinEnroll{AuthPub: authPub}}
+		Enroll:  &proto.JoinEnroll{AuthPub: authPub, SID: ic.sid}}
 	var w proto.Welcome
 	return w, c.call("join", args, &w)
 }
@@ -76,13 +76,19 @@ func (ic *invitedChat) enrollJoin(t *testing.T, c *client, nick string, a, bsec 
 // unlock proves A on the connection; it returns B and the code.
 func (ic *invitedChat) unlock(t *testing.T, c *client, nick string, a []byte) ([]byte, string) {
 	t.Helper()
+	return ic.unlockIn(t, c, nick, a, ic.sid, "", "")
+}
+
+// unlockIn is unlock from a session: its id, and after /clear or a compaction the id it had and why.
+func (ic *invitedChat) unlockIn(t *testing.T, c *client, nick string, a []byte, sid, prev, source string) ([]byte, string) {
+	t.Helper()
 	auth, _ := keys.AuthKey(a, ic.chat, nick)
 	var ch proto.Challenge
 	if code := c.call("challenge", nil, &ch); code != "" {
 		t.Fatalf("challenge: %q", code)
 	}
 	var rep proto.KeyUnlockReply
-	code := c.call("key_unlock", proto.KeyUnlockArgs{Chat: ic.chat, Nick: nick,
+	code := c.call("key_unlock", proto.KeyUnlockArgs{Chat: ic.chat, Nick: nick, SID: sid, PrevSID: prev, Source: source,
 		AuthSig: owner.Encode(ed25519.Sign(auth, proto.KeyUnlockMessage(ic.chat, nick, ch.Nonce)))}, &rep)
 	if code != "" {
 		return nil, code

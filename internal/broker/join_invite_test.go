@@ -30,6 +30,7 @@ type invitedChat struct {
 	adm   *client
 	chat  string
 	owner string
+	sid   string // the session a protected key is enrolled from (keys_test.go)
 }
 
 func newInvitedChat(t *testing.T) *invitedChat {

@@ -92,6 +92,15 @@ func (d *DB) NickSecretUnlocked(chatID, nick string, at int64) error {
 	return err
 }
 
+func (d *DB) NickSecretRebind(chatID, nick, sidHash string) (bool, error) {
+	res, err := d.node.Exec(`UPDATE nick_secrets SET sid_hash = ? WHERE chat_id = ? AND nick = ? AND state = 'active'`, sidHash, chatID, nick)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (d *DB) NickSecretFailed(chatID, nick string, fails int, until int64) error {
 	_, err := d.node.Exec(`UPDATE nick_secrets SET fails = ?, fail_until = ?
 		WHERE chat_id = ? AND nick = ? AND state = 'active'`, fails, until, chatID, nick)

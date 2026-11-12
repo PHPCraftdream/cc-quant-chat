@@ -33,7 +33,7 @@ Administrator operations (signed with the owner key; the owner password is typed
   ccqc config list|get [<key>] [--chat NAME]
   ccqc config set <key> <value> [--chat NAME]
                             settings applied without a restart: broker.idle, broker.grace,
-                            limits.messages_per_minute, board.manager_role (per chat)
+                            limits.messages_per_minute, keys.bind_session, board.manager_role (per chat)
 
 Chats and invitations (administrator operations; people are let in only by an invitation):
   ccqc chat new <name>                  a chat with a random id and no token

@@ -27,6 +27,15 @@ type KeyUnlockArgs struct {
 	Chat    string `json:"chat"`
 	Nick    string `json:"nick"`
 	AuthSig string `json:"auth_sig"`
+	// SID is the Claude Code session id the client runs in ("" for a terminal). A nick that was enrolled
+	// by a session is bound to it. After /clear or a compaction the session has a new id: the client then
+	// also says which it had (PrevSID) and why (Source: clear or compact), and the broker moves the
+	// binding one step, if PrevSID is the one it has. The ids are declared by the client, not
+	// attested: this guards against a copy of A in the wrong session, not against a process that
+	// knows A and the id (docs/design-keys.md section 8).
+	SID     string `json:"sid,omitempty"`
+	PrevSID string `json:"prev_sid,omitempty"`
+	Source  string `json:"source,omitempty"`
 }
 
 // KeyUnlockReply: B, base64.
@@ -39,6 +48,7 @@ type KeyUnlockReply struct {
 // an invitation (its subject is InviteSubject6).
 type JoinEnroll struct {
 	AuthPub string `json:"auth_pub"`
+	SID     string `json:"sid,omitempty"` // the session the nick is bound to; "" for a terminal nick
 }
 
 // KeyUnlockMessage is what a client signs with its auth key to be given B.
